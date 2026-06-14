@@ -217,7 +217,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
   const saveDraft = async () => {
     setSaving(true);
     try {
-      await conditionAPI.saveHyperQ(episodeId, { ...data, draft: true });
+      await conditionAPI.saveHyperQ(patientId, episodeId, { ...data, draft: true });
       setSaveMsg("Draft saved ✓");
       setTimeout(() => setSaveMsg(""), 2000);
     } catch (e) { setSaveMsg("Save failed"); }
@@ -227,13 +227,20 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
   const submitFinal = async () => {
     setSaving(true);
     try {
-      await conditionAPI.saveHyperQ(episodeId, { ...data, draft: false });
+      await conditionAPI.saveHyperQ(patientId, episodeId, { ...data, draft: false });
       onComplete && onComplete();
     } catch (e) { setSaveMsg("Submission failed. Please try again."); }
     setSaving(false);
   };
 
-  // ── Branch: if RAI caused hypothyroidism, signal parent to switch questionnaire
+  // Load existing draft on mount
+  useEffect(() => {
+    conditionAPI.getHyperQ(patientId, episodeId)
+      .then(r => { if (r.data && Object.keys(r.data).length > 0) setData(prev => ({ ...prev, ...r.data })); })
+      .catch(() => {});
+  }, [patientId, episodeId]);
+
+  // Branch: if RAI caused hypothyroidism, signal parent to switch questionnaire
   useEffect(() => {
     if (get("rai_post_hypothyroid") === "yes" && onComplete) {
       onComplete({ switchToHypo: true });
