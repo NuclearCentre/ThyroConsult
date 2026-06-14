@@ -183,6 +183,8 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
 
   // ── Dynamic page list ─────────────────────────────────────────────────────
   const allPages = useMemo(() => {
+    const internalHysterectomy = get("hysterectomy_status") === "yes";
+    const hideInfertility = !isFemale || hidePregnancy || internalHysterectomy;
     const pages = [
       "A1", "A2", "A3",
       ...(isFemale ? ["B1", "B2", "B3", "B4", "B5"] : []),
@@ -201,12 +203,13 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
       ...(get("med_status") === "yes" ? ["G3"] : []),
       "G4", "G5",
       "H1", "H2", "H3",
-      ...(isFemale ? ["H4", "H5"] : []),
+      ...(isFemale ? ["H4"] : []),
+      ...(!hideInfertility ? ["H5"] : []),
       "H6", "H8", "H9",
       "DONE",
     ];
     return pages;
-  }, [isFemale, hidePregnancy, get("hyper_cause_type"), get("med_status"), get("e3_fnac_status")]);
+  }, [isFemale, hidePregnancy, get("hyper_cause_type"), get("med_status"), get("e3_fnac_status"), get("hysterectomy_status")]);
 
   const pageId = allPages[currentPage];
   const progress = Math.round((currentPage / (allPages.length - 1)) * 100);
