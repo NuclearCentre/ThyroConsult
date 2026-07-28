@@ -1,0 +1,8 @@
+Field Name (snake_case),Display Label,MySQL Data Type,Constraints / Description
+investigation_id,Investigation ID,BIGINT UNSIGNED,"Primary Key, Auto Increment"
+consultation_id,Consultation ID,BIGINT UNSIGNED,Foreign Key -> consultations.consultation_id
+investigation_type,Document/Order Type,"ENUM('Patient Uploaded Prior Lab', 'Patient Uploaded Imaging', 'Doctor Advised Lab', 'Doctor Advised Imaging')",NOT NULL
+test_name,Test Name,VARCHAR(150),"NOT NULL (e.g., CBC, MRI Brain)"
+report_file_url,File URL,VARCHAR(512),NULL (Points to Azure Blob Storage file)
+lab_results_summary,Patient/Doctor Findings Summary,TEXT,NULL
+test_date,Date Test Performed,DATE,NULL

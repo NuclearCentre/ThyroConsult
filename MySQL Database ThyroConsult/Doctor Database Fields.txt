@@ -1,0 +1,33 @@
+Field Name (snake_case),Display Label,MySQL Data Type,Constraints / Description
+salutation,Salutation,"ENUM('Dr.', 'Prof.', 'Mr.', 'Ms.', 'Mrs.')",NOT NULL
+first_name,First Name,VARCHAR(50),NOT NULL
+middle_name,Middle Name,VARCHAR(50),NULL
+last_name,Last Name,VARCHAR(50),NOT NULL
+gender,Gender,"ENUM('Male', 'Female', 'Non-Binary', 'Prefer Not to Say')",NOT NULL
+date_of_birth,Date of Birth,DATE,NULL
+profile_photo_url,Profile Picture URL,VARCHAR(512),NULL (URL pointing to Azure Blob Storage)
+primary_qualification,Primary Degree,VARCHAR(100),"NOT NULL (e.g., MBBS, MD, DO, BDS)"
+specialization,Primary Specialization,VARCHAR(100),"NOT NULL (e.g., Cardiology, Pediatrics)"
+sub_specialization,Sub-Specialization,VARCHAR(100),"NULL (e.g., Interventional Cardiology)"
+registration_number,Medical Council Reg. No.,VARCHAR(50),"UNIQUE, NOT NULL"
+medical_council_name,Registering Medical Board,VARCHAR(150),NOT NULL
+year_of_registration,Year of Registration,YEAR,NOT NULL
+primary_email,Primary Email Address,VARCHAR(100),"UNIQUE, NOT NULL"
+secondary_email,Alternative Email,VARCHAR(100),NULL
+mobile_number,Mobile Phone,VARCHAR(20),NOT NULL
+office_phone,Clinic / Office Phone,VARCHAR(20),NULL
+workplace_name,Hospital / Clinic Name,VARCHAR(150),NOT NULL
+street_address,Address Line,VARCHAR(255),NOT NULL
+city,City,VARCHAR(100),NOT NULL
+state_province,State / Province,VARCHAR(100),NOT NULL
+postal_code,Postal / Zip Code,VARCHAR(20),NOT NULL
+country,Country,VARCHAR(100),NOT NULL
+bio,Professional Bio,TEXT,NULL (Short background statement)
+years_of_experience,Years of Practice,TINYINT UNSIGNED,NULL
+languages_spoken,Languages Spoken,VARCHAR(255),NULL (Comma-separated or JSON)
+website_url,Personal / Practice Website,VARCHAR(255),NULL
+linkedin_url,LinkedIn Profile,VARCHAR(255),NULL
+is_visible_in_directory,Show in Directory,BOOLEAN,DEFAULT TRUE
+open_for_jobs,Open to Job / Career Opportunities,BOOLEAN,DEFAULT FALSE
+open_for_telemedicine,Open for Telehealth Consults,BOOLEAN,DEFAULT FALSE
+preferred_job_type,Preferred Role Type,"ENUM('Full-time', 'Part-time', 'Locum', 'Consultant', 'None')",DEFAULT 'None'

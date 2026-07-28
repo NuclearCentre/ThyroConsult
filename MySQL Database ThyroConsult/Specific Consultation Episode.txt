@@ -1,0 +1,16 @@
+Field Name (snake_case),Display Label,MySQL Data Type,Constraints / Description
+consultation_id,Consultation ID,BIGINT UNSIGNED,"Primary Key, Auto Increment"
+patient_id,Patient ID,BIGINT UNSIGNED,Foreign Key -> patients.patient_id
+consultation_type,Visit Type,"ENUM('New Case', 'Follow-Up')",NOT NULL
+parent_consultation_id,Previous Visit ID,BIGINT UNSIGNED,NULL (Populated if consultation_type is 'Follow-Up')
+chief_complaint,Main Problem / Symptoms,TEXT,"NOT NULL (e.g., Severe headache for 3 days)"
+symptom_onset_date,When Symptoms Started,DATE,NULL
+symptom_severity,Severity Level,"ENUM('Mild', 'Moderate', 'Severe', 'Extreme')",NOT NULL
+current_medications,Current Ongoing Medicines,TEXT,NULL
+previous_treatment_taken,Past Treatments for this Issue,TEXT,NULL (What was tried before booking this consult)
+assigned_doctor_id,Assigned Doctor,BIGINT UNSIGNED,Foreign Key -> doctors.doctor_id
+status,Consultation Status,"ENUM('Submitted', 'Reviewed', 'Advised', 'Completed')",DEFAULT 'Submitted'
+doctor_notes_diagnosis,Doctor's Initial Diagnosis,TEXT,NULL (Filled by Doctor)
+doctor_treatment_advised,Treatment Plan / Advice,TEXT,NULL (Filled by Doctor)
+follow_up_recommended_date,Next Recommended Follow-up,DATE,NULL (Filled by Doctor)
+created_at,Date Created,TIMESTAMP,DEFAULT CURRENT_TIMESTAMP

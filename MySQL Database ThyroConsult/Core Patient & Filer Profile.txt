@@ -1,0 +1,25 @@
+Field Name (snake_case),Display Label,MySQL Data Type,Constraints / Description
+patient_id,Patient ID,BIGINT UNSIGNED,"Primary Key, Auto Increment"
+filled_by,Form Filled By,"ENUM('Self', 'Parent/Guardian', 'Relative', 'Caregiver', 'Other')",NOT NULL
+filer_name,Filer's Name,VARCHAR(100),NULL (Required if filled_by != 'Self')
+filer_contact_number,Filer's Phone,VARCHAR(20),NULL
+filer_relationship,Relationship to Patient,VARCHAR(50),"NULL (e.g., Mother, Son)"
+salutation,Salutation,"ENUM('Mr.', 'Ms.', 'Mrs.', 'Master', 'Baby of', 'Dr.', 'Other')",NOT NULL
+first_name,First Name,VARCHAR(50),NOT NULL
+middle_name,Middle Name,VARCHAR(50),NULL
+last_name,Last Name,VARCHAR(50),NOT NULL
+date_of_birth,Date of Birth,DATE,NOT NULL
+gender,Gender,"ENUM('Male', 'Female', 'Intersex', 'Prefer Not to Say')",NOT NULL
+biological_sex,Biological Sex at Birth,"ENUM('Male', 'Female')",NOT NULL (Crucial for clinical dosage & norms)
+blood_group,Blood Group,"ENUM('A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-', 'Unknown')",DEFAULT 'Unknown'
+primary_phone,Patient Contact Phone,VARCHAR(20),NOT NULL
+primary_email,Patient Email,VARCHAR(100),NULL
+emergency_contact_name,Emergency Contact Name,VARCHAR(100),NOT NULL
+emergency_contact_phone,Emergency Phone,VARCHAR(20),NOT NULL
+street_address,Street Address,VARCHAR(255),NOT NULL
+city,City,VARCHAR(100),NOT NULL
+state_province,State / Province,VARCHAR(100),NOT NULL
+postal_code,Postal / Zip Code,VARCHAR(20),NOT NULL
+country,Country,VARCHAR(100),NOT NULL
+known_allergies,Known Drug/Food Allergies,TEXT,"NULL (e.g., Penicillin, Peanuts)"
+chronic_conditions,Pre-existing Conditions,TEXT,"NULL (e.g., Diabetes, Hypertension)"

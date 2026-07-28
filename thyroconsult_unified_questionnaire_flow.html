@@ -1,0 +1,455 @@
+
+<style>
+  h2.sr-only { position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font-sans); }
+
+  .flow-wrap { padding: 1rem 0; }
+
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 0.5px solid var(--color-border-tertiary); }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--color-text-secondary); }
+  .legend-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+  .ld-shared { background: #1D9E75; }
+  .ld-hypo   { background: #3B8BD4; }
+  .ld-hyper  { background: #BA7517; }
+  .ld-tc     { background: #D85A30; }
+  .ld-nodule { background: #7F77DD; }
+  .ld-branch { background: #E24B4A; }
+  .ld-exit   { background: #888780; }
+
+  .flow-diagram { position: relative; width: 100%; overflow-x: auto; }
+
+  svg.flow { width: 100%; display: block; }
+
+  .node-click { cursor: pointer; }
+  .node-click:hover rect, .node-click:hover ellipse { opacity: 0.82; }
+
+  .info-panel {
+    margin-top: 1rem;
+    background: var(--color-background-secondary);
+    border: 0.5px solid var(--color-border-secondary);
+    border-radius: var(--border-radius-lg);
+    padding: 0.875rem 1rem;
+    font-size: 13px;
+    color: var(--color-text-secondary);
+    min-height: 56px;
+    transition: all 0.15s;
+  }
+  .info-panel strong { color: var(--color-text-primary); font-weight: 500; display: block; margin-bottom: 4px; }
+  .info-panel .tag { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 4px; margin-right: 6px; margin-bottom: 4px; }
+  .tag-shared { background: var(--color-background-success); color: var(--color-text-success); }
+  .tag-hypo   { background: var(--color-background-info);    color: var(--color-text-info); }
+  .tag-hyper  { background: var(--color-background-warning); color: var(--color-text-warning); }
+  .tag-tc     { background: var(--color-background-danger);  color: var(--color-text-danger); }
+  .tag-nodule { background: #EEEDFE; color: #534AB7; }
+
+  .cta-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 1rem; }
+  .cta-btn { font-size: 12px; padding: 6px 12px; border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); background: transparent; color: var(--color-text-secondary); cursor: pointer; }
+  .cta-btn:hover { background: var(--color-background-secondary); color: var(--color-text-primary); }
+</style>
+
+<div class="flow-wrap">
+  <h2 class="sr-only">ThyroConsult unified questionnaire flow showing how Hypothyroidism, Hyperthyroidism, Thyroid Cancer and Thyroid Nodule questionnaires interconnect with shared modules and branching paths</h2>
+
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot ld-shared"></div>Shared modules (A–D)</div>
+    <div class="legend-item"><div class="legend-dot ld-hypo"></div>Hypothyroidism</div>
+    <div class="legend-item"><div class="legend-dot ld-hyper"></div>Hyperthyroidism</div>
+    <div class="legend-item"><div class="legend-dot ld-tc"></div>Thyroid cancer</div>
+    <div class="legend-item"><div class="legend-dot ld-nodule"></div>Thyroid nodule</div>
+    <div class="legend-item"><div class="legend-dot ld-branch"></div>Critical branch / switch</div>
+    <div class="legend-item"><div class="legend-dot ld-exit"></div>Entry / exit point</div>
+  </div>
+
+  <div class="flow-diagram">
+    <svg class="flow" viewBox="0 0 940 1340" role="img">
+      <title>ThyroConsult unified questionnaire flow</title>
+      <desc>Four thyroid condition questionnaires flow through shared modules and branch at key clinical decision points</desc>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </marker>
+      </defs>
+
+      <!-- ══ ENTRY POINTS ══ -->
+      <!-- 4 condition entry pills -->
+      <!-- Hypo -->
+      <g class="node-click" onclick="show('hypo-entry')" id="n-hypo-entry">
+        <rect x="30" y="20" width="140" height="36" rx="18" fill="#E6F1FB" stroke="#185FA5" stroke-width="1"/>
+        <text font-family="var(--font-sans)" font-size="13" font-weight="500" fill="#0C447C" x="100" y="38" text-anchor="middle" dominant-baseline="central">Hypothyroid</text>
+      </g>
+      <!-- Hyper -->
+      <g class="node-click" onclick="show('hyper-entry')" id="n-hyper-entry">
+        <rect x="230" y="20" width="140" height="36" rx="18" fill="#FAEEDA" stroke="#BA7517" stroke-width="1"/>
+        <text font-family="var(--font-sans)" font-size="13" font-weight="500" fill="#633806" x="300" y="38" text-anchor="middle" dominant-baseline="central">Hyperthyroid</text>
+      </g>
+      <!-- TC -->
+      <g class="node-click" onclick="show('tc-entry')" id="n-tc-entry">
+        <rect x="520" y="20" width="140" height="36" rx="18" fill="#FAECE7" stroke="#993C1D" stroke-width="1"/>
+        <text font-family="var(--font-sans)" font-size="13" font-weight="500" fill="#4A1B0C" x="590" y="38" text-anchor="middle" dominant-baseline="central">CA Thyroid</text>
+      </g>
+      <!-- Nodule -->
+      <g class="node-click" onclick="show('nodule-entry')" id="n-nodule-entry">
+        <rect x="720" y="20" width="150" height="36" rx="18" fill="#EEEDFE" stroke="#534AB7" stroke-width="1"/>
+        <text font-family="var(--font-sans)" font-size="13" font-weight="500" fill="#26215C" x="795" y="38" text-anchor="middle" dominant-baseline="central">Thyroid Nodule</text>
+      </g>
+
+      <!-- Arrows down to Module A -->
+      <line x1="100" y1="56" x2="100" y2="102" stroke="#185FA5" stroke-width="1" marker-end="url(#arr)"/>
+      <line x1="300" y1="56" x2="300" y2="102" stroke="#BA7517" stroke-width="1" marker-end="url(#arr)"/>
+      <line x1="590" y1="56" x2="590" y2="102" stroke="#993C1D" stroke-width="1" marker-end="url(#arr)"/>
+      <line x1="795" y1="56" x2="795" y2="102" stroke="#534AB7" stroke-width="1" marker-end="url(#arr)"/>
+
+      <!-- ══ MODULE A — DEMOGRAPHICS ══ -->
+      <!-- Label -->
+      <text font-family="var(--font-sans)" font-size="10" fill="#888780" x="470" y="100" text-anchor="middle">MODULE A — DEMOGRAPHICS</text>
+
+      <!-- 4 A boxes - shared look, teal -->
+      <g class="node-click" onclick="show('mod-a')">
+        <!-- Hypo A -->
+        <rect x="30" y="108" width="140" height="48" rx="6" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+        <text font-family="var(--font-sans)" font-size="12" font-weight="500" fill="#085041" x="100" y="126" text-anchor="middle" dominant-baseline="central">A1–A3</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#0F6E56" x="100" y="144" text-anchor="middle" dominant-baseline="central">DOB · Sex · Marital</text>
+        <!-- Hyper A -->
+        <rect x="220" y="108" width="150" height="48" rx="6" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+        <text font-family="var(--font-sans)" font-size="12" font-weight="500" fill="#085041" x="295" y="126" text-anchor="middle" dominant-baseline="central">A1–A3</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#0F6E56" x="295" y="144" text-anchor="middle" dominant-baseline="central">DOB · Sex · Marital · Occ.</text>
+        <!-- TC A -->
+        <rect x="510" y="108" width="150" height="48" rx="6" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+        <text font-family="var(--font-sans)" font-size="12" font-weight="500" fill="#085041" x="585" y="126" text-anchor="middle" dominant-baseline="central">A1–A3</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#0F6E56" x="585" y="144" text-anchor="middle" dominant-baseline="central">DOB · Sex · Marital</text>
+        <!-- Nodule A -->
+        <rect x="710" y="108" width="150" height="48" rx="6" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+        <text font-family="var(--font-sans)" font-size="12" font-weight="500" fill="#085041" x="785" y="126" text-anchor="middle" dominant-baseline="central">A1–A4</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#0F6E56" x="785" y="144" text-anchor="middle" dominant-baseline="central">DOB · Sex · Marital · Occ.</text>
+      </g>
+
+      <!-- ══ MODULE B — MENSTRUAL (Female only) ══ -->
+      <!-- dashed container -->
+      <rect x="10" y="178" width="875" height="60" rx="6" fill="none" stroke="#9FE1CB" stroke-width="0.5" stroke-dasharray="4 3"/>
+      <text font-family="var(--font-sans)" font-size="10" fill="#0F6E56" x="20" y="174">MODULE B — MENSTRUAL / PREGNANCY · Female only</text>
+
+      <g class="node-click" onclick="show('mod-b')">
+        <rect x="30" y="186" width="340" height="44" rx="6" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+        <text font-family="var(--font-sans)" font-size="11" font-weight="500" fill="#085041" x="200" y="204" text-anchor="middle" dominant-baseline="central">B1 Hysterectomy · B2 Menopause · B3 Cycles</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#0F6E56" x="200" y="220" text-anchor="middle" dominant-baseline="central">B4 LMP · B5 Pregnancy / EDD [gating rules apply]</text>
+        <!-- shared across all -->
+        <rect x="510" y="186" width="350" height="44" rx="6" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+        <text font-family="var(--font-sans)" font-size="11" font-weight="500" fill="#085041" x="685" y="204" text-anchor="middle" dominant-baseline="central">Same B module</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#0F6E56" x="685" y="220" text-anchor="middle" dominant-baseline="central">Hidden: B3–B5 if hysterectomy · B4–B5 if post-menop · B5 if unmarried</text>
+      </g>
+
+      <!-- Arrows down to C -->
+      <line x1="100" y1="156" x2="100" y2="184" stroke="#0F6E56" stroke-width="0.5" marker-end="url(#arr)"/>
+      <line x1="295" y1="156" x2="295" y2="184" stroke="#0F6E56" stroke-width="0.5" marker-end="url(#arr)"/>
+      <line x1="585" y1="156" x2="585" y2="184" stroke="#0F6E56" stroke-width="0.5" marker-end="url(#arr)"/>
+      <line x1="785" y1="156" x2="785" y2="184" stroke="#0F6E56" stroke-width="0.5" marker-end="url(#arr)"/>
+
+      <!-- ══ MODULE C — THYROID HISTORY ══ -->
+      <text font-family="var(--font-sans)" font-size="10" fill="#888780" x="470" y="256">MODULE C — THYROID DISEASE &amp; MEDICATION</text>
+      <g class="node-click" onclick="show('mod-c')">
+        <rect x="30" y="264" width="855" height="48" rx="6" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+        <text font-family="var(--font-sans)" font-size="11" font-weight="500" fill="#085041" x="457" y="282" text-anchor="middle" dominant-baseline="central">C1 Prior Dx · C2a Surgery · C2b RAI · C3 Medication · C4 Family Hx · C5 Autoimmune</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#0F6E56" x="457" y="300" text-anchor="middle" dominant-baseline="central">Shared structure — all four conditions use identical C module</text>
+      </g>
+      <line x1="200" y1="230" x2="200" y2="262" stroke="#0F6E56" stroke-width="0.5" marker-end="url(#arr)"/>
+      <line x1="685" y1="230" x2="685" y2="262" stroke="#0F6E56" stroke-width="0.5" marker-end="url(#arr)"/>
+
+      <!-- ══ CRITICAL BRANCH — C2b RAI ══ -->
+      <g class="node-click" onclick="show('branch-rai')">
+        <rect x="330" y="328" width="275" height="40" rx="6" fill="#FCEBEB" stroke="#A32D2D" stroke-width="1"/>
+        <text font-family="var(--font-sans)" font-size="11" font-weight="500" fill="#791F1F" x="467" y="344" text-anchor="middle" dominant-baseline="central">⚑ C2b BRANCH: post-RAI hypothyroid?</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#A32D2D" x="467" y="358" text-anchor="middle" dominant-baseline="central">Hyper → switches to Hypo F module if Yes</text>
+      </g>
+      <line x1="457" y1="312" x2="457" y2="326" stroke="#A32D2D" stroke-width="1" marker-end="url(#arr)"/>
+      <!-- Branch YES arrow right into Hypo track -->
+      <path d="M605 348 Q670 348 670 390" fill="none" stroke="#A32D2D" stroke-width="1" stroke-dasharray="4 2" marker-end="url(#arr)"/>
+      <text font-family="var(--font-sans)" font-size="9" fill="#A32D2D" x="640" y="368">Yes → switch</text>
+      <!-- Branch NO continues down -->
+      <line x1="457" y1="368" x2="457" y2="408" stroke="#A32D2D" stroke-width="0.5" marker-end="url(#arr)"/>
+      <text font-family="var(--font-sans)" font-size="9" fill="#888780" x="467" y="388">No → continue Hyper</text>
+
+      <!-- ══ MODULE D — LABS ══ -->
+      <text font-family="var(--font-sans)" font-size="10" fill="#888780" x="470" y="405">MODULE D — LABORATORY CAPTURE</text>
+      <g class="node-click" onclick="show('mod-d')">
+        <!-- Hypo D -->
+        <rect x="30" y="412" width="330" height="48" rx="6" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+        <text font-family="var(--font-sans)" font-size="11" font-weight="500" fill="#085041" x="195" y="430" text-anchor="middle" dominant-baseline="central">D1 TSH · D2 FT4 · D3 FT3</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#0F6E56" x="195" y="446" text-anchor="middle" dominant-baseline="central">D4 Anti-TPO/Anti-Tg · D5 Imaging</text>
+        <!-- Hyper D (has TRAb extra) -->
+        <rect x="390" y="412" width="340" height="48" rx="6" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+        <text font-family="var(--font-sans)" font-size="11" font-weight="500" fill="#412402" x="560" y="430" text-anchor="middle" dominant-baseline="central">D1 TSH · D2 FT4 · D3 FT3</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#854F0B" x="560" y="446" text-anchor="middle" dominant-baseline="central">D4 TRAb/TSI · D5 Anti-TPO/Tg · D6 Imaging</text>
+        <!-- TC/Nodule D (simplified) -->
+        <rect x="750" y="412" width="135" height="48" rx="6" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/>
+        <text font-family="var(--font-sans)" font-size="11" font-weight="500" fill="#4A1B0C" x="817" y="430" text-anchor="middle" dominant-baseline="central">D1–D5</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#993C1D" x="817" y="446" text-anchor="middle" dominant-baseline="central">TSH · FT4 · FT3 · Ab · Imaging</text>
+      </g>
+      <line x1="195" y1="312" x2="195" y2="410" stroke="#0F6E56" stroke-width="0.5" marker-end="url(#arr)"/>
+      <line x1="560" y1="312" x2="560" y2="410" stroke="#0F6E56" stroke-width="0.5" marker-end="url(#arr)"/>
+      <line x1="817" y1="312" x2="817" y2="410" stroke="#0F6E56" stroke-width="0.5" marker-end="url(#arr)"/>
+
+      <!-- TSH BRANCH badge for nodule -->
+      <g class="node-click" onclick="show('branch-tsh')">
+        <rect x="750" y="470" width="135" height="30" rx="4" fill="#FCEBEB" stroke="#A32D2D" stroke-width="0.5"/>
+        <text font-family="var(--font-sans)" font-size="10" font-weight="500" fill="#791F1F" x="817" y="485" text-anchor="middle" dominant-baseline="central">⚑ TSH → Hypo / Hyper route</text>
+      </g>
+      <line x1="817" y1="460" x2="817" y2="468" stroke="#A32D2D" stroke-width="0.5" marker-end="url(#arr)"/>
+      <!-- Arrows from TSH branch out left -->
+      <path d="M750 485 Q700 485 695 540" fill="none" stroke="#A32D2D" stroke-width="1" stroke-dasharray="4 2" marker-end="url(#arr)"/>
+      <text font-family="var(--font-sans)" font-size="9" fill="#A32D2D" x="708" y="512">abnormal → switches</text>
+
+      <!-- ══ MODULE E — CONDITION SPECIFIC ══ -->
+      <text font-family="var(--font-sans)" font-size="10" fill="#888780" x="470" y="516">MODULE E — CONDITION SPECIFIC</text>
+
+      <!-- Hypo E -->
+      <g class="node-click" onclick="show('hypo-e')">
+        <rect x="30" y="524" width="200" height="56" rx="6" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+        <text font-family="var(--font-sans)" font-size="12" font-weight="500" fill="#0C447C" x="130" y="542" text-anchor="middle" dominant-baseline="central">Hypo: No module E</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#185FA5" x="130" y="560" text-anchor="middle" dominant-baseline="central">Proceeds direct to F</text>
+      </g>
+
+      <!-- Hyper E -->
+      <g class="node-click" onclick="show('hyper-e')">
+        <rect x="250" y="524" width="360" height="56" rx="6" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+        <text font-family="var(--font-sans)" font-size="12" font-weight="500" fill="#412402" x="430" y="542" text-anchor="middle" dominant-baseline="central">Hyper E: E1 Cause → E2 Graves' / E3 Toxic MNG</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#854F0B" x="430" y="560" text-anchor="middle" dominant-baseline="central">E4 Goitre (all patients) · E5 FNAC (if E3 not done)</text>
+      </g>
+
+      <!-- TC E -->
+      <g class="node-click" onclick="show('tc-e')">
+        <rect x="30" y="596" width="200" height="56" rx="6" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/>
+        <text font-family="var(--font-sans)" font-size="12" font-weight="500" fill="#4A1B0C" x="130" y="614" text-anchor="middle" dominant-baseline="central">TC E: Diagnosis &amp; Staging</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#993C1D" x="130" y="632" text-anchor="middle" dominant-baseline="central">Type · Stage · Surgery · RAI · TG</text>
+      </g>
+
+      <!-- Nodule E/G -->
+      <g class="node-click" onclick="show('nodule-eg')">
+        <rect x="250" y="596" width="360" height="56" rx="6" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+        <text font-family="var(--font-sans)" font-size="12" font-weight="500" fill="#26215C" x="430" y="614" text-anchor="middle" dominant-baseline="central">Nodule E/G: Discovery &amp; Management</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#534AB7" x="430" y="632" text-anchor="middle" dominant-baseline="central">When/how noticed · USG follow-up · Management plan</text>
+      </g>
+
+      <!-- arrows down to E from D -->
+      <line x1="130" y1="460" x2="130" y2="522" stroke="#185FA5" stroke-width="0.5" marker-end="url(#arr)"/>
+      <line x1="430" y1="460" x2="430" y2="522" stroke="#BA7517" stroke-width="0.5" marker-end="url(#arr)"/>
+      <line x1="130" y1="580" x2="130" y2="594" stroke="#993C1D" stroke-width="0.5" marker-end="url(#arr)"/>
+      <line x1="430" y1="580" x2="430" y2="594" stroke="#534AB7" stroke-width="0.5" marker-end="url(#arr)"/>
+
+      <!-- Hyper E1 branch labels -->
+      <g class="node-click" onclick="show('branch-e1')">
+        <rect x="630" y="532" width="145" height="44" rx="4" fill="#FCEBEB" stroke="#A32D2D" stroke-width="0.5"/>
+        <text font-family="var(--font-sans)" font-size="10" font-weight="500" fill="#791F1F" x="702" y="548" text-anchor="middle" dominant-baseline="central">⚑ E1 Graves' → E2</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#A32D2D" x="702" y="564" text-anchor="middle" dominant-baseline="central">E1 Toxic MNG/AFTN → E3</text>
+      </g>
+      <line x1="610" y1="552" x2="628" y2="552" stroke="#A32D2D" stroke-width="0.5" marker-end="url(#arr)"/>
+
+      <!-- ══ MODULE F — SYMPTOMS ══ -->
+      <text font-family="var(--font-sans)" font-size="10" fill="#888780" x="470" y="672">MODULE F — SYMPTOMS (25–26 pages)</text>
+
+      <!-- Hypo F -->
+      <g class="node-click" onclick="show('hypo-f')">
+        <rect x="30" y="680" width="270" height="60" rx="6" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+        <text font-family="var(--font-sans)" font-size="11" font-weight="500" fill="#0C447C" x="165" y="698" text-anchor="middle" dominant-baseline="central">Hypo F1–F25</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#185FA5" x="165" y="714" text-anchor="middle" dominant-baseline="central">Fatigue · Weight · Cold intol · Constipation</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#185FA5" x="165" y="728" text-anchor="middle" dominant-baseline="central">Skin · Hair · Bradycardia · Hypersomnia · Reflexes</text>
+      </g>
+
+      <!-- Hyper F (or switched Hypo F after RAI branch) -->
+      <g class="node-click" onclick="show('hyper-f')">
+        <rect x="320" y="680" width="290" height="60" rx="6" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+        <text font-family="var(--font-sans)" font-size="11" font-weight="500" fill="#412402" x="465" y="698" text-anchor="middle" dominant-baseline="central">Hyper F1–F25</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#854F0B" x="465" y="714" text-anchor="middle" dominant-baseline="central">Fatigue · Weight loss · Heat intol · Sweating</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#854F0B" x="465" y="728" text-anchor="middle" dominant-baseline="central">Tremors · Anxiety · Palpitations · AF · Dyspnoea</text>
+      </g>
+
+      <!-- TC / Nodule F shared symptoms -->
+      <g class="node-click" onclick="show('tc-nodule-f')">
+        <rect x="630" y="680" width="280" height="60" rx="6" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
+        <text font-family="var(--font-sans)" font-size="11" font-weight="500" fill="#2C2C2A" x="770" y="698" text-anchor="middle" dominant-baseline="central">TC/Nodule H: Systemic</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#5F5E5A" x="770" y="714" text-anchor="middle" dominant-baseline="central">Fatigue · Weight · Mood · Sleep</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#5F5E5A" x="770" y="728" text-anchor="middle" dominant-baseline="central">Prior opinions · Current meds</text>
+      </g>
+
+      <!-- Arrows to F -->
+      <line x1="130" y1="652" x2="130" y2="678" stroke="#185FA5" stroke-width="0.5" marker-end="url(#arr)"/>
+      <line x1="430" y1="652" x2="430" y2="678" stroke="#BA7517" stroke-width="0.5" marker-end="url(#arr)"/>
+      <line x1="770" y1="640" x2="770" y2="678" stroke="#888780" stroke-width="0.5" marker-end="url(#arr)"/>
+
+      <!-- Nodule G: Local symptoms -->
+      <g class="node-click" onclick="show('nodule-g')">
+        <rect x="630" y="756" width="280" height="48" rx="6" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+        <text font-family="var(--font-sans)" font-size="11" font-weight="500" fill="#26215C" x="770" y="774" text-anchor="middle" dominant-baseline="central">Nodule G: Local symptoms</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#534AB7" x="770" y="792" text-anchor="middle" dominant-baseline="central">Visible lump · Pain · Dysphagia · Voice · SOB</text>
+      </g>
+      <line x1="770" y1="740" x2="770" y2="754" stroke="#534AB7" stroke-width="0.5" marker-end="url(#arr)"/>
+
+      <!-- TC F: specific local -->
+      <g class="node-click" onclick="show('tc-local')">
+        <rect x="630" y="820" width="280" height="48" rx="6" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/>
+        <text font-family="var(--font-sans)" font-size="11" font-weight="500" fill="#4A1B0C" x="770" y="838" text-anchor="middle" dominant-baseline="central">TC F: Local / radiation Sx</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#993C1D" x="770" y="856" text-anchor="middle" dominant-baseline="central">Hoarseness · Dysphagia · Lymph nodes</text>
+      </g>
+      <line x1="770" y1="804" x2="770" y2="818" stroke="#993C1D" stroke-width="0.5" marker-end="url(#arr)"/>
+
+      <!-- ══ MODULE G — TREATMENT ══ -->
+      <text font-family="var(--font-sans)" font-size="10" fill="#888780" x="300" y="820">MODULE G — TREATMENT &amp; MONITORING</text>
+
+      <!-- Hypo G -->
+      <g class="node-click" onclick="show('hypo-g')">
+        <rect x="30" y="828" width="260" height="48" rx="6" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+        <text font-family="var(--font-sans)" font-size="11" font-weight="500" fill="#0C447C" x="160" y="846" text-anchor="middle" dominant-baseline="central">Hypo G: Treatment history</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#185FA5" x="160" y="862" text-anchor="middle" dominant-baseline="central">G1 On Rx · G2 Dose change · G3 Monitoring</text>
+      </g>
+      <!-- Hyper G -->
+      <g class="node-click" onclick="show('hyper-g')">
+        <rect x="310" y="828" width="290" height="48" rx="6" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+        <text font-family="var(--font-sans)" font-size="11" font-weight="500" fill="#412402" x="455" y="846" text-anchor="middle" dominant-baseline="central">Hyper G: ATD + definitive plan</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#854F0B" x="455" y="862" text-anchor="middle" dominant-baseline="central">G2 RAI/surgery plan · G3 Dose Δ · G4 Beta-blocker · G5 Monitoring</text>
+      </g>
+
+      <line x1="160" y1="740" x2="160" y2="826" stroke="#185FA5" stroke-width="0.5" marker-end="url(#arr)"/>
+      <line x1="455" y1="740" x2="455" y2="826" stroke="#BA7517" stroke-width="0.5" marker-end="url(#arr)"/>
+
+      <!-- G3 gate badge -->
+      <g class="node-click" onclick="show('branch-g3')">
+        <rect x="610" y="836" width="12" height="12" rx="2" fill="#A32D2D"/>
+        <text font-family="var(--font-sans)" font-size="8" fill="white" x="616" y="845" text-anchor="middle" dominant-baseline="central">⚑</text>
+      </g>
+      <text font-family="var(--font-sans)" font-size="9" fill="#A32D2D" x="625" y="845">G3 only if C3=Yes</text>
+
+      <!-- ══ MODULE H — COMORBIDITIES ══ -->
+      <text font-family="var(--font-sans)" font-size="10" fill="#888780" x="300" y="898">MODULE H — COMORBIDITIES</text>
+
+      <!-- Hypo H -->
+      <g class="node-click" onclick="show('hypo-h')">
+        <rect x="30" y="906" width="260" height="60" rx="6" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+        <text font-family="var(--font-sans)" font-size="11" font-weight="500" fill="#0C447C" x="160" y="924" text-anchor="middle" dominant-baseline="central">Hypo H: Comorbidities</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#185FA5" x="160" y="940" text-anchor="middle" dominant-baseline="central">Dyslipid · Anaemia · PCOS · Infertility</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#185FA5" x="160" y="956" text-anchor="middle" dominant-baseline="central">Depression · Family notes</text>
+      </g>
+      <!-- Hyper H -->
+      <g class="node-click" onclick="show('hyper-h')">
+        <rect x="310" y="906" width="290" height="60" rx="6" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+        <text font-family="var(--font-sans)" font-size="11" font-weight="500" fill="#412402" x="455" y="924" text-anchor="middle" dominant-baseline="central">Hyper H: Comorbidities</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#854F0B" x="455" y="940" text-anchor="middle" dominant-baseline="central">Dyslipid · Diabetes · Anaemia · PCOS</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#854F0B" x="455" y="956" text-anchor="middle" dominant-baseline="central">Infertility · Depression · Osteoporosis (NEW)</text>
+      </g>
+      <!-- TC Nodule comorbidities -->
+      <g class="node-click" onclick="show('tc-nodule-h')">
+        <rect x="630" y="906" width="280" height="60" rx="6" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
+        <text font-family="var(--font-sans)" font-size="11" font-weight="500" fill="#2C2C2A" x="770" y="924" text-anchor="middle" dominant-baseline="central">TC/Nodule J: Risk &amp; finish</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#5F5E5A" x="770" y="940" text-anchor="middle" dominant-baseline="central">Comorbidities · Risk factors</text>
+        <text font-family="var(--font-sans)" font-size="10" fill="#5F5E5A" x="770" y="956" text-anchor="middle" dominant-baseline="central">Family Hx · Radiation exposure · Finish</text>
+      </g>
+
+      <line x1="160" y1="876" x2="160" y2="904" stroke="#185FA5" stroke-width="0.5" marker-end="url(#arr)"/>
+      <line x1="455" y1="876" x2="455" y2="904" stroke="#BA7517" stroke-width="0.5" marker-end="url(#arr)"/>
+      <line x1="770" y1="868" x2="770" y2="904" stroke="#888780" stroke-width="0.5" marker-end="url(#arr)"/>
+
+      <!-- ══ EXIT POINTS ══ -->
+      <text font-family="var(--font-sans)" font-size="10" fill="#888780" x="470" y="988">SUBMIT → PHYSICIAN SUMMARY GENERATED</text>
+
+      <g class="node-click" onclick="show('exit-hypo')">
+        <rect x="30" y="996" width="140" height="36" rx="18" fill="#E6F1FB" stroke="#185FA5" stroke-width="1"/>
+        <text font-family="var(--font-sans)" font-size="12" font-weight="500" fill="#0C447C" x="100" y="1014" text-anchor="middle" dominant-baseline="central">Hypo complete</text>
+      </g>
+      <g class="node-click" onclick="show('exit-hyper')">
+        <rect x="220" y="996" width="140" height="36" rx="18" fill="#FAEEDA" stroke="#BA7517" stroke-width="1"/>
+        <text font-family="var(--font-sans)" font-size="12" font-weight="500" fill="#633806" x="290" y="1014" text-anchor="middle" dominant-baseline="central">Hyper complete</text>
+      </g>
+      <g class="node-click" onclick="show('exit-tc')">
+        <rect x="410" y="996" width="140" height="36" rx="18" fill="#FAECE7" stroke="#993C1D" stroke-width="1"/>
+        <text font-family="var(--font-sans)" font-size="12" font-weight="500" fill="#4A1B0C" x="480" y="1014" text-anchor="middle" dominant-baseline="central">TC complete</text>
+      </g>
+      <g class="node-click" onclick="show('exit-nodule')">
+        <rect x="600" y="996" width="160" height="36" rx="18" fill="#EEEDFE" stroke="#534AB7" stroke-width="1"/>
+        <text font-family="var(--font-sans)" font-size="12" font-weight="500" fill="#26215C" x="680" y="1014" text-anchor="middle" dominant-baseline="central">Nodule complete</text>
+      </g>
+
+      <line x1="160" y1="966" x2="100" y2="994" stroke="#185FA5" stroke-width="0.5" marker-end="url(#arr)"/>
+      <line x1="455" y1="966" x2="290" y2="994" stroke="#BA7517" stroke-width="0.5" marker-end="url(#arr)"/>
+      <line x1="770" y1="966" x2="480" y2="994" stroke="#993C1D" stroke-width="0.5" marker-end="url(#arr)"/>
+      <line x1="770" y1="966" x2="680" y2="994" stroke="#534AB7" stroke-width="0.5" marker-end="url(#arr)"/>
+
+      <!-- ══ MULTI-CONDITION EXIT ══ -->
+      <rect x="200" y="1058" width="450" height="50" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="1"/>
+      <text font-family="var(--font-sans)" font-size="12" font-weight="500" fill="#085041" x="425" y="1076" text-anchor="middle" dominant-baseline="central">Multi-condition patient — add another condition</text>
+      <text font-family="var(--font-sans)" font-size="10" fill="#0F6E56" x="425" y="1096" text-anchor="middle" dominant-baseline="central">Episode stays open · Patient re-enters at Module E for new condition</text>
+
+      <!-- Arrow from exits down to multi condition -->
+      <path d="M100 1032 Q100 1080 200 1082" fill="none" stroke="#888780" stroke-width="0.5" stroke-dasharray="4 2" marker-end="url(#arr)"/>
+      <path d="M290 1032 Q290 1082 200 1082" fill="none" stroke="#888780" stroke-width="0.5" stroke-dasharray="4 2" marker-end="url(#arr)"/>
+      <path d="M680 1032 Q680 1082 650 1082" fill="none" stroke="#888780" stroke-width="0.5" stroke-dasharray="4 2" marker-end="url(#arr)"/>
+
+      <!-- Re-entry arrow back up to E -->
+      <path d="M200 1058 Q60 1058 60 660" fill="none" stroke="#0F6E56" stroke-width="1" stroke-dasharray="5 3" marker-end="url(#arr)"/>
+      <text font-family="var(--font-sans)" font-size="9" fill="#0F6E56" x="20" y="870" transform="rotate(-90,20,870)">re-entry → Module E</text>
+
+      <!-- Mid-flow exit arrow (save draft) -->
+      <g class="node-click" onclick="show('save-draft')">
+        <rect x="790" y="750" width="130" height="30" rx="4" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/>
+        <text font-family="var(--font-sans)" font-size="10" fill="#444441" x="855" y="765" text-anchor="middle" dominant-baseline="central">↙ Save draft (any screen)</text>
+      </g>
+      <path d="M640 765 Q760 765 788 765" fill="none" stroke="#888780" stroke-width="0.5" stroke-dasharray="3 2" marker-end="url(#arr)"/>
+
+    </svg>
+  </div>
+
+  <div class="info-panel" id="info-panel">
+    <strong>Click any node to learn more</strong>
+    Four questionnaires share common modules (A–D) and branch into condition-specific paths. Multiple entry and exit points allow patients to add conditions or save drafts at any stage.
+  </div>
+
+  <div class="cta-row">
+    <button class="cta-btn" onclick="sendPrompt('Walk me through the C2b RAI branch point in detail — what triggers the switch to the Hypo questionnaire and how is that handled in code?')">C2b RAI branch ↗</button>
+    <button class="cta-btn" onclick="sendPrompt('What are all the gender and reproductive gating rules across the questionnaire flow?')">Gender gating rules ↗</button>
+    <button class="cta-btn" onclick="sendPrompt('How does the TSH branch in the Thyroid Nodule questionnaire route to Hypo or Hyper?')">TSH nodule branch ↗</button>
+    <button class="cta-btn" onclick="sendPrompt('Show me the differences between Hypo H and Hyper H comorbidity modules')">Hypo vs Hyper H ↗</button>
+    <button class="cta-btn" onclick="sendPrompt('How should multi-condition patients re-enter the questionnaire flow for a second condition?')">Multi-condition flow ↗</button>
+  </div>
+</div>
+
+<script>
+const INFO = {
+  'hypo-entry':   { title:'Hypothyroidism entry', tags:[{l:'Hypo',c:'tag-hypo'}], body:'Patient enters via Add Condition → Hypothyroidism. Module A–D are always run first. All four questionnaires share the same demographics and labs modules.' },
+  'hyper-entry':  { title:'Hyperthyroidism entry', tags:[{l:'Hyper',c:'tag-hyper'}], body:'Patient enters via Add Condition → Hyperthyroidism. Includes Graves\' disease, Toxic MNG, and AFTN. Passes through Module A → B → C → D → E1 branching.' },
+  'tc-entry':     { title:'Thyroid cancer entry', tags:[{l:'CA Thyroid',c:'tag-tc'}], body:'Patient enters via Add Condition → CA Thyroid. Includes papillary, follicular, medullary and anaplastic subtypes. Shares A–D with other questionnaires.' },
+  'nodule-entry': { title:'Thyroid nodule entry', tags:[{l:'Nodule',c:'tag-nodule'}], body:'Patient enters via Add Condition → Thyroid Nodule. A4 (occupation) is extra here — voice-dependent professions get a physician flag. TSH result can route to Hypo/Hyper branch.' },
+  'mod-a': { title:'Module A — Demographics', tags:[{l:'Shared all',c:'tag-shared'}], body:'3–4 screens. DOB (auto-calculates age), biological sex (gates all of Module B), marital status (gates B5 pregnancy and H5 infertility). Nodule and Hyper also capture occupation (A4).' },
+  'mod-b': { title:'Module B — Menstrual & Pregnancy', tags:[{l:'Female only',c:'tag-shared'}], body:'Up to 5 screens. Automatically skipped for Male. B1 Hysterectomy → hides B3, B4, B5, H5. B2 Post-menopausal → hides B4, B5. A3 Unmarried/Divorced/Widowed → hides B5 and H5. EDD = LMP + 9 months + 7 days.' },
+  'mod-c': { title:'Module C — Thyroid history & medication', tags:[{l:'Shared all',c:'tag-shared'}], body:'5–6 screens shared across all conditions. C1 prior diagnosis · C2a surgery · C2b RAI (critical branch point for Hyper) · C3 current medication (gates G3 dose change) · C4 family history · C5 autoimmune conditions.' },
+  'mod-d': { title:'Module D — Laboratory capture', tags:[{l:'Shared',c:'tag-shared'},{l:'Hyper extra',c:'tag-hyper'}], body:'Hypo/TC/Nodule: D1 TSH · D2 FT4 · D3 FT3 · D4 Anti-TPO/Tg · D5 Imaging. Hyper has one extra page: D4 = TRAb/TSI (Graves\' antibodies), D5 = Anti-TPO/Tg, D6 = Imaging. All support report upload and AI extraction.' },
+  'branch-rai': { title:'⚑ Critical branch — C2b post-RAI hypothyroid', tags:[{l:'Branch',c:'tag-tc'}], body:'If patient on Hyper questionnaire answers Yes to "Did you become hypothyroid after RAI?" → onComplete({ switchToHypo: true }) fires. The Hyper F symptom module is REPLACED by Hypo F1 onwards. Modules G and H continue as Hyper.' },
+  'branch-tsh': { title:'⚑ TSH branch in Nodule questionnaire', tags:[{l:'Nodule',c:'tag-nodule'},{l:'Branch',c:'tag-tc'}], body:'If TSH from D1 is abnormally low → route to Hyper questionnaire E onwards. If TSH is abnormally high → route to Hypo questionnaire F onwards. Normal TSH → continue with Nodule-specific modules.' },
+  'branch-e1': { title:'⚑ E1 Cause branch in Hyperthyroidism', tags:[{l:'Hyper',c:'tag-hyper'},{l:'Branch',c:'tag-tc'}], body:'E1 = Graves\' disease → show E2 (ophthalmopathy, dermopathy, acropathy). E1 = Toxic MNG or AFTN → show E3 (FNAC, nodule size). E1 = No/Unsure or other cause → skip both, go to E4. E4 (goitre) always shown for ALL patients. E5 FNAC hidden if E3 already captured it.' },
+  'branch-g3': { title:'G3 dose change gate', tags:[{l:'Hyper',c:'tag-hyper'}], body:'G3 (dose change direction, date, reason) is shown ONLY if C3 = Yes (patient currently on thyroid medication). No separate G1. C3 serves as the gating condition. G3 has a Direction field (increased/reduced) not present in Hypo G2.' },
+  'hypo-e': { title:'Hypo Module E — not present', tags:[{l:'Hypo',c:'tag-hypo'}], body:'Hypothyroidism has no Module E. After completing D (labs), the patient proceeds directly to Module F symptoms.' },
+  'hyper-e': { title:'Hyper Module E — cause & characterisation', tags:[{l:'Hyper',c:'tag-hyper'}], body:'5 pages. E1 identifies cause and drives branching. E2 Graves\' features (ophthalmologist not consulted — "assessed by"). E3 Toxic MNG/AFTN features with FNAC. E4 goitre always. E5 FNAC only if E3 was not shown.' },
+  'tc-e': { title:'CA Thyroid Module E — diagnosis & staging', tags:[{l:'CA Thyroid',c:'tag-tc'}], body:'E1 cancer type (PTC, FTC, MTC, Anaplastic etc.) + year of diagnosis. E2 staging. E3 surgery (total/hemi thyroidectomy, date, post-op Hypo?). E4 RAI doses for ablation. E5 thyroglobulin monitoring.' },
+  'nodule-eg': { title:'Nodule Modules E & G — discovery & management', tags:[{l:'Nodule',c:'tag-nodule'}], body:'E: How/when noticed · size change · doctor seen. G: Local symptoms (visible lump, pain, dysphagia, hoarseness, SOB). Management plan discussion, outcomes discussed, reason for seeking opinion now.' },
+  'hypo-f': { title:'Hypo Module F — symptoms (25 pages)', tags:[{l:'Hypo',c:'tag-hypo'}], body:'F1 Fatigue · F2 Weight gain · F3 Appetite · F4 Cold intolerance · F5 Constipation · F6 Abdominal · F7 Skin (dryness, roughness, pallor) · F8a/b Peri-orbital/facial puffiness · F9 Leg oedema · F10 Hair (loss, dryness, lateral eyebrow) · F11 Nails (brittle, slow growing) · F12 Hoarseness · F13 Cramps · F14 Myopathy · F15a/b Cognition/Memory · F16 Mood · F17 Hypersomnia · F18 Bradycardia · F19 Giddiness · F20 Blackout · F21 Hearing · F22 Reflexes · F23 Carpal tunnel · F24 Macroglossia · F25 Additional.' },
+  'hyper-f': { title:'Hyper Module F — symptoms (25 pages)', tags:[{l:'Hyper',c:'tag-hyper'}], body:'F1 Fatigue · F2 Weight loss · F3 Appetite increased · F4 Heat intolerance · F5 Sweating · F6 Bowel (diarrhoea) · F7 Skin (warm/moist/flushing) · F8a/b Eye/face puffiness · F9 Leg oedema · F10 Hair (fine/silky) · F11 Nails (onycholysis/fast growing) · F12 Hoarseness · F13 Myopathy · F14 Cramps · F15 Tremors · F16 Anxiety · F17 Irritability · F18 Insomnia · F19 Palpitations · F20 AF · F21 Giddiness · F22 Blackout · F23 Dyspnoea · F24 Concentration · F25 Memory.' },
+  'tc-nodule-f': { title:'TC/Nodule — systemic symptoms', tags:[{l:'CA Thyroid',c:'tag-tc'},{l:'Nodule',c:'tag-nodule'}], body:'Both TC and Nodule questionnaires capture systemic symptoms in their Module H. Covers fatigue, weight change, mood, sleep, prior opinions sought, current medications, and additional notes.' },
+  'nodule-g': { title:'Nodule Module G — local symptoms', tags:[{l:'Nodule',c:'tag-nodule'}], body:'Q22–Q28: Visible lump, neck pain, dysphagia, voice change/hoarseness, difficulty breathing, tightness in neck, other local pressure symptoms. Duration captured for each. Voice-dependent occupation flag from A4 makes hoarseness a priority finding.' },
+  'tc-local': { title:'TC Module F — local & radiation symptoms', tags:[{l:'CA Thyroid',c:'tag-tc'}], body:'Post-surgery and post-RAI symptoms. Hoarseness (RLN injury), dysphagia, lymph node swelling, radiation-related skin changes. Prior treatment response captured here.' },
+  'hypo-g': { title:'Hypo Module G — treatment & monitoring', tags:[{l:'Hypo',c:'tag-hypo'}], body:'G1 Currently on treatment (gates G2 dose change). G2 Dose change — name, old dose, new dose, date, reason. G3 Monitoring frequency (every 3 months / 6 months / other), next review date.' },
+  'hyper-g': { title:'Hyper Module G — treatment & monitoring', tags:[{l:'Hyper',c:'tag-hyper'}], body:'G2 Definitive treatment plan (RAI / surgery / not decided), planned date. G3 Dose change (gated by C3) — direction increased/reduced, date, reason. G4 Beta-blocker (name, dose, frequency). G5 Monitoring frequency (every 4–6 weeks on ATD vs 3–6 months for Hypo).' },
+  'hypo-h': { title:'Hypo Module H — comorbidities', tags:[{l:'Hypo',c:'tag-hypo'}], body:'H1 Dyslipidaemia (no medication sub-questions — to be back-ported from Hyper). H2 Anaemia. H3 PCOS. H4 Infertility (Female; gated by hysterectomy + marital). H5 Depression. H6 Additional notes.' },
+  'hyper-h': { title:'Hyper Module H — comorbidities', tags:[{l:'Hyper',c:'tag-hyper'}], body:'H1 Dyslipidaemia + full medication sub-questions. H2 Diabetes (not anaemia — different from Hypo). H3 Anaemia. H4 PCOS/PMOS. H5 Infertility (female gated). H6 Depression. H8 Osteoporosis (NEW — thyrotoxicosis causes bone loss). H9 Additional notes.' },
+  'tc-nodule-h': { title:'TC/Nodule Module J — risk factors & finish', tags:[{l:'CA Thyroid',c:'tag-tc'},{l:'Nodule',c:'tag-nodule'}], body:'Comorbidities, family history of thyroid cancer, prior radiation exposure (childhood neck irradiation is a major TC risk factor), current medications list, additional notes, and final submission.' },
+  'exit-hypo':   { title:'Hypothyroidism — complete', tags:[{l:'Hypo',c:'tag-hypo'}], body:'All modules completed. Physician summary auto-generated in green italic format. Episode marked complete. Patient can add another condition to the same episode, re-entering at Module E.' },
+  'exit-hyper':  { title:'Hyperthyroidism — complete', tags:[{l:'Hyper',c:'tag-hyper'}], body:'All modules completed. If C2b RAI branch fired, the summary includes Hypo F module data seamlessly merged with Hyper G and H data.' },
+  'exit-tc':     { title:'CA Thyroid — complete', tags:[{l:'CA Thyroid',c:'tag-tc'}], body:'Full cancer history, staging, treatment, and symptom profile compiled. Physician output is formatted as a clinical summary with all key findings highlighted.' },
+  'exit-nodule': { title:'Thyroid Nodule — complete', tags:[{l:'Nodule',c:'tag-nodule'}], body:'Nodule discovery, labs, local symptoms, systemic review, and risk factors compiled. If TSH was abnormal, the routed questionnaire data is included in the summary.' },
+  'save-draft': { title:'Save draft — available on every screen', tags:[{l:'All',c:'tag-shared'}], body:'Every screen in every questionnaire shows a Save Draft button. Data is persisted via conditionAPI.saveHypoQ / saveHyperQ / saveTcQ (patientId, episodeId, data). On re-open, getHypoQ / getHyperQ / getTcQ restores state and the questionnaire resumes from the last answered screen.' },
+};
+
+function show(key) {
+  const d = INFO[key];
+  if (!d) return;
+  const panel = document.getElementById('info-panel');
+  const tags = (d.tags||[]).map(t => `<span class="tag ${t.c}">${t.l}</span>`).join('');
+  panel.innerHTML = `<strong>${d.title}</strong>${tags}<div style="margin-top:6px">${d.body}</div>`;
+}
+</script>

@@ -1,0 +1,8 @@
+Field Name (snake_case),Display Label,MySQL Data Type,Constraints / Description
+prescription_id,Prescription ID,BIGINT UNSIGNED,"Primary Key, Auto Increment"
+consultation_id,Consultation ID,BIGINT UNSIGNED,Foreign Key -> consultations.consultation_id
+medication_name,Drug Name,VARCHAR(150),"NOT NULL (e.g., Amoxicillin 500mg)"
+dosage,Dosage,VARCHAR(50),"NOT NULL (e.g., 1 tablet)"
+frequency,Frequency,VARCHAR(50),"NOT NULL (e.g., Twice daily after food)"
+duration_days,Duration,SMALLINT UNSIGNED,"NOT NULL (e.g., 5 days)"
+special_instructions,Instructions,TEXT,"NULL (e.g., Take with plenty of water)"

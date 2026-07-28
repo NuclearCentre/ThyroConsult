@@ -1,0 +1,563 @@
+// src/controllers/opinionController.js
+// Opinion workflow — doctor writes opinion, patient acknowledges
+// All routes require JWT auth (verifyToken middleware applied in routes/index.js)
+
+const db = require('../config/database');
+const { notificationService } = require('../services/notificationService');
+const { notificationTemplates } = require('../services/notificationTemplates');
+
+// ─── Helper ────────────────────────────────────────────────────────────────
+
+function toIST(date) {
+  // Returns a Date adjusted to IST (UTC+5:30) for time-window checks
+  const ist = new Date(date.getTime() + (5.5 * 60 * 60 * 1000));
+  return ist;
+}
+
+function isWithinAllowedWindow(nowUtc) {
+  // 9 am – 9 pm IST
+  const ist = toIST(nowUtc);
+  const hour = ist.getUTCHours(); // after adding 5.5h offset, getUTCHours = IST hour
+  return hour >= 9 && hour < 21;
+}
+
+// ─── 1. Investigation master list ──────────────────────────────────────────
+
+exports.getInvestigationMaster = async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT id, category, test_name, display_order
+       FROM investigation_master
+       WHERE is_active = TRUE
+       ORDER BY category, display_order`,
+      []
+    );
+
+    // Group by category
+    const grouped = {};
+    for (const row of result.rows) {
+      if (!grouped[row.category]) grouped[row.category] = [];
+      grouped[row.category].push({ id: row.id, name: row.test_name, display_order: row.display_order });
+    }
+
+    res.json({ success: true, data: grouped });
+  } catch (err) {
+    console.error('getInvestigationMaster error:', err);
+    res.status(500).json({ success: false, message: 'Failed to load investigation list' });
+  }
+};
+
+// ─── 2. Doctor: get pending queue ──────────────────────────────────────────
+
+exports.getPhysicianQueue = async (req, res) => {
+  try {
+    const doctorId = req.user.id;
+    const now = new Date();
+
+    const result = await db.query(
+      `SELECT
+         pce.id              AS episode_id,
+         pce.patient_id,
+         pce.condition_type,
+         pce.submitted_at,
+         pce.opinion_submitted_at,
+         pce.opinion_id,
+         pce.episode_closed_at,
+         p.first_name,
+         p.last_name,
+         p.age,
+         p.sex,
+         EXTRACT(EPOCH FROM (NOW() - pce.submitted_at)) / 3600 AS hours_since_submission,
+         o.status            AS opinion_status
+       FROM patient_condition_episodes pce
+       JOIN patients p ON p.id = pce.patient_id
+       LEFT JOIN opinions o ON o.id = pce.opinion_id
+       WHERE pce.primary_doctor_id = $1
+         AND pce.submitted_at IS NOT NULL
+         AND pce.episode_closed_at IS NULL
+       ORDER BY pce.submitted_at ASC`,
+      [doctorId]
+    );
+
+    const queue = result.rows.map(row => ({
+      episodeId:            row.episode_id,
+      patientId:            row.patient_id,
+      patientName:          `${row.first_name} ${row.last_name}`,
+      age:                  row.age,
+      sex:                  row.sex,
+      conditionType:        row.condition_type,
+      submittedAt:          row.submitted_at,
+      opinionStatus:        row.opinion_status || 'pending',
+      opinionSubmittedAt:   row.opinion_submitted_at,
+      hoursSinceSubmission: parseFloat(row.hours_since_submission || 0).toFixed(1),
+      isOverdue:            parseFloat(row.hours_since_submission || 0) >= 48,
+      isCritical:           parseFloat(row.hours_since_submission || 0) >= 72,
+    }));
+
+    res.json({ success: true, data: queue });
+  } catch (err) {
+    console.error('getPhysicianQueue error:', err);
+    res.status(500).json({ success: false, message: 'Failed to load queue' });
+  }
+};
+
+// ─── 3. Doctor: get full episode for review ────────────────────────────────
+
+exports.getEpisodeForReview = async (req, res) => {
+  try {
+    const { episodeId } = req.params;
+    const doctorId = req.user.id;
+
+    // Episode + patient basics
+    const epResult = await db.query(
+      `SELECT
+         pce.*,
+         p.first_name, p.last_name, p.age, p.sex, p.phone, p.email,
+         p.marital_status, p.address_city, p.address_state
+       FROM patient_condition_episodes pce
+       JOIN patients p ON p.id = pce.patient_id
+       WHERE pce.id = $1 AND pce.primary_doctor_id = $2`,
+      [episodeId, doctorId]
+    );
+
+    if (!epResult.rows.length) {
+      return res.status(404).json({ success: false, message: 'Episode not found or not assigned to you' });
+    }
+
+    const episode = epResult.rows[0];
+
+    // Questionnaire answers (pick correct table by condition_type)
+    let questionnaireData = null;
+    const conditionTableMap = {
+      hypothyroidism: 'hypo_questionnaire',
+      hyperthyroidism: 'hyper_questionnaire',
+      thyroid_cancer:  'tc_questionnaire',
+      thyroid_nodule:  'tc_questionnaire', // uses same table or separate — adjust if needed
+    };
+    const qTable = conditionTableMap[episode.condition_type];
+    if (qTable) {
+      const qResult = await db.query(
+        `SELECT * FROM ${qTable} WHERE episode_id = $1`,
+        [episodeId]
+      );
+      questionnaireData = qResult.rows[0] || null;
+    }
+
+    // Uploaded documents
+    const docsResult = await db.query(
+      `SELECT id, doc_type, file_name, file_url, uploaded_at
+       FROM documents
+       WHERE episode_id = $1
+       ORDER BY uploaded_at DESC`,
+      [episodeId]
+    );
+
+    // Existing draft opinion if any
+    const opinionResult = await db.query(
+      `SELECT * FROM opinions WHERE episode_id = $1 ORDER BY created_at DESC LIMIT 1`,
+      [episodeId]
+    );
+
+    res.json({
+      success: true,
+      data: {
+        episode,
+        questionnaire: questionnaireData,
+        documents: docsResult.rows,
+        opinion: opinionResult.rows[0] || null,
+      }
+    });
+  } catch (err) {
+    console.error('getEpisodeForReview error:', err);
+    res.status(500).json({ success: false, message: 'Failed to load episode' });
+  }
+};
+
+// ─── 4. Doctor: save draft opinion ─────────────────────────────────────────
+
+exports.saveDraftOpinion = async (req, res) => {
+  try {
+    const { episodeId } = req.params;
+    const doctorId = req.user.id;
+    const { clinicalSummary, impression, advice, investigations, remarks } = req.body;
+
+    // Verify episode belongs to this doctor
+    const epCheck = await db.query(
+      `SELECT id, patient_id FROM patient_condition_episodes
+       WHERE id = $1 AND primary_doctor_id = $2`,
+      [episodeId, doctorId]
+    );
+    if (!epCheck.rows.length) {
+      return res.status(403).json({ success: false, message: 'Episode not assigned to you' });
+    }
+    const { patient_id: patientId } = epCheck.rows[0];
+
+    // Upsert draft (one opinion per episode)
+    const existing = await db.query(
+      `SELECT id, status FROM opinions WHERE episode_id = $1`,
+      [episodeId]
+    );
+
+    if (existing.rows.length) {
+      if (existing.rows[0].status === 'acknowledged') {
+        return res.status(400).json({ success: false, message: 'Opinion already acknowledged by patient — cannot edit' });
+      }
+      await db.query(
+        `UPDATE opinions SET
+           clinical_summary  = $1,
+           impression        = $2,
+           advice            = $3,
+           investigations    = $4,
+           remarks           = $5,
+           last_amended_at   = NOW()
+         WHERE id = $6`,
+        [clinicalSummary, impression, advice, JSON.stringify(investigations || []), remarks, existing.rows[0].id]
+      );
+      return res.json({ success: true, message: 'Draft saved', opinionId: existing.rows[0].id });
+    }
+
+    // Create new draft
+    const insert = await db.query(
+      `INSERT INTO opinions
+         (episode_id, patient_id, doctor_id, clinical_summary, impression, advice, investigations, remarks, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'draft')
+       RETURNING id`,
+      [episodeId, patientId, doctorId, clinicalSummary, impression, advice, JSON.stringify(investigations || []), remarks]
+    );
+
+    res.json({ success: true, message: 'Draft saved', opinionId: insert.rows[0].id });
+  } catch (err) {
+    console.error('saveDraftOpinion error:', err);
+    res.status(500).json({ success: false, message: 'Failed to save draft' });
+  }
+};
+
+// ─── 5. Doctor: submit opinion (final) ─────────────────────────────────────
+
+exports.submitOpinion = async (req, res) => {
+  try {
+    const { episodeId } = req.params;
+    const doctorId = req.user.id;
+    const { clinicalSummary, impression, advice, investigations, remarks } = req.body;
+
+    if (!clinicalSummary || !impression || !advice) {
+      return res.status(400).json({
+        success: false,
+        message: 'Clinical Summary, Impression, and Advice are required before submitting'
+      });
+    }
+
+    // Verify episode
+    const epCheck = await db.query(
+      `SELECT pce.id, pce.patient_id, p.first_name, p.last_name, p.phone, p.email
+       FROM patient_condition_episodes pce
+       JOIN patients p ON p.id = pce.patient_id
+       WHERE pce.id = $1 AND pce.primary_doctor_id = $2`,
+      [episodeId, doctorId]
+    );
+    if (!epCheck.rows.length) {
+      return res.status(403).json({ success: false, message: 'Episode not assigned to you' });
+    }
+
+    const ep = epCheck.rows[0];
+    const now = new Date();
+
+    // Upsert + mark submitted
+    const existing = await db.query(
+      `SELECT id, status FROM opinions WHERE episode_id = $1`,
+      [episodeId]
+    );
+
+    let opinionId;
+    if (existing.rows.length) {
+      if (existing.rows[0].status === 'acknowledged') {
+        return res.status(400).json({ success: false, message: 'Opinion already acknowledged by patient' });
+      }
+      await db.query(
+        `UPDATE opinions SET
+           clinical_summary = $1, impression = $2, advice = $3,
+           investigations   = $4, remarks    = $5,
+           status           = 'submitted', submitted_at = NOW(), last_amended_at = NOW()
+         WHERE id = $6`,
+        [clinicalSummary, impression, advice, JSON.stringify(investigations || []), remarks, existing.rows[0].id]
+      );
+      opinionId = existing.rows[0].id;
+    } else {
+      const insert = await db.query(
+        `INSERT INTO opinions
+           (episode_id, patient_id, doctor_id, clinical_summary, impression, advice, investigations, remarks, status, submitted_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'submitted', NOW())
+         RETURNING id`,
+        [episodeId, ep.patient_id, doctorId, clinicalSummary, impression, advice, JSON.stringify(investigations || []), remarks]
+      );
+      opinionId = insert.rows[0].id;
+    }
+
+    // Update episode
+    await db.query(
+      `UPDATE patient_condition_episodes SET
+         opinion_id           = $1,
+         opinion_submitted_at = NOW(),
+         alert_stopped        = TRUE
+       WHERE id = $2`,
+      [opinionId, episodeId]
+    );
+
+    // Notify patient — WhatsApp + email
+    const patient = { name: `${ep.first_name} ${ep.last_name}`, phone: ep.phone, email: ep.email };
+    const template = notificationTemplates.opinionReady(patient);
+    await notificationService.notify(patient, template).catch(e =>
+      console.error('Opinion notify patient error:', e)
+    );
+
+    res.json({ success: true, message: 'Online opinion submitted successfully', opinionId });
+  } catch (err) {
+    console.error('submitOpinion error:', err);
+    res.status(500).json({ success: false, message: 'Failed to submit opinion' });
+  }
+};
+
+// ─── 6. Doctor: amend opinion (only if not yet acknowledged) ───────────────
+
+exports.amendOpinion = async (req, res) => {
+  try {
+    const { opinionId } = req.params;
+    const doctorId = req.user.id;
+    const { clinicalSummary, impression, advice, investigations, remarks } = req.body;
+
+    const opResult = await db.query(
+      `SELECT o.*, pce.primary_doctor_id
+       FROM opinions o
+       JOIN patient_condition_episodes pce ON pce.id = o.episode_id
+       WHERE o.id = $1`,
+      [opinionId]
+    );
+
+    if (!opResult.rows.length) {
+      return res.status(404).json({ success: false, message: 'Opinion not found' });
+    }
+
+    const op = opResult.rows[0];
+
+    if (op.doctor_id !== doctorId) {
+      return res.status(403).json({ success: false, message: 'Not your opinion' });
+    }
+    if (op.status === 'acknowledged') {
+      return res.status(400).json({ success: false, message: 'Patient has already acknowledged — no further amendments allowed' });
+    }
+
+    await db.query(
+      `UPDATE opinions SET
+         clinical_summary = $1, impression = $2, advice = $3,
+         investigations   = $4, remarks    = $5,
+         last_amended_at  = NOW()
+       WHERE id = $6`,
+      [clinicalSummary, impression, advice, JSON.stringify(investigations || []), remarks, opinionId]
+    );
+
+    res.json({ success: true, message: 'Opinion amended successfully' });
+  } catch (err) {
+    console.error('amendOpinion error:', err);
+    res.status(500).json({ success: false, message: 'Failed to amend opinion' });
+  }
+};
+
+// ─── 7. Doctor: close episode ──────────────────────────────────────────────
+
+exports.closeEpisode = async (req, res) => {
+  try {
+    const { episodeId } = req.params;
+    const doctorId = req.user.id;
+
+    const epCheck = await db.query(
+      `SELECT id FROM patient_condition_episodes
+       WHERE id = $1 AND primary_doctor_id = $2`,
+      [episodeId, doctorId]
+    );
+    if (!epCheck.rows.length) {
+      return res.status(403).json({ success: false, message: 'Episode not found or not assigned to you' });
+    }
+
+    await db.query(
+      `UPDATE patient_condition_episodes SET episode_closed_at = NOW() WHERE id = $1`,
+      [episodeId]
+    );
+
+    res.json({ success: true, message: 'Episode closed' });
+  } catch (err) {
+    console.error('closeEpisode error:', err);
+    res.status(500).json({ success: false, message: 'Failed to close episode' });
+  }
+};
+
+// ─── 8. Patient: get opinion ───────────────────────────────────────────────
+
+exports.getPatientOpinion = async (req, res) => {
+  try {
+    const { episodeId } = req.params;
+    const patientId = req.user.id;
+
+    const result = await db.query(
+      `SELECT o.*, d.first_name AS doctor_first, d.last_name AS doctor_last, d.qualification
+       FROM opinions o
+       JOIN doctors d ON d.id = o.doctor_id
+       WHERE o.episode_id = $1 AND o.patient_id = $2
+         AND o.status IN ('submitted', 'acknowledged')`,
+      [episodeId, patientId]
+    );
+
+    if (!result.rows.length) {
+      return res.json({ success: true, data: null, message: 'Opinion not yet available' });
+    }
+
+    const op = result.rows[0];
+    res.json({
+      success: true,
+      data: {
+        opinionId:       op.id,
+        doctorName:      `Dr. ${op.doctor_first} ${op.doctor_last}`,
+        qualification:   op.qualification,
+        clinicalSummary: op.clinical_summary,
+        impression:      op.impression,
+        advice:          op.advice,
+        investigations:  op.investigations || [],
+        remarks:         op.remarks,
+        status:          op.status,
+        submittedAt:     op.submitted_at,
+        acknowledgedAt:  op.acknowledged_at,
+        lastAmendedAt:   op.last_amended_at,
+      }
+    });
+  } catch (err) {
+    console.error('getPatientOpinion error:', err);
+    res.status(500).json({ success: false, message: 'Failed to load opinion' });
+  }
+};
+
+// ─── 9. Patient: acknowledge opinion ──────────────────────────────────────
+
+exports.acknowledgeOpinion = async (req, res) => {
+  try {
+    const { opinionId } = req.params;
+    const patientId = req.user.id;
+
+    const opResult = await db.query(
+      `SELECT * FROM opinions WHERE id = $1 AND patient_id = $2`,
+      [opinionId, patientId]
+    );
+
+    if (!opResult.rows.length) {
+      return res.status(404).json({ success: false, message: 'Opinion not found' });
+    }
+
+    const op = opResult.rows[0];
+
+    if (op.status === 'acknowledged') {
+      return res.json({ success: true, message: 'Already acknowledged' });
+    }
+    if (op.status !== 'submitted') {
+      return res.status(400).json({ success: false, message: 'Opinion is not ready for acknowledgement' });
+    }
+
+    const ip        = req.ip || req.connection.remoteAddress;
+    const userAgent = req.headers['user-agent'] || '';
+
+    // Mark acknowledged
+    await db.query(
+      `UPDATE opinions SET status = 'acknowledged', acknowledged_at = NOW() WHERE id = $1`,
+      [opinionId]
+    );
+
+    // Log acknowledgement
+    await db.query(
+      `INSERT INTO patient_acknowledgements (opinion_id, patient_id, ip_address, user_agent)
+       VALUES ($1, $2, $3, $4)`,
+      [opinionId, patientId, ip, userAgent]
+    );
+
+    // Update episode
+    await db.query(
+      `UPDATE patient_condition_episodes SET opinion_acknowledged_at = NOW() WHERE id = $1`,
+      [op.episode_id]
+    );
+
+    res.json({ success: true, message: 'Opinion acknowledged' });
+  } catch (err) {
+    console.error('acknowledgeOpinion error:', err);
+    res.status(500).json({ success: false, message: 'Failed to acknowledge opinion' });
+  }
+};
+
+// ─── 10. Patient: get episode timeline ────────────────────────────────────
+
+exports.getEpisodeTimeline = async (req, res) => {
+  try {
+    const { episodeId } = req.params;
+    const patientId = req.user.id;
+
+    const result = await db.query(
+      `SELECT
+         pce.id, pce.condition_type, pce.created_at AS paid_at,
+         pce.submitted_at, pce.opinion_submitted_at,
+         pce.opinion_acknowledged_at, pce.episode_closed_at,
+         pce.has_missing_reports, pce.has_advised_investigations,
+         o.status AS opinion_status
+       FROM patient_condition_episodes pce
+       LEFT JOIN opinions o ON o.id = pce.opinion_id
+       WHERE pce.id = $1 AND pce.patient_id = $2`,
+      [episodeId, patientId]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({ success: false, message: 'Episode not found' });
+    }
+
+    const ep = result.rows[0];
+
+    const steps = [
+      {
+        key:       'paid',
+        label:     'Payment Received',
+        detail:    'Your online opinion fee has been received.',
+        completed: !!ep.paid_at,
+        timestamp: ep.paid_at,
+      },
+      {
+        key:       'submitted',
+        label:     'Details Submitted',
+        detail:    'Your medical information and reports have been submitted.',
+        completed: !!ep.submitted_at,
+        timestamp: ep.submitted_at,
+      },
+      {
+        key:       'reviewing',
+        label:     'Doctor Reviewing',
+        detail:    ep.opinion_submitted_at
+                     ? 'Our panel doctor has completed the review.'
+                     : 'Our panel doctor is reviewing your details. You will be notified within 48–72 hours.',
+        completed: !!ep.opinion_submitted_at,
+        timestamp: null,
+        inProgress: !!ep.submitted_at && !ep.opinion_submitted_at,
+      },
+      {
+        key:       'opinion_ready',
+        label:     'Online Opinion Ready',
+        detail:    'Your online opinion is ready. Please review and acknowledge.',
+        completed: !!ep.opinion_submitted_at,
+        timestamp: ep.opinion_submitted_at,
+      },
+      {
+        key:       'closed',
+        label:     'Visit Closed',
+        detail:    'This visit has been completed.',
+        completed: !!ep.episode_closed_at,
+        timestamp: ep.episode_closed_at,
+      },
+    ];
+
+    res.json({ success: true, data: { steps, conditionType: ep.condition_type } });
+  } catch (err) {
+    console.error('getEpisodeTimeline error:', err);
+    res.status(500).json({ success: false, message: 'Failed to load timeline' });
+  }
+};

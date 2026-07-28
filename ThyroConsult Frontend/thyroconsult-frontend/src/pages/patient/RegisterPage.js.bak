@@ -1,0 +1,637 @@
+import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import Webcam from 'react-webcam';
+import SignaturePad from 'react-signature-canvas';
+import { authAPI, doctorAPI } from '../../api';
+import { Logo, HIPAABadge, Alert, Spinner } from '../../components/common/index';
+
+const STEPS = ['Personal info','Verify contacts','E-consent','Live photo','Choose doctor','Upload reports','Payment'];
+
+const CONSENT_TEXT = {
+  treatment: `I, the undersigned, hereby consent to receive thyroid consultation services from the licensed physicians at ThyroConsult. I understand that consultations will be conducted via this secure, HIPAA-compliant telemedicine platform. I acknowledge that I have been fully informed of the nature of the telemedicine consultation, including its risks, benefits, and available alternatives. I understand my consultation will be documented and that records will be maintained securely in accordance with applicable medical record laws.`,
+  data_privacy: `I consent to the secure collection, storage, and processing of my Protected Health Information (PHI) as described under HIPAA Privacy Rule 45 CFR §164. I understand that my data will be encrypted using AES-256 standards and will only be accessible to my treating physician and authorised platform administrators. My data will not be sold, shared, or used for any purpose other than my medical care without my explicit written consent.`,
+  telemedicine: `I understand and accept the limitations of telemedicine including the inability to perform physical examinations. I consent to receive medical consultation via video, audio, or text-based telemedicine as offered by ThyroConsult. I acknowledge that in case of a medical emergency, I should contact emergency services immediately. I have been informed about the technology requirements and privacy measures in place.`,
+};
+
+const RegisterPage = () => {
+  const navigate = useNavigate();
+  const [step, setStep] = useState(1);
+  const [patientId, setPatientId] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [savedAt, setSavedAt] = useState('');
+  const webcamRef = useRef(null);
+  const sigPadRef = useRef(null);
+
+  // Step 1 form state
+  const [form, setForm] = useState({
+    firstName: '', middleName: '', lastName: '',
+    guardianName: '', guardianRelation: '',
+    dob: '', age: { yy: '', mm: '', dd: '' }, dobAutoCalculated: false,
+    gender: '', bloodGroup: '',
+    addressLine1: '', addressLine2: '', city: '', state: '', pincode: '',
+    mobile: '', whatsapp: '', email: '',
+    password: '', confirmPassword: '',
+  });
+
+  // Step 2 verification state
+  const [verification, setVerification] = useState({ mobile: false, whatsapp: false, email: false });
+  const [otpValues, setOtpValues] = useState({ mobile: '', whatsapp: '', email: '' });
+  const [otpSent, setOtpSent] = useState({ mobile: false, whatsapp: false, email: false });
+
+  // Step 3 consents
+  const [consents, setConsents] = useState({ treatment: false, data_privacy: false, telemedicine: false });
+
+  // Step 4 photo
+  const [photoCapture, setPhotoCapture] = useState(null);
+  const [photoConsent, setPhotoConsent] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
+
+  // Step 5 doctors
+  const [doctors, setDoctors] = useState([]);
+  const [selectedDoctor, setSelectedDoctor] = useState(null);
+
+  // Step 6 documents
+  const [documents, setDocuments] = useState([]);
+  const [uploadProgress, setUploadProgress] = useState({});
+
+  // Step 7 payment
+  const [paymentData, setPaymentData] = useState(null);
+
+  // ── DOB ↔ Age auto-calculation ─────────────────────────
+  const handleDOBChange = (dob) => {
+    const d = new Date(dob);
+    if (!isNaN(d)) {
+      const now = new Date();
+      let yy = now.getFullYear() - d.getFullYear();
+      let mm = now.getMonth() - d.getMonth();
+      let dd = now.getDate() - d.getDate();
+      if (dd < 0) { mm--; dd += new Date(now.getFullYear(), now.getMonth(), 0).getDate(); }
+      if (mm < 0) { yy--; mm += 12; }
+      setForm(f => ({ ...f, dob, dobAutoCalculated: false, age: { yy: String(yy), mm: String(mm), dd: String(dd) } }));
+    } else {
+      setForm(f => ({ ...f, dob }));
+    }
+  };
+
+  const handleAgeChange = (field, val) => {
+    const newAge = { ...form.age, [field]: val };
+    setForm(f => ({ ...f, age: newAge, dobAutoCalculated: true }));
+    const totalDays = (parseInt(newAge.yy)||0)*365 + (parseInt(newAge.mm)||0)*30 + (parseInt(newAge.dd)||0);
+    const approxDOB = new Date(Date.now() - totalDays * 86400000);
+    setForm(f => ({ ...f, age: newAge, dob: approxDOB.toISOString().split('T')[0], dobAutoCalculated: true }));
+  };
+
+  // ── Auto-save handler ──────────────────────────────────
+  const triggerAutoSave = useCallback(() => {
+    const now = new Date();
+    setSavedAt(`${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}`);
+  }, []);
+
+  useEffect(() => {
+    if (step >= 1) { const t = setTimeout(triggerAutoSave, 1500); return () => clearTimeout(t); }
+  }, [form, step, triggerAutoSave]);
+
+  // ── Step 1: Submit personal info ───────────────────────
+  const submitStep1 = async () => {
+    if (form.password !== form.confirmPassword) return setError('Passwords do not match');
+    setLoading(true); setError('');
+    try {
+      const res = await authAPI.registerStep1({
+        firstName: form.firstName, middleName: form.middleName, lastName: form.lastName,
+        guardianName: form.guardianName, guardianRelation: form.guardianRelation,
+        dob: form.dob, dobAutoCalculated: form.dobAutoCalculated,
+        gender: form.gender, bloodGroup: form.bloodGroup,
+        addressLine1: form.addressLine1, addressLine2: form.addressLine2,
+        city: form.city, state: form.state, pincode: form.pincode,
+        mobile: form.mobile, whatsapp: form.whatsapp, email: form.email,
+        password: form.password,
+      });
+      setPatientId(res.data.patientId);
+      setStep(2);
+    } catch (err) { setError(err.response?.data?.error || 'Registration failed'); }
+    finally { setLoading(false); }
+  };
+
+  // ── Step 2: Send OTP ───────────────────────────────────
+  const sendOTP = async (channel) => {
+    setLoading(true); setError('');
+    try {
+      await authAPI.sendOTP(patientId, channel);
+      setOtpSent(prev => ({ ...prev, [channel]: true }));
+    } catch (err) { setError(err.response?.data?.error || 'Failed to send OTP'); }
+    finally { setLoading(false); }
+  };
+
+  const verifyOTP = async (channel) => {
+    setLoading(true); setError('');
+    try {
+      const res = await authAPI.verifyOTP(patientId, channel, otpValues[channel]);
+      setVerification(prev => ({ ...prev, [channel]: true }));
+      if (res.data.allVerified) setTimeout(() => setStep(3), 600);
+    } catch (err) { setError(err.response?.data?.error || 'Invalid OTP'); }
+    finally { setLoading(false); }
+  };
+
+  // ── Step 3: Save consents ──────────────────────────────
+  const submitConsents = async () => {
+    if (!consents.treatment || !consents.data_privacy || !consents.telemedicine) return setError('Please accept all required consents');
+    const sigData = sigPadRef.current?.isEmpty() ? null : sigPadRef.current?.toDataURL();
+    setLoading(true); setError('');
+    try {
+      for (const [type, agreed] of Object.entries(consents)) {
+        await authAPI.saveConsent({ patientId, consentType: type, agreed, signatureData: sigData });
+      }
+      setStep(4);
+    } catch (err) { setError(err.response?.data?.error || 'Failed to save consents'); }
+    finally { setLoading(false); }
+  };
+
+  // ── Step 4: Capture and save photo ────────────────────
+  const capturePhoto = () => {
+    const imageSrc = webcamRef.current?.getScreenshot();
+    setPhotoCapture(imageSrc);
+  };
+
+  const submitPhoto = async () => {
+    if (!photoCapture) return setError('Please capture your photo');
+    if (!photoConsent) return setError('Please provide photo consent to continue');
+    setLoading(true); setError('');
+    try {
+      await authAPI.savePhoto(patientId, photoCapture);
+      setStep(5);
+    } catch (err) { setError(err.response?.data?.error || 'Failed to save photo'); }
+    finally { setLoading(false); }
+  };
+
+  // ── Step 5: Load doctors and select ───────────────────
+  useEffect(() => {
+    if (step === 5) {
+      doctorAPI.list().then(res => setDoctors(res.data.doctors)).catch(() => {});
+    }
+  }, [step]);
+
+  const submitDoctorSelection = async () => {
+    if (!selectedDoctor) return setError('Please select a doctor');
+    setLoading(true); setError('');
+    try {
+      await authAPI.selectDoctor(patientId, selectedDoctor);
+      setStep(6);
+    } catch (err) { setError(err.response?.data?.error || 'Failed to select doctor'); }
+    finally { setLoading(false); }
+  };
+
+  // ── Step 6: Upload document ────────────────────────────
+  const handleFileUpload = async (file, category) => {
+    const key = `${Date.now()}`;
+    setDocuments(prev => [...prev, { key, name: file.name, category, status: 'uploading', progress: 0 }]);
+    try {
+      await (await import('../api')).patientAPI.uploadDocument(patientId, file, category, (pct) => {
+        setDocuments(prev => prev.map(d => d.key === key ? { ...d, progress: pct } : d));
+      });
+      setDocuments(prev => prev.map(d => d.key === key ? { ...d, status: 'done', progress: 100 } : d));
+    } catch { setDocuments(prev => prev.map(d => d.key === key ? { ...d, status: 'error' } : d)); }
+  };
+
+  // ── Step 7: Razorpay payment ───────────────────────────
+  const initiatePayment = async () => {
+    setLoading(true); setError('');
+    try {
+      const { appointmentAPI } = await import('../api');
+      const res = await appointmentAPI.book({ patientId, doctorId: selectedDoctor, scheduledAt: new Date(Date.now() + 3600000).toISOString(), consultationType: 'video' });
+      const { razorpayOrderId, amount } = res.data;
+      const options = {
+        key: process.env.REACT_APP_RAZORPAY_KEY_ID,
+        amount: amount * 100,
+        currency: 'INR',
+        name: 'ThyroConsult',
+        description: 'Thyroid Consultation',
+        order_id: razorpayOrderId,
+        handler: async (response) => {
+          await appointmentAPI.verifyPayment({
+            razorpayOrderId: response.razorpay_order_id,
+            razorpayPaymentId: response.razorpay_payment_id,
+            razorpaySignature: response.razorpay_signature,
+          });
+          navigate('/patient/dashboard');
+        },
+        theme: { color: '#1D9E75' },
+      };
+      const rzp = new window.Razorpay(options);
+      rzp.open();
+    } catch (err) { setError(err.response?.data?.error || 'Payment initiation failed'); }
+    finally { setLoading(false); }
+  };
+
+  const f = (k) => (e) => setForm(prev => ({ ...prev, [k]: e.target.value }));
+  const allVerified = verification.mobile && verification.whatsapp && verification.email;
+
+  return (
+    <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>
+      {/* Header */}
+      <div style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)', padding: '14px 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 40 }}>
+        <Logo />
+        <div style={{ display: 'flex', align: 'center', gap: 12 }}>
+          <HIPAABadge />
+          {savedAt && <span className="autosave">✓ Saved {savedAt}</span>}
+        </div>
+      </div>
+
+      <div style={{ maxWidth: 680, margin: '0 auto', padding: '36px 24px' }}>
+        {/* Progress steps */}
+        <div className="step-bar">
+          {STEPS.map((label, i) => {
+            const n = i + 1;
+            const state = n < step ? 'done' : n === step ? 'active' : 'pending';
+            return (
+              <div key={n} className={`step-item ${state}`}>
+                <div className="step-circle">{state === 'done' ? '✓' : n}</div>
+                <div className="step-label">{label}</div>
+              </div>
+            );
+          })}
+        </div>
+
+        {error && <Alert type="error" onClose={() => setError('')}>{error}</Alert>}
+
+        {/* ─── STEP 1: Personal info ─────────────────────── */}
+        {step === 1 && (
+          <div className="card">
+            <div style={{ marginBottom: 20 }}>
+              <h3>Personal information</h3>
+              <p style={{ color: 'var(--text-tertiary)', fontSize: 13, marginTop: 4 }}>Fields marked <span style={{ color: 'var(--red-400)' }}>*</span> are required</p>
+            </div>
+
+            <div className="form-grid-3">
+              <div className="form-group">
+                <label className="form-label">First name <span className="req">*</span></label>
+                <input className="form-input" value={form.firstName} onChange={f('firstName')} placeholder="First name" required />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Middle name <span className="opt">(optional)</span></label>
+                <input className="form-input" value={form.middleName} onChange={f('middleName')} placeholder="Middle name" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Last name <span className="req">*</span></label>
+                <input className="form-input" value={form.lastName} onChange={f('lastName')} placeholder="Last name" required />
+              </div>
+            </div>
+
+            <div className="form-grid-2">
+              <div className="form-group">
+                <label className="form-label">Father's / Mother's / Spouse's name <span className="opt">(optional)</span></label>
+                <input className="form-input" value={form.guardianName} onChange={f('guardianName')} placeholder="Full name" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Relation <span className="opt">(optional)</span></label>
+                <select className="form-input form-select" value={form.guardianRelation} onChange={f('guardianRelation')}>
+                  <option value="">Select relation</option>
+                  <option value="father">Father</option>
+                  <option value="mother">Mother</option>
+                  <option value="spouse">Spouse</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+            </div>
+
+            <hr className="divider" />
+            <p style={{ fontSize: 13, fontWeight: 500, marginBottom: 14, color: 'var(--text-secondary)' }}>Date of birth & age — enter either, the other auto-calculates</p>
+
+            <div className="form-grid-2" style={{ marginBottom: 8 }}>
+              <div className="form-group">
+                <label className="form-label">Date of birth <span className="req">*</span></label>
+                <input className="form-input" type="date" value={form.dob} onChange={e => handleDOBChange(e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Age (auto-calculated)</label>
+                <input className="form-input" value={form.dob ? `${form.age.yy} yrs · ${form.age.mm} mo · ${form.age.dd} days` : ''} readOnly style={{ background: 'var(--blue-50)', color: 'var(--blue-800)' }} placeholder="Auto-fills from DOB" />
+              </div>
+            </div>
+
+            <p style={{ fontSize: 13, fontWeight: 500, marginBottom: 10, color: 'var(--text-secondary)' }}>Or enter age directly (if DOB unknown)</p>
+            <div className="form-grid-3" style={{ marginBottom: 8 }}>
+              {[['yy','Years'],['mm','Months'],['dd','Days']].map(([k,label]) => (
+                <div className="form-group" key={k}>
+                  <label className="form-label">{label}</label>
+                  <input className="form-input" type="number" min="0" value={form.age[k]} onChange={e => handleAgeChange(k, e.target.value)} placeholder={label} />
+                </div>
+              ))}
+            </div>
+
+            {form.dobAutoCalculated && (
+              <div className="alert alert-warning" style={{ marginBottom: 16 }}>
+                ⚠️ DOB has been auto-calculated from the age entered and may not be accurate. Please update your exact date of birth once known.
+              </div>
+            )}
+
+            <hr className="divider" />
+
+            <div className="form-grid-2">
+              <div className="form-group">
+                <label className="form-label">Gender <span className="req">*</span></label>
+                <select className="form-input form-select" value={form.gender} onChange={f('gender')} required>
+                  <option value="">Select gender</option>
+                  <option value="female">Female</option>
+                  <option value="male">Male</option>
+                  <option value="other">Other</option>
+                  <option value="prefer_not_to_say">Prefer not to say</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Blood group <span className="opt">(optional)</span></label>
+                <select className="form-input form-select" value={form.bloodGroup} onChange={f('bloodGroup')}>
+                  <option value="">Select</option>
+                  {['A+','A-','B+','B-','O+','O-','AB+','AB-'].map(bg => <option key={bg} value={bg}>{bg}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Address <span className="req">*</span></label>
+              <input className="form-input" value={form.addressLine1} onChange={f('addressLine1')} placeholder="Flat / House no., Street, Area" required style={{ marginBottom: 8 }} />
+              <input className="form-input" value={form.addressLine2} onChange={f('addressLine2')} placeholder="Landmark (optional)" />
+            </div>
+
+            <div className="form-grid-3">
+              <div className="form-group">
+                <label className="form-label">City <span className="req">*</span></label>
+                <input className="form-input" value={form.city} onChange={f('city')} placeholder="City" required />
+              </div>
+              <div className="form-group">
+                <label className="form-label">State <span className="req">*</span></label>
+                <input className="form-input" value={form.state} onChange={f('state')} placeholder="State" required />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Pincode <span className="req">*</span></label>
+                <input className="form-input" value={form.pincode} onChange={f('pincode')} placeholder="6-digit pincode" pattern="[0-9]{6}" required />
+              </div>
+            </div>
+
+            <hr className="divider" />
+
+            <div className="form-group">
+              <label className="form-label">Mobile number <span className="req">*</span></label>
+              <input className="form-input" type="tel" value={form.mobile} onChange={f('mobile')} placeholder="+91 XXXXX XXXXX" required />
+            </div>
+            <div className="form-group">
+              <label className="form-label">WhatsApp number <span className="req">*</span></label>
+              <input className="form-input" type="tel" value={form.whatsapp} onChange={f('whatsapp')} placeholder="+91 XXXXX XXXXX" required />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Email address <span className="req">*</span></label>
+              <input className="form-input" type="email" value={form.email} onChange={f('email')} placeholder="you@example.com" required />
+            </div>
+
+            <hr className="divider" />
+
+            <div className="form-grid-2">
+              <div className="form-group">
+                <label className="form-label">Password <span className="req">*</span></label>
+                <input className="form-input" type="password" value={form.password} onChange={f('password')} placeholder="Min 8 chars, 1 upper, 1 number, 1 symbol" required />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Confirm password <span className="req">*</span></label>
+                <input className="form-input" type="password" value={form.confirmPassword} onChange={f('confirmPassword')} placeholder="Repeat password" required />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+              <button className="btn btn-primary btn-lg" onClick={submitStep1} disabled={loading}>
+                {loading ? <Spinner size={18} color="#fff" /> : 'Save & continue →'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ─── STEP 2: Verify contacts ───────────────────── */}
+        {step === 2 && (
+          <div className="card">
+            <h3 style={{ marginBottom: 6 }}>Verify your contact details</h3>
+            <p style={{ color: 'var(--text-tertiary)', fontSize: 13, marginBottom: 24 }}>All three must be verified to continue <span style={{ color: 'var(--red-400)' }}>*</span></p>
+
+            {[['mobile','📱 Mobile','SMS'],['whatsapp','💬 WhatsApp','WhatsApp'],['email','✉️ Email','Email']].map(([ch, label, method]) => (
+              <div key={ch} style={{ marginBottom: 20, padding: 16, border: `1px solid ${verification[ch] ? 'var(--teal-200)' : 'var(--border)'}`, borderRadius: 'var(--radius-md)', background: verification[ch] ? 'var(--teal-50)' : 'var(--surface)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                  <span style={{ fontWeight: 500, fontSize: 14 }}>{label}</span>
+                  {verification[ch]
+                    ? <span className="badge badge-teal">✓ Verified</span>
+                    : <button className="btn btn-secondary btn-sm" onClick={() => sendOTP(ch)} disabled={loading}>Send OTP via {method}</button>
+                  }
+                </div>
+                {!verification[ch] && otpSent[ch] && (
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 10 }}>
+                    <input className="form-input" placeholder="6-digit OTP" maxLength={6} value={otpValues[ch]} onChange={e => setOtpValues(p => ({ ...p, [ch]: e.target.value }))} style={{ maxWidth: 140 }} />
+                    <button className="btn btn-primary btn-sm" onClick={() => verifyOTP(ch)} disabled={loading || otpValues[ch].length < 6}>
+                      {loading ? <Spinner size={14} color="#fff" /> : 'Verify'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
+              <button className="btn btn-secondary" onClick={() => setStep(1)}>← Back</button>
+              <button className="btn btn-primary btn-lg" onClick={() => setStep(3)} disabled={!allVerified}>Continue →</button>
+            </div>
+          </div>
+        )}
+
+        {/* ─── STEP 3: E-consent ────────────────────────── */}
+        {step === 3 && (
+          <div className="card">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
+              <h3>Electronic consent form</h3>
+              <span style={{ fontSize: 11, background: 'var(--indigo-50)', color: 'var(--indigo-800)', padding: '3px 9px', borderRadius: 20, fontWeight: 500 }}>HIPAA §164.508</span>
+            </div>
+
+            {Object.entries(CONSENT_TEXT).map(([type, text]) => {
+              const labels = { treatment: 'Treatment consent', data_privacy: 'Data privacy', telemedicine: 'Telemedicine consent' };
+              return (
+                <div key={type} style={{ marginBottom: 16, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', padding: 16 }}>
+                  <div style={{ fontWeight: 500, marginBottom: 10, fontSize: 14 }}>{labels[type]} <span style={{ color: 'var(--red-400)' }}>*</span></div>
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', background: 'var(--gray-50)', borderRadius: 8, padding: 12, maxHeight: 100, overflowY: 'auto', lineHeight: 1.7, marginBottom: 12 }}>{text}</div>
+                  <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', fontSize: 13 }}>
+                    <input type="checkbox" checked={consents[type]} onChange={e => setConsents(p => ({ ...p, [type]: e.target.checked }))} style={{ marginTop: 2, accentColor: 'var(--teal-400)', width: 15, height: 15 }} />
+                    I have read and agree to the {labels[type].toLowerCase()}
+                  </label>
+                </div>
+              );
+            })}
+
+            <div style={{ marginTop: 20, marginBottom: 6, fontSize: 14, fontWeight: 500 }}>Digital signature <span style={{ color: 'var(--red-400)' }}>*</span></div>
+            <div style={{ border: '1px dashed var(--border-md)', borderRadius: 'var(--radius-md)', background: 'var(--gray-50)', marginBottom: 8 }}>
+              <SignaturePad ref={sigPadRef} canvasProps={{ width: 600, height: 80, style: { borderRadius: 10 } }} />
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+              <button className="btn btn-secondary btn-sm" onClick={() => sigPadRef.current?.clear()}>Clear signature</button>
+            </div>
+            <p style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Timestamp, IP address, and document hash are recorded for HIPAA compliance.</p>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 20 }}>
+              <button className="btn btn-secondary" onClick={() => setStep(2)}>← Back</button>
+              <button className="btn btn-primary btn-lg" onClick={submitConsents} disabled={loading || !Object.values(consents).every(Boolean)}>
+                {loading ? <Spinner size={18} color="#fff" /> : 'Accept & continue →'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ─── STEP 4: Live photo ────────────────────────── */}
+        {step === 4 && (
+          <div className="card">
+            <h3 style={{ marginBottom: 4 }}>Live photo for medical record <span style={{ color: 'var(--red-400)', fontSize: 18 }}>*</span></h3>
+            <p style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 20 }}>A live camera photo is required. Upload from device is not permitted.</p>
+
+            <div className="alert alert-error" style={{ marginBottom: 20 }}>📷 This step is mandatory and cannot be skipped. Your photo is used solely for patient identification by your doctor.</div>
+
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', fontSize: 13, marginBottom: 20, padding: 14, border: `1px solid ${photoConsent ? 'var(--teal-200)' : 'var(--border)'}`, borderRadius: 'var(--radius-md)', background: photoConsent ? 'var(--teal-50)' : 'transparent' }}>
+              <input type="checkbox" checked={photoConsent} onChange={e => setPhotoConsent(e.target.checked)} style={{ marginTop: 2, accentColor: 'var(--teal-400)', width: 15, height: 15 }} />
+              <span>I consent to my photograph being captured via live camera and stored securely as part of my medical record. It will only be visible to my consulting doctor and will not be shared with any third party. <span style={{ color: 'var(--red-400)' }}>*</span></span>
+            </label>
+
+            {!photoCapture ? (
+              <div style={{ background: '#1A1A18', borderRadius: 'var(--radius-lg)', overflow: 'hidden', marginBottom: 16, position: 'relative' }}>
+                <Webcam ref={webcamRef} screenshotFormat="image/jpeg" style={{ width: '100%', display: 'block' }} onUserMedia={() => setCameraReady(true)} mirrored />
+                {cameraReady && (
+                  <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'rgba(0,0,0,0.5)', padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ fontSize: 11, color: '#9FE1CB', background: 'rgba(0,0,0,0.4)', padding: '2px 8px', borderRadius: 20 }}>● LIVE</span>
+                    <span style={{ fontSize: 12, color: '#9FE1CB', flex: 1, textAlign: 'center' }}>Centre your face within the frame</span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div style={{ position: 'relative', marginBottom: 16, textAlign: 'center' }}>
+                <img src={photoCapture} alt="Captured" style={{ width: '100%', maxWidth: 400, borderRadius: 'var(--radius-lg)', border: '3px solid var(--teal-400)' }} />
+                <div className="badge badge-teal" style={{ position: 'absolute', top: 12, left: 12 }}>✓ Photo captured</div>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
+              {!photoCapture
+                ? <button className="btn btn-primary" style={{ flex: 1, justifyContent: 'center' }} onClick={capturePhoto} disabled={!cameraReady || !photoConsent}>📷 Capture photo</button>
+                : <button className="btn btn-secondary" style={{ flex: 1, justifyContent: 'center' }} onClick={() => setPhotoCapture(null)}>↺ Retake</button>
+              }
+            </div>
+
+            <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 16 }}>🔒 Photo is AES-256 encrypted, stored in an isolated vault, and every access is audit-logged.</p>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <button className="btn btn-secondary" onClick={() => setStep(3)}>← Back</button>
+              <button className="btn btn-primary btn-lg" onClick={submitPhoto} disabled={loading || !photoCapture || !photoConsent}>
+                {loading ? <Spinner size={18} color="#fff" /> : 'Confirm & continue →'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ─── STEP 5: Choose doctor ─────────────────────── */}
+        {step === 5 && (
+          <div className="card">
+            <h3 style={{ marginBottom: 20 }}>Select your consulting doctor</h3>
+            {doctors.length === 0 ? <div style={{ textAlign: 'center', padding: 24 }}><Spinner size={24} /></div> : (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
+                {doctors.map(doc => (
+                  <div key={doc.id} onClick={() => setSelectedDoctor(doc.id)} style={{ padding: 16, border: `1.5px solid ${selectedDoctor === doc.id ? 'var(--teal-400)' : 'var(--border)'}`, borderRadius: 'var(--radius-lg)', cursor: 'pointer', background: selectedDoctor === doc.id ? 'var(--teal-50)' : 'var(--surface)', transition: 'all 0.15s' }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                      <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'var(--blue-50)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 600, color: 'var(--blue-800)', flexShrink: 0 }}>
+                        {doc.name.split(' ')[1]?.[0]}{doc.name.split(' ')[2]?.[0]}
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 500, fontSize: 13 }}>{doc.name}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{doc.specialisation} · {doc.experienceYears} yrs</div>
+                        <div style={{ fontSize: 11, color: doc.isAvailableToday ? 'var(--teal-600)' : 'var(--text-tertiary)', marginTop: 3 }}>
+                          {doc.isAvailableToday ? '✓ Available today' : '○ Next available slot'}
+                        </div>
+                      </div>
+                      {selectedDoctor === doc.id && <span style={{ color: 'var(--teal-400)', fontSize: 18 }}>✓</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <button className="btn btn-secondary" onClick={() => setStep(4)}>← Back</button>
+              <button className="btn btn-primary btn-lg" onClick={submitDoctorSelection} disabled={loading || !selectedDoctor}>
+                {loading ? <Spinner size={18} color="#fff" /> : 'Confirm & continue →'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ─── STEP 6: Upload documents ──────────────────── */}
+        {step === 6 && (
+          <div className="card">
+            <h3 style={{ marginBottom: 6 }}>Upload medical documents</h3>
+            <p style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 20 }}>PDF, Word, JPG, PNG · Max 5 MB per file · Documents are encrypted on upload</p>
+
+            {['blood_report','scan_usg','prescription','biopsy','other'].map(cat => {
+              const labels = { blood_report: '🩸 Blood reports', scan_usg: '📡 Scan / USG', prescription: '💊 Prescriptions', biopsy: '🔬 Biopsy', other: '📄 Other' };
+              return (
+                <div key={cat} style={{ marginBottom: 14, padding: 14, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)' }}>
+                  <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 10 }}>{labels[cat]}</div>
+                  <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '16px', border: '1px dashed var(--border-md)', borderRadius: 'var(--radius-md)', cursor: 'pointer', background: 'var(--gray-50)' }}>
+                    <input type="file" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" style={{ display: 'none' }} onChange={e => Array.from(e.target.files).forEach(f => handleFileUpload(f, cat))} />
+                    <span style={{ fontSize: 22, marginBottom: 4 }}>☁</span>
+                    <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Click to upload or drag & drop</span>
+                    <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>PDF, DOCX, JPG, PNG · max 5 MB</span>
+                  </label>
+                  {documents.filter(d => d.category === cat).map(doc => (
+                    <div key={doc.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 8, marginTop: 8, fontSize: 12 }}>
+                      <span>📄</span>
+                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.name}</span>
+                      {doc.status === 'uploading' && <span style={{ fontSize: 11, color: 'var(--teal-600)' }}>{doc.progress}%</span>}
+                      {doc.status === 'done' && <span style={{ color: 'var(--teal-600)' }}>✓</span>}
+                      {doc.status === 'error' && <span style={{ color: 'var(--red-600)' }}>✗</span>}
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
+              <button className="btn btn-secondary" onClick={() => setStep(5)}>← Back</button>
+              <button className="btn btn-primary btn-lg" onClick={() => setStep(7)}>Continue to payment →</button>
+            </div>
+          </div>
+        )}
+
+        {/* ─── STEP 7: Payment ───────────────────────────── */}
+        {step === 7 && (
+          <div className="card">
+            <h3 style={{ marginBottom: 20 }}>Consultation fee payment</h3>
+            {doctors.find(d => d.id === selectedDoctor) && (() => {
+              const doc = doctors.find(d => d.id === selectedDoctor);
+              const fee = doc.consultationFee, platform = 50, gst = Math.round((fee + platform) * 0.18);
+              const total = fee + platform + gst;
+              return (
+                <>
+                  <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', padding: 16, marginBottom: 16 }}>
+                    {[['Consultation — '+doc.name, fee], ['Platform fee', platform], ['GST (18%)', gst]].map(([label, amt]) => (
+                      <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, padding: '5px 0', borderBottom: '1px solid var(--border)' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
+                        <span>₹{amt.toLocaleString('en-IN')}</span>
+                      </div>
+                    ))}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 16, fontWeight: 600, paddingTop: 10, marginTop: 4 }}>
+                      <span>Total payable</span><span>₹{total.toLocaleString('en-IN')}</span>
+                    </div>
+                  </div>
+                  <div className="alert alert-info">🔒 Payment processed via Razorpay. Your card details are never stored on our servers (PCI-DSS Level 1).</div>
+                  <button className="btn btn-primary btn-lg" style={{ width: '100%', justifyContent: 'center', background: '#072654' }} onClick={initiatePayment} disabled={loading}>
+                    {loading ? <Spinner size={18} color="#fff" /> : `💳 Pay ₹${total.toLocaleString('en-IN')} via Razorpay`}
+                  </button>
+                  <p style={{ textAlign: 'center', fontSize: 12, color: 'var(--text-tertiary)', marginTop: 10 }}>UPI · Cards · Net Banking · Wallets supported</p>
+                </>
+              );
+            })()}
+            <div style={{ display: 'flex', justifyContent: 'flex-start', marginTop: 16 }}>
+              <button className="btn btn-secondary" onClick={() => setStep(6)}>← Back</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default RegisterPage;
