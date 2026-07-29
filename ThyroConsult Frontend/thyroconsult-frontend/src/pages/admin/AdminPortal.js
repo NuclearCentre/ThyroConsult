@@ -20,7 +20,7 @@ const AdminDashboard = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    adminAPI.getStats().then(r => setStats(r.data)).catch(() => {}).finally(() => setLoading(false));
+    adminAPI.getPlatformStats().then(r => setStats(r)).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
   if (loading) return <div style={{ display:'flex', justifyContent:'center', padding:60 }}><Spinner size={32} /></div>;
@@ -75,7 +75,7 @@ const AdminDashboard = () => {
 const AuditLogPreview = () => {
   const [logs, setLogs] = useState([]);
   useEffect(() => {
-    adminAPI.getAuditLog({ limit: 8 }).then(r => setLogs(r.data.logs || [])).catch(() => {});
+    adminAPI.getAuditLog({ limit: 8 }).then(r => setLogs(r.logs || [])).catch(() => {});
   }, []);
 
   const eventColors = { LOGIN_SUCCESS:'teal', LOGIN_FAILED:'red', PHI_VIEWED:'blue', DOCUMENT_DOWNLOADED:'indigo', PAYMENT_CONFIRMED:'teal', AUDIT_LOG_EXPORTED:'amber', CONSENT_SIGNED:'teal' };
@@ -99,7 +99,7 @@ const PatientList = () => {
   const [search, setSearch] = useState('');
 
   useEffect(() => {
-    adminAPI.listPatients({ search: search || undefined }).then(r => setPatients(r.data.patients || [])).catch(() => {}).finally(() => setLoading(false));
+    adminAPI.listPatients({ search: search || undefined }).then(r => setPatients(r.patients || [])).catch(() => {}).finally(() => setLoading(false));
   }, [search]);
 
   return (
@@ -144,7 +144,7 @@ const DoctorManagement = () => {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    adminAPI.listDoctors().then(r => setDoctors(r.data.doctors || [])).catch(() => {});
+    adminAPI.listDoctors().then(r => setDoctors(r.doctors || [])).catch(() => {});
   }, []);
 
   const toggleStatus = async (id, current) => {
@@ -158,7 +158,7 @@ const DoctorManagement = () => {
       await adminAPI.createDoctor(form);
       setShowForm(false);
       const r = await adminAPI.listDoctors();
-      setDoctors(r.data.doctors || []);
+      setDoctors(r.doctors || []);
     } catch (err) { alert(err.response?.data?.error || 'Failed to create doctor'); }
     finally { setLoading(false); }
   };
@@ -225,7 +225,7 @@ const AuditLog = () => {
   const load = () => {
     setLoading(true);
     adminAPI.getAuditLog({ page, limit:20, eventType: filter || undefined })
-      .then(r => { setLogs(r.data.logs || []); setTotal(r.data.total || 0); })
+      .then(r => { setLogs(r.logs || []); setTotal(r.total || 0); })
       .catch(() => {}).finally(() => setLoading(false));
   };
 
@@ -233,8 +233,9 @@ const AuditLog = () => {
 
   const exportLog = async () => {
     const blob = await adminAPI.exportAuditLog();
-    const url = URL.createObjectURL(new Blob([blob.data]));
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url; a.download = `audit-log-${new Date().toISOString().split('T')[0]}.csv`; a.click();
+    URL.revokeObjectURL(url);
   };
 
   const EVENT_TYPES = ['','LOGIN_SUCCESS','LOGIN_FAILED','PHI_VIEWED','DOCUMENT_DOWNLOADED','PAYMENT_CONFIRMED','CONSENT_SIGNED','AUDIT_LOG_EXPORTED'];
@@ -286,7 +287,7 @@ const AuditLog = () => {
 // ─── Encryption status ─────────────────────────────────────
 const SecurityPanel = () => {
   const [status, setStatus] = useState(null);
-  useEffect(() => { adminAPI.getEncryptionStatus().then(r => setStatus(r.data)).catch(() => {}); }, []);
+  useEffect(() => { adminAPI.getEncryptionStatus().then(r => setStatus(r)).catch(() => {}); }, []);
 
   return (
     <>
@@ -338,11 +339,11 @@ const SecurityPanel = () => {
 // ─── RBAC panel ────────────────────────────────────────────
 const RolesPanel = () => {
   const [doctors, setDoctors] = useState([]);
-  useEffect(() => { adminAPI.listDoctors().then(r => setDoctors(r.data.doctors || [])).catch(() => {}); }, []);
+  useEffect(() => { adminAPI.listDoctors().then(r => setDoctors(r.doctors || [])).catch(() => {}); }, []);
 
   const roles = [
     { name:'Super admin', variant:'indigo', perms:[['Full platform access',true],['View all PHI records',true],['Manage users & doctors',true],['Export audit logs',true],['Modify encryption settings',true],['Manage roles & permissions',true]]},
-    { name:'Doctor', variant:'blue', perms:[["View own patients' PHI",true],['View patient documents',true],['View patient photo',true],['Write consultation notes',true],['Issue prescriptions',true],["View other doctors' patients",false],['Access admin / billing',false]]},
+    { name:'Doctor', variant:'blue', perms:[["View own patients' PHI",true],['View patient documents',true],['View patient photo',true],['Write Opinion Notes',true],['Issue Opinion summary',true],["View other doctors' patients",false],['Access admin / billing',false]]},
     { name:'Patient', variant:'teal', perms:[['View own profile & records',true],['Upload own documents',true],['View own report trends',true],['Download own invoices',true],['Book appointments',true],["View other patients' data",false],['Access doctor or admin areas',false]]},
   ];
 

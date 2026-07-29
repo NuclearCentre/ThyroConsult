@@ -59,7 +59,7 @@ const d = (val) => (val ? decryptPHI(val) : null);
  *   3. Updates patients.registration_step to 6
  */
 const selectCondition = async (req, res) => {
-  const { id: patientId } = req.params;
+  const patientId = req.user.patientId;
   const { condition, doctorId } = req.body;
 
   const valid = ['hypothyroidism', 'hyperthyroidism', 'thyroid_cancer', 'nodule'];
@@ -141,7 +141,7 @@ const getConditionSelection = async (req, res) => {
        LEFT JOIN patient_condition_episodes pce
          ON pce.patient_id = pcs.patient_id AND pce.condition = pcs.selected_condition
        WHERE pcs.patient_id = $1`,
-      [req.params.id]
+      [req.user.patientId]
     );
     res.json(result.rows[0] || null);
   } catch (err) {
@@ -159,6 +159,7 @@ const getConditionSelection = async (req, res) => {
  * Returns all condition episodes for a patient (with questionnaire status).
  */
 const getEpisodes = async (req, res) => {
+  const patientId = req.user.patientId || req.params.id;
   try {
     const result = await query(
       `SELECT pce.*,
@@ -168,7 +169,7 @@ const getEpisodes = async (req, res) => {
        LEFT JOIN doctors d ON d.id = pce.primary_doctor_id
        WHERE pce.patient_id = $1
        ORDER BY pce.created_at DESC`,
-      [req.params.id]
+      [patientId]
     );
 
     const episodes = result.rows.map(r => ({
@@ -200,7 +201,7 @@ const getEpisode = async (req, res) => {
        FROM patient_condition_episodes pce
        LEFT JOIN doctors d ON d.id = pce.primary_doctor_id
        WHERE pce.id = $1 AND pce.patient_id = $2`,
-      [req.params.episodeId, req.params.id]
+      [req.params.episodeId, req.user.patientId]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'Episode not found' });
     const r = result.rows[0];
@@ -225,7 +226,8 @@ const getEpisode = async (req, res) => {
  * Upserts the shared core questionnaire for an episode.
  */
 const saveCoreQuestionnaire = async (req, res) => {
-  const { id: patientId, episodeId } = req.params;
+  const patientId = req.user.patientId;
+  const { episodeId } = req.params;
   const b = req.body;
 
   // PHI fields that need encryption
@@ -400,7 +402,7 @@ const getCoreQuestionnaire = async (req, res) => {
   try {
     const result = await query(
       'SELECT * FROM core_questionnaire WHERE episode_id = $1 AND patient_id = $2',
-      [req.params.episodeId, req.params.id]
+      [req.params.episodeId, req.user.patientId]
     );
     if (!result.rows.length) return res.json(null);
 
@@ -425,7 +427,8 @@ const getCoreQuestionnaire = async (req, res) => {
 // ─────────────────────────────────────────────────────────
 
 const saveHypoQuestionnaire = async (req, res) => {
-  const { id: patientId, episodeId } = req.params;
+  const patientId = req.user.patientId;
+  const { episodeId } = req.params;
   const b = req.body;
 
   try {
@@ -511,7 +514,7 @@ const getHypoQuestionnaire = async (req, res) => {
   try {
     const result = await query(
       'SELECT * FROM hypo_questionnaire WHERE episode_id = $1 AND patient_id = $2',
-      [req.params.episodeId, req.params.id]
+      [req.params.episodeId, req.user.patientId]
     );
     res.json(result.rows[0] || null);
   } catch (err) {
@@ -525,7 +528,8 @@ const getHypoQuestionnaire = async (req, res) => {
 // ─────────────────────────────────────────────────────────
 
 const saveHyperQuestionnaire = async (req, res) => {
-  const { id: patientId, episodeId } = req.params;
+  const patientId = req.user.patientId;
+  const { episodeId } = req.params;
   const b = req.body;
 
   try {
@@ -641,7 +645,7 @@ const getHyperQuestionnaire = async (req, res) => {
   try {
     const result = await query(
       'SELECT * FROM hyper_questionnaire WHERE episode_id = $1 AND patient_id = $2',
-      [req.params.episodeId, req.params.id]
+      [req.params.episodeId, req.user.patientId]
     );
     res.json(result.rows[0] || null);
   } catch (err) {
@@ -655,7 +659,8 @@ const getHyperQuestionnaire = async (req, res) => {
 // ─────────────────────────────────────────────────────────
 
 const saveTcQuestionnaire = async (req, res) => {
-  const { id: patientId, episodeId } = req.params;
+  const patientId = req.user.patientId;
+  const { episodeId } = req.params;
   const b = req.body;
 
   try {
@@ -770,7 +775,7 @@ const getTcQuestionnaire = async (req, res) => {
   try {
     const result = await query(
       'SELECT * FROM tc_questionnaire WHERE episode_id = $1 AND patient_id = $2',
-      [req.params.episodeId, req.params.id]
+      [req.params.episodeId, req.user.patientId]
     );
     res.json(result.rows[0] || null);
   } catch (err) {
@@ -883,7 +888,8 @@ const NODULE_Q_COLUMNS = [
 const NODULE_Q_JSONB_COLUMNS = new Set(['dyslipidaemia_meds', 'diabetes_meds', 'htn_meds']);
 
 const saveNoduleQuestionnaire = async (req, res) => {
-  const { id: patientId, episodeId } = req.params;
+  const patientId = req.user.patientId;
+  const { episodeId } = req.params;
   const { _draft, ...body } = req.body;
 
   try {
@@ -940,7 +946,7 @@ const getNoduleQuestionnaire = async (req, res) => {
   try {
     const result = await query(
       'SELECT * FROM nodule_questionnaire WHERE episode_id = $1 AND patient_id = $2',
-      [req.params.episodeId, req.params.id]
+      [req.params.episodeId, req.user.patientId]
     );
     if (!result.rows.length) return res.json(null);
     const { id, episode_id, patient_id, is_draft, created_at, updated_at, ...answers } = result.rows[0];
@@ -957,7 +963,8 @@ const getNoduleQuestionnaire = async (req, res) => {
 
 /** POST /api/patients/:id/episodes/:episodeId/hypo-treatment */
 const addHypoTreatment = async (req, res) => {
-  const { id: patientId, episodeId } = req.params;
+  const patientId = req.user.patientId;
+  const { episodeId } = req.params;
   const b = req.body;
   try {
     const result = await query(
@@ -978,7 +985,8 @@ const addHypoTreatment = async (req, res) => {
 
 /** POST /api/patients/:id/episodes/:episodeId/hyper-atd */
 const addHyperAtd = async (req, res) => {
-  const { id: patientId, episodeId } = req.params;
+  const patientId = req.user.patientId;
+  const { episodeId } = req.params;
   const b = req.body;
   try {
     const result = await query(
@@ -1001,7 +1009,8 @@ const addHyperAtd = async (req, res) => {
 
 /** POST /api/patients/:id/episodes/:episodeId/hyper-rai */
 const addHyperRai = async (req, res) => {
-  const { id: patientId, episodeId } = req.params;
+  const patientId = req.user.patientId;
+  const { episodeId } = req.params;
   const b = req.body;
   try {
     const result = await query(
@@ -1024,7 +1033,8 @@ const addHyperRai = async (req, res) => {
 
 /** POST /api/patients/:id/episodes/:episodeId/tc-surgery */
 const addTcSurgery = async (req, res) => {
-  const { id: patientId, episodeId } = req.params;
+  const patientId = req.user.patientId;
+  const { episodeId } = req.params;
   const b = req.body;
   try {
     const result = await query(
@@ -1056,7 +1066,8 @@ const addTcSurgery = async (req, res) => {
 
 /** POST /api/patients/:id/episodes/:episodeId/tc-rai */
 const addTcRai = async (req, res) => {
-  const { id: patientId, episodeId } = req.params;
+  const patientId = req.user.patientId;
+  const { episodeId } = req.params;
   const b = req.body;
   try {
     const result = await query(
@@ -1085,7 +1096,8 @@ const addTcRai = async (req, res) => {
 
 /** POST /api/patients/:id/episodes/:episodeId/scans */
 const addScanReport = async (req, res) => {
-  const { id: patientId, episodeId } = req.params;
+  const patientId = req.user.patientId;
+  const { episodeId } = req.params;
   const b = req.body;
   try {
     const result = await query(
@@ -1119,7 +1131,7 @@ const getScanReports = async (req, res) => {
        FROM scan_reports
        WHERE episode_id = $1 AND patient_id = $2
        ORDER BY scan_date DESC`,
-      [req.params.episodeId, req.params.id]
+      [req.params.episodeId, req.user.patientId]
     );
     const scans = result.rows.map(r => ({
       ...r,

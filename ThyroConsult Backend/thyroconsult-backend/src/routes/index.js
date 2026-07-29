@@ -104,28 +104,30 @@ router.get ('/patient/episode/:episodeId/advise-letter/download',
 
 router.post('/condition/select',
   verifyToken, requireRole('patient'), conditionController.selectCondition);
+router.get ('/condition/episodes/:id',
+  verifyToken, requireRole('patient'), conditionController.getEpisodes);
 router.get ('/condition/episode/:episodeId',
-  verifyToken, conditionController.getEpisode);
+  verifyToken, requireRole('patient'), conditionController.getEpisode);
 
 router.get ('/condition/core/:patientId/:episodeId',
-  verifyToken, conditionController.getCoreQuestionnaire);
+  verifyToken, requireRole('patient'), conditionController.getCoreQuestionnaire);
 router.post('/condition/core/:patientId/:episodeId',
-  verifyToken, conditionController.saveCoreQuestionnaire);
+  verifyToken, requireRole('patient'), conditionController.saveCoreQuestionnaire);
 
 router.get ('/condition/hypo/:patientId/:episodeId',
-  verifyToken, conditionController.getHypoQuestionnaire);
+  verifyToken, requireRole('patient'), conditionController.getHypoQuestionnaire);
 router.post('/condition/hypo/:patientId/:episodeId',
-  verifyToken, conditionController.saveHypoQuestionnaire);
+  verifyToken, requireRole('patient'), conditionController.saveHypoQuestionnaire);
 
 router.get ('/condition/hyper/:patientId/:episodeId',
-  verifyToken, conditionController.getHyperQuestionnaire);
+  verifyToken, requireRole('patient'), conditionController.getHyperQuestionnaire);
 router.post('/condition/hyper/:patientId/:episodeId',
-  verifyToken, conditionController.saveHyperQuestionnaire);
+  verifyToken, requireRole('patient'), conditionController.saveHyperQuestionnaire);
 
 router.get ('/condition/tc/:patientId/:episodeId',
-  verifyToken, conditionController.getTcQuestionnaire);
+  verifyToken, requireRole('patient'), conditionController.getTcQuestionnaire);
 router.post('/condition/tc/:patientId/:episodeId',
-  verifyToken, conditionController.saveTcQuestionnaire);
+  verifyToken, requireRole('patient'), conditionController.saveTcQuestionnaire);
 
 // Nodule routes RE-ADDED. conditionController.js was given
 // saveNoduleQuestionnaire/getNoduleQuestionnaire earlier this session —
@@ -138,9 +140,37 @@ router.post('/condition/tc/:patientId/:episodeId',
 // the server will crash on startup the exact same way this file warns
 // about elsewhere (undefined route handler).
 router.get ('/condition/nodule/:patientId/:episodeId',
-  verifyToken, conditionController.getNoduleQuestionnaire);
+  verifyToken, requireRole('patient'), conditionController.getNoduleQuestionnaire);
 router.post('/condition/nodule/:patientId/:episodeId',
-  verifyToken, conditionController.saveNoduleQuestionnaire);
+  verifyToken, requireRole('patient'), conditionController.saveNoduleQuestionnaire);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// APPOINTMENTS (initial booking — Step 8 of registration)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// doctorController.bookAppointment is the function that actually creates the
+// initial appointments/consultations/payments rows and a Razorpay order for
+// the FIRST opinion. paymentController.createOrder (below) is for S1/S2/S3
+// FOLLOW-UP payments only and expects a different body shape entirely
+// (episodeId/scenario/conditionType vs patientId/doctorId/scheduledAt) —
+// RegisterPage.js's initiatePayment() was calling that one by mistake because
+// this route never existed. Fixed: added the route, added appointmentAPI to
+// src/api/index.js, and pointed RegisterPage.js at appointmentAPI.book().
+router.post('/appointment/book',
+  verifyToken, requireRole('patient'), doctorController.bookAppointment);
+
+// doctorController.verifyPayment / razorpayWebhook were fully built and
+// exported but had NO route anywhere — RegisterPage.js's Razorpay success
+// handler was calling paymentAPI.verifyPayment instead (POST /payment/verify
+// -> paymentController.verifyPayment), which only updates the
+// followup_payments table. The initial booking's order lives in the
+// `payments` table (see doctorController.bookAppointment), so that call was
+// silently doing nothing: no error, but the payment/appointment status never
+// flipped to confirmed and registration_complete never got set.
+router.post('/appointment/verify-payment',
+  verifyToken, requireRole('patient'), doctorController.verifyPayment);
+router.post('/appointment/webhook',
+  doctorController.razorpayWebhook);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PAYMENTS
@@ -263,6 +293,8 @@ router.put ('/doctor/profile',
 
 router.get ('/doctor/appointments',
   verifyToken, requireRole('doctor'), doctorController.getDoctorAppointments);
+router.get ('/doctor/weekly-stats',
+  verifyToken, requireRole('doctor'), doctorController.getWeeklyOpinionStats);
 router.get ('/doctor/appointment/:appointmentId',
   verifyToken, requireRole('doctor'), doctorController.getAppointmentDetail);
 router.put ('/doctor/appointment/:appointmentId',
@@ -292,6 +324,18 @@ router.get ('/admin/condition-fees',
   verifyToken, requireRole('admin'), paymentController.getConditionFees);
 router.put ('/admin/condition-fees/:conditionType',
   verifyToken, requireRole('admin'), sessionTimeout, paymentController.updateConditionFee);
+// getAuditLog / exportAuditLog / getEncryptionStatus / getPaymentReport were
+// fully implemented in adminController.js but had no routes at all —
+// AdminPortal.js's audit log, security, and payment-report views have been
+// calling non-existent endpoints since day one.
+router.get ('/admin/audit-log',
+  verifyToken, requireRole('admin'), adminController.getAuditLog);
+router.get ('/admin/audit-log/export',
+  verifyToken, requireRole('admin'), adminController.exportAuditLog);
+router.get ('/admin/encryption-status',
+  verifyToken, requireRole('admin'), adminController.getEncryptionStatus);
+router.get ('/admin/payments/report',
+  verifyToken, requireRole('admin'), adminController.getPaymentReport);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HEALTH CHECK

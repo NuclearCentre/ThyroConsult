@@ -1,7 +1,24 @@
 -- ============================================================
--- Migration 008: Opinion Workflow
+-- Migration 016: Opinion Workflow
+-- Full path: thyroconsult-backend\migrations\016_opinion_workflow.sql
+--
+-- RENUMBERED from the root-level file `008_opinion_workflow.sql`, which
+-- was sitting in the repo root (next to .gitignore) instead of in this
+-- migrations folder — and its number collided with the migration that
+-- actually occupies slot 008 (008_nodule_questionnaire.sql). Content is
+-- otherwise UNCHANGED from the original file.
+--
+-- IMPORTANT: opinionController.js already queries the `opinions`,
+-- `investigation_master`, `patient_acknowledgements`, and
+-- `doctor_alert_log` tables created below (see getPhysicianQueue,
+-- getEpisodeForReview, saveDraftOpinion, submitOpinion, amendOpinion,
+-- closeEpisode, getInvestigationMaster). Because this migration was
+-- never run, every one of those live routes has been failing against
+-- the database with "relation does not exist" the whole time this file
+-- sat unapplied in the root folder.
+--
 -- Run in pgAdmin on the `thyroconsult` database
--- Run ONCE only
+-- Run ONCE only, after 001-015
 -- ============================================================
 
 -- 1. Pre-defined investigation master list

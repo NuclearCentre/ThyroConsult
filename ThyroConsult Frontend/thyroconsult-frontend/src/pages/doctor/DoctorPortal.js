@@ -28,14 +28,18 @@ const DoctorDashboard = ({ doctor }) => {
   const [notesSaved, setNotesSaved] = useState(false);
   const [loading, setLoading] = useState(false);
   const [paymentInfo, setPaymentInfo] = useState(null);
+  const [weeklyStats, setWeeklyStats] = useState(null);
   const [extracting, setExtracting] = useState(null); // docId being extracted
   const [extractedResults, setExtractedResults] = useState({}); // docId → extracted data
   const today = new Date().toISOString().split('T')[0];
 
   useEffect(() => {
     if (!doctor) return;
-    doctorAPI.getAppointments(doctor.id, today)
-      .then(r => { setAppointments(r.data.appointments || []); })
+    doctorAPI.getAppointments(today)
+      .then(r => { setAppointments(r.appointments || []); })
+      .catch(() => {});
+    doctorAPI.getWeeklyStats()
+      .then(r => setWeeklyStats(r))
       .catch(() => {});
   }, [doctor]);
 
@@ -170,7 +174,50 @@ If you cannot find a field, use null. Extract every test result you can find.`
         <div className="stat-card"><div className="stat-label">Today's appointments</div><div className="stat-value">{appointments.length}</div></div>
         <div className="stat-card"><div className="stat-label">Pending review</div><div className="stat-value" style={{ color:'var(--amber-600)' }}>{appointments.filter(a => a.status === 'scheduled').length}</div></div>
         <div className="stat-card"><div className="stat-label">Completed today</div><div className="stat-value" style={{ color:'var(--teal-600)' }}>{appointments.filter(a => a.status === 'completed').length}</div></div>
-        <div className="stat-card"><div className="stat-label">Consultation fee</div><div className="stat-value" style={{ fontSize:16, marginTop:4 }}>₹{doctor?.consultationFee?.toLocaleString('en-IN') || '—'}</div></div>
+        <div className="stat-card"><div className="stat-label">Opinion fee</div><div className="stat-value" style={{ fontSize:16, marginTop:4 }}>₹{doctor?.opinionFee?.toLocaleString('en-IN') || '—'}</div></div>
+      </div>
+
+      {/* Weekly opinions generated — new registrations vs follow-up */}
+      <div className="card" style={{ marginBottom:20 }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
+          <div className="card-title" style={{ marginBottom:0 }}>Opinions generated this week</div>
+          <span className="badge badge-blue">{weeklyStats?.total ?? 0} total</span>
+        </div>
+        {!weeklyStats ? (
+          <div style={{ display:'flex', justifyContent:'center', padding:20 }}><Spinner /></div>
+        ) : weeklyStats.total === 0 ? (
+          <EmptyState icon="📈" title="No opinions generated yet this week" subtitle="" />
+        ) : (
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
+            <div style={{ display:'flex', gap:16 }}>
+              <div>
+                <div style={{ fontSize:11, color:'var(--text-tertiary)', marginBottom:2 }}>New registrations</div>
+                <div style={{ fontSize:22, fontWeight:600, color:'var(--teal-600)' }}>{weeklyStats.newRegistrations}</div>
+              </div>
+              <div>
+                <div style={{ fontSize:11, color:'var(--text-tertiary)', marginBottom:2 }}>Follow-ups</div>
+                <div style={{ fontSize:22, fontWeight:600, color:'var(--blue-600)' }}>{weeklyStats.followUps}</div>
+              </div>
+            </div>
+            {weeklyStats.daily?.length > 0 && (
+              <div style={{ display:'flex', alignItems:'flex-end', gap:6, height:60 }}>
+                {weeklyStats.daily.map(d => {
+                  const dayTotal = d.newRegistrations + d.followUps;
+                  const maxTotal = Math.max(...weeklyStats.daily.map(x => x.newRegistrations + x.followUps), 1);
+                  return (
+                    <div key={d.day} title={`${new Date(d.day).toLocaleDateString('en-IN', { weekday:'short' })}: ${d.newRegistrations} new, ${d.followUps} follow-up`} style={{ flex:1, display:'flex', flexDirection:'column', justifyContent:'flex-end', height:'100%' }}>
+                      <div style={{ display:'flex', flexDirection:'column-reverse', height:`${(dayTotal / maxTotal) * 100}%`, minHeight: dayTotal > 0 ? 4 : 0 }}>
+                        <div style={{ background:'var(--teal-400)', height: dayTotal ? `${(d.newRegistrations / dayTotal) * 100}%` : 0, borderRadius:'2px 2px 0 0' }} />
+                        <div style={{ background:'var(--blue-300)', flex:1, borderRadius: d.newRegistrations === 0 ? '2px 2px 0 0' : 0 }} />
+                      </div>
+                      <div style={{ fontSize:9, color:'var(--text-tertiary)', textAlign:'center', marginTop:3 }}>{new Date(d.day).toLocaleDateString('en-IN', { weekday:'narrow' })}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div style={{ display:'grid', gridTemplateColumns:'280px 1fr', gap:20 }}>
@@ -432,7 +479,7 @@ const DoctorPortal = () => {
   const [doctor, setDoctor] = useState(null);
 
   useEffect(() => {
-    if (user?.id) doctorAPI.getProfile(user.id).then(r => setDoctor(r.data)).catch(() => {});
+    if (user?.id) doctorAPI.getProfile().then(r => setDoctor(r)).catch(() => {});
   }, [user]);
 
   return (

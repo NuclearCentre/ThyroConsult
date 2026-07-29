@@ -8,8 +8,8 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem('accessToken');
-    const storedUser = localStorage.getItem('user');
+    const token = authAPI.getToken();
+    const storedUser = localStorage.getItem('thyro_user');
     if (token && storedUser) {
       try { setUser(JSON.parse(storedUser)); } catch { localStorage.clear(); }
     }
@@ -18,21 +18,21 @@ export const AuthProvider = ({ children }) => {
 
   const login = useCallback(async (identifier, password, role) => {
     const res = await authAPI.login(identifier, password, role);
-    const { accessToken, refreshToken, userId, role: userRole } = res.data;
-    localStorage.setItem('accessToken', accessToken);
-    localStorage.setItem('refreshToken', refreshToken);
+    const { accessToken, refreshToken, userId, role: userRole } = res;
+    authAPI.setTokens(accessToken, refreshToken);
     const userData = { id: userId, role: userRole };
-    localStorage.setItem('user', JSON.stringify(userData));
+    localStorage.setItem('thyro_user', JSON.stringify(userData));
     setUser(userData);
     return userData;
   }, []);
 
   const logout = useCallback(async () => {
     try {
-      const refreshToken = localStorage.getItem('refreshToken');
+      const refreshToken = localStorage.getItem('thyro_refresh_token');
       await authAPI.logout(refreshToken);
     } catch { /* silent */ } finally {
-      localStorage.clear();
+      authAPI.clearTokens();
+      localStorage.removeItem('thyro_user');
       setUser(null);
     }
   }, []);

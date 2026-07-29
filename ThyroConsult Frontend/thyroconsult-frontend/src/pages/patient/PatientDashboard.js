@@ -11,19 +11,20 @@ import { patientAPI } from '../api';
 import MissingReports      from './MissingReports';
 import InvestigationUpload from './InvestigationUpload';
 import FollowUpVisit       from './FollowUpVisit';
+import { loadRazorpayScript } from '../../utils/loadRazorpay';
 
 const CONDITION_LABELS = {
-  hypo:   'Hypothyroidism',
-  hyper:  'Hyperthyroidism',
-  tc:     'CA Thyroid',
-  nodule: 'Thyroid Nodule',
+  hypothyroidism:  'Hypothyroidism',
+  hyperthyroidism: 'Hyperthyroidism',
+  thyroid_cancer:  'CA Thyroid',
+  nodule:          'Thyroid Nodule',
 };
 
 const CONDITION_COLORS = {
-  hypo:   '#185FA5',
-  hyper:  '#854F0B',
-  tc:     '#993C1D',
-  nodule: '#534AB7',
+  hypothyroidism:  '#185FA5',
+  hyperthyroidism: '#854F0B',
+  thyroid_cancer:  '#993C1D',
+  nodule:          '#534AB7',
 };
 
 const RUPEES = paise => `₹ ${(paise / 100).toLocaleString('en-IN')}`;
@@ -68,10 +69,11 @@ export default function PatientDashboard({ patient }) {
   const handlePay = useCallback(async (episode, gate) => {
     setPayingFor(episode.id);
     try {
+      await loadRazorpayScript();
       const order = await patientAPI.createPaymentOrder({
         episodeId:     episode.id,
         scenario:      gate.scenario,
-        conditionType: episode.condition_type,
+        conditionType: episode.condition,
       });
 
       if (order.free) {
@@ -84,7 +86,7 @@ export default function PatientDashboard({ patient }) {
         amount:   order.amountPaise,
         currency: 'INR',
         name:     'ThyroConsult',
-        description: `Online opinion — ${CONDITION_LABELS[episode.condition_type]}`,
+        description: `Online opinion — ${CONDITION_LABELS[episode.condition]}`,
         order_id: order.orderId,
         prefill: {
           name:  patient.name,
@@ -199,8 +201,8 @@ export default function PatientDashboard({ patient }) {
 // Renders one timeline card with banner + payment wall if needed
 // ─────────────────────────────────────────────────────────────
 function EpisodeCard({ episode, gate, paying, onPay, onOpen, completed }) {
-  const color = CONDITION_COLORS[episode.condition_type] || '#888';
-  const label = CONDITION_LABELS[episode.condition_type] || episode.condition_type;
+  const color = CONDITION_COLORS[episode.condition] || '#888';
+  const label = CONDITION_LABELS[episode.condition] || episode.condition;
 
   const needsPayment = gate?.paymentRequired !== null && gate?.paymentRequired !== undefined;
   const isLocked     = needsPayment && !completed;
@@ -230,7 +232,7 @@ function EpisodeCard({ episode, gate, paying, onPay, onOpen, completed }) {
               {label}
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>
-              First visit · {fmtDate(episode.submitted_at || episode.created_at)}
+              First visit · {fmtDate(episode.questionnaire_completed_at || episode.created_at)}
             </div>
           </div>
           <StatusBadge episode={episode} gate={gate} completed={completed} />
@@ -339,7 +341,7 @@ function PaymentWall({ gate, episode, paying, onPay }) {
         <div>
           <div style={{ fontSize: 13, fontWeight: 500 }}>Payment required</div>
           <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>
-            {CONDITION_LABELS[episode.condition_type]} · {fmtDate(episode.submitted_at)}
+            {CONDITION_LABELS[episode.condition]} · {fmtDate(episode.questionnaire_completed_at)}
           </div>
         </div>
       </div>

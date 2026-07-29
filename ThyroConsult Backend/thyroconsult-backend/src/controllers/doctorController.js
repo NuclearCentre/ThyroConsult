@@ -70,7 +70,7 @@ const getDoctorAppointments = async (req, res) => {
 
   try {
     const result = await query(
-      `SELECT a.id, a.scheduled_at, a.status, a.opinion_appointment_type,
+      `SELECT a.id, a.scheduled_at, a.status,
               p.id AS patient_id, p.patient_code,
               p.first_name, p.last_name, p.gender,
               pay.status AS payment_status, pay.total_amount, pay.razorpay_payment_id
@@ -87,7 +87,6 @@ const getDoctorAppointments = async (req, res) => {
       id: r.id,
       scheduledAt: r.scheduled_at,
       status: r.status,
-      opinionAppointmentType: r.opinion_appointment_type,
       patient: {
         id: r.patient_id,
         code: r.patient_code,
@@ -113,7 +112,72 @@ const getDoctorAppointments = async (req, res) => {
   }
 };
 
-// GET /doctors/:id/patients/:patientId — full patient view
+// GET /doctor/weekly-stats — opinions generated this week, new vs follow-up
+// "New registration" = this was the first opinion ever submitted for that
+// patient's condition episode. "Follow-up" = the episode already had at
+// least one earlier opinion (a returning patient on the same condition).
+const getWeeklyOpinionStats = async (req, res) => {
+  const doctorId = req.params.id || req.user.id;
+
+  try {
+    const result = await query(
+      `SELECT
+         COUNT(*) FILTER (WHERE rn = 1) AS new_registrations,
+         COUNT(*) FILTER (WHERE rn > 1) AS follow_ups,
+         COUNT(*) AS total
+       FROM (
+         SELECT o.id, o.episode_id,
+                ROW_NUMBER() OVER (PARTITION BY o.episode_id ORDER BY o.submitted_at) AS rn
+         FROM opinions o
+         WHERE o.doctor_id = $1
+           AND o.status IN ('submitted', 'acknowledged')
+           AND o.submitted_at >= date_trunc('week', NOW())
+           AND o.submitted_at <  date_trunc('week', NOW()) + INTERVAL '7 days'
+       ) ranked`,
+      [doctorId]
+    );
+
+    const row = result.rows[0];
+
+    // Daily breakdown for the week-so-far, same new-vs-follow-up split —
+    // useful for a small trend view alongside the headline numbers.
+    const daily = await query(
+      `SELECT
+         DATE(o.submitted_at) AS day,
+         COUNT(*) FILTER (WHERE rn = 1) AS new_registrations,
+         COUNT(*) FILTER (WHERE rn > 1) AS follow_ups
+       FROM (
+         SELECT o.id, o.episode_id, o.submitted_at,
+                ROW_NUMBER() OVER (PARTITION BY o.episode_id ORDER BY o.submitted_at) AS rn
+         FROM opinions o
+         WHERE o.doctor_id = $1
+           AND o.status IN ('submitted', 'acknowledged')
+           AND o.submitted_at >= date_trunc('week', NOW())
+           AND o.submitted_at <  date_trunc('week', NOW()) + INTERVAL '7 days'
+       ) o
+       GROUP BY DATE(o.submitted_at)
+       ORDER BY day`,
+      [doctorId]
+    );
+
+    res.json({
+      weekStart: null, // computed client-side from today's date if needed
+      newRegistrations: parseInt(row.new_registrations, 10) || 0,
+      followUps: parseInt(row.follow_ups, 10) || 0,
+      total: parseInt(row.total, 10) || 0,
+      daily: daily.rows.map(d => ({
+        day: d.day,
+        newRegistrations: parseInt(d.new_registrations, 10) || 0,
+        followUps: parseInt(d.follow_ups, 10) || 0,
+      })),
+    });
+  } catch (err) {
+    logger.error('Get weekly opinion stats error', { error: err.message });
+    res.status(500).json({ error: 'Failed to fetch weekly stats' });
+  }
+};
+
+
 const getDoctorPatientView = async (req, res) => {
   const { patientId } = req.params;
   try {
@@ -198,7 +262,12 @@ const saveOpinionNotes = async (req, res) => {
 
 // POST /appointments — book appointment
 const bookAppointment = async (req, res) => {
-  const { patientId, doctorId, scheduledAt, opinionAppointmentType, patientNotes } = req.body;
+  // patientId comes from the authenticated session (req.user.patientId), not
+  // the request body — the body previously carried it un-verified, which
+  // meant any logged-in patient could book (and get charged) on behalf of
+  // any other patientId they typed in the payload.
+  const patientId = req.user.patientId;
+  const { doctorId, scheduledAt, patientNotes } = req.body;
 
   try {
     const doctorResult = await query(
@@ -210,9 +279,9 @@ const bookAppointment = async (req, res) => {
     const result = await transaction(async (client) => {
       // Create appointment
       const appt = await client.query(
-        `INSERT INTO appointments(patient_id, doctor_id, scheduled_at, opinion_appointment_type, patient_notes)
-         VALUES($1,$2,$3,$4,$5) RETURNING id`,
-        [patientId, doctorId, scheduledAt, opinionAppointmentType || 'video',
+        `INSERT INTO appointments(patient_id, doctor_id, scheduled_at, patient_notes)
+         VALUES($1,$2,$3,$4) RETURNING id`,
+        [patientId, doctorId, scheduledAt,
          patientNotes ? encryptPHI(patientNotes) : null]
       );
       const appointmentId = appt.rows[0].id;
@@ -220,9 +289,9 @@ const bookAppointment = async (req, res) => {
       // Create opinion record
       const opinionNum = `OPN-${new Date().getFullYear()}-${String(await getNextOpinionNum(client)).padStart(4, '0')}`;
       await client.query(
-        `INSERT INTO consultations(appointment_id, patient_id, doctor_id, opinion_number, opinion_appointment_type)
-         VALUES($1,$2,$3,$4,$5)`,
-        [appointmentId, patientId, doctorId, opinionNum, opinionAppointmentType || 'video']
+        `INSERT INTO consultations(appointment_id, patient_id, doctor_id, opinion_number)
+         VALUES($1,$2,$3,$4)`,
+        [appointmentId, patientId, doctorId, opinionNum]
       );
 
       // Razorpay order — GST intentionally not charged: doctors are exempt
@@ -364,6 +433,22 @@ const verifyPayment = async (req, res) => {
       [razorpayPaymentId, razorpaySignature, razorpayOrderId]
     );
 
+    // Mirror razorpayWebhook's follow-through here too — don't rely solely
+    // on the Razorpay webhook to flip these, since the webhook requires a
+    // public URL configured in the Razorpay dashboard and will never fire
+    // against localhost during local/dev testing.
+    await query(
+      `UPDATE appointments a SET status = 'scheduled'
+       FROM payments p WHERE p.appointment_id = a.id AND p.razorpay_order_id = $1`,
+      [razorpayOrderId]
+    );
+    await query(
+      `UPDATE patients SET registration_step = 7, registration_complete = TRUE
+       FROM payments p WHERE p.patient_id = patients.id AND p.razorpay_order_id = $1
+       AND patients.registration_step = 6`,
+      [razorpayOrderId]
+    );
+
     logger.audit('PAYMENT_VERIFIED', { userId: req.user?.id, ip: req.ip });
     res.json({ message: 'Payment verified successfully' });
   } catch (err) {
@@ -422,7 +507,7 @@ const updateProfile = async (req, res) => {
 const getAppointmentDetail = async (req, res) => {
   try {
     const result = await query(
-      `SELECT a.id, a.scheduled_at, a.status, a.opinion_appointment_type, a.session_link,
+      `SELECT a.id, a.scheduled_at, a.status,
               p.id AS patient_id, p.patient_code, p.first_name, p.last_name, p.gender,
               pay.status AS payment_status, pay.total_amount
        FROM appointments a
@@ -438,8 +523,6 @@ const getAppointmentDetail = async (req, res) => {
       id: a.id,
       scheduledAt: a.scheduled_at,
       status: a.status,
-      opinionAppointmentType: a.opinion_appointment_type,
-      sessionLink: a.session_link,
       patient: {
         id: a.patient_id, code: a.patient_code,
         name: `${decryptPHI(a.first_name)} ${decryptPHI(a.last_name)}`,
@@ -489,7 +572,7 @@ const updateAppointment = async (req, res) => {
 };
 
 module.exports = {
-  listDoctors, getDoctorProfile, getDoctorAppointments,
+  listDoctors, getDoctorProfile, getDoctorAppointments, getWeeklyOpinionStats,
   getDoctorPatientView, saveOpinionNotes,
   bookAppointment,
   updateProfile, getAppointmentDetail, updateAppointment,

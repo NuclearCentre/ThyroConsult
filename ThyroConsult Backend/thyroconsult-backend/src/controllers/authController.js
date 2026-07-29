@@ -106,12 +106,21 @@ const registerPatientStep1 = async (req, res) => {
       userAgent: req.get('user-agent'),
     });
 
+    // Issue a token pair immediately. Steps 2-7 of the wizard still take
+    // patientId directly in the body (kept as-is), but Step 7 (document
+    // upload) and Step 8 (booking/payment) hit routes protected by
+    // verifyToken/requireRole('patient') — without a token issued here,
+    // those calls have always 401'd with no refresh token to fall back on.
+    const tokens = await generateTokenPair(patient.id, 'patient', req.ip, req.get('user-agent'));
+
     // Auto-save: return patientId for subsequent steps
     res.status(201).json({
       message: 'Step 1 saved successfully',
       patientId: patient.id,
       patientCode: patient.patient_code,
       nextStep: 2,
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
     });
   } catch (err) {
     logger.error('Patient registration step 1 error', { error: err.message });

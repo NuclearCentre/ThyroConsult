@@ -32,8 +32,14 @@ async function apiFetch(path, options = {}) {
 
   let response = await fetch(`${BASE_URL}${path}`, { ...options, headers });
 
-  // Auto-refresh on 401
-  if (response.status === 401) {
+  // Auto-refresh on 401 — but only for requests that were actually
+  // authenticated (i.e. we sent a token). A 401 on an unauthenticated call
+  // like /auth/login just means "wrong credentials" and should bubble up
+  // as a normal error for the caller to display — not trigger a session-
+  // expiry redirect. Without this guard, every failed login attempt would
+  // hard-navigate to /login (no refresh token exists yet on a fresh login),
+  // wiping the form and the error message before it could ever be shown.
+  if (response.status === 401 && token) {
     const refreshToken = localStorage.getItem('thyro_refresh_token');
     if (refreshToken) {
       const refreshRes = await fetch(`${BASE_URL}/auth/refresh`, {
@@ -67,10 +73,28 @@ async function apiFetch(path, options = {}) {
   return data;
 }
 
-function get(path)           { return apiFetch(path, { method: 'GET' }); }
+function get(path, params)   { return apiFetch(path + toQueryString(params), { method: 'GET' }); }
 function post(path, body)    { return apiFetch(path, { method: 'POST',   body: JSON.stringify(body) }); }
 function put(path, body)     { return apiFetch(path, { method: 'PUT',    body: JSON.stringify(body) }); }
 function del(path)           { return apiFetch(path, { method: 'DELETE' }); }
+
+function toQueryString(params) {
+  if (!params) return '';
+  const usable = Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '');
+  if (!usable.length) return '';
+  return '?' + usable.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+}
+
+// For non-JSON responses (e.g. CSV export) — apiFetch always calls
+// response.json(), which throws on anything that isn't valid JSON.
+async function getBlob(path, params) {
+  const token = getToken();
+  const headers = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await fetch(`${BASE_URL}${path}${toQueryString(params)}`, { headers });
+  if (!response.ok) throw new Error('Request failed');
+  return response.blob();
+}
 
 // ─── Auth ─────────────────────────────────────────────────────────────────
 
@@ -101,7 +125,7 @@ export const authAPI = {
   adminLogin:     (identifier, password)         => post('/auth/login', { identifier, password, role: 'admin' }),
 
   refresh:        (refreshToken)        => post('/auth/refresh', { refreshToken }),
-  logout:         ()                    => post('/auth/logout'),
+  logout:         (refreshToken)        => post('/auth/logout', { refreshToken }),
   setTokens,
   clearTokens,
   getToken,
@@ -112,6 +136,9 @@ export const authAPI = {
 export const patientAPI = {
   getProfile:     ()                    => get('/patient/profile'),
   updateProfile:  (data)                => put('/patient/profile', data),
+  // Backend returns { episodes, total } — unwrap to the array here so
+  // call sites (e.g. PatientDashboard.js) can use the result directly.
+  getEpisodes:    (patientId)           => get(`/condition/episodes/${patientId}`).then(r => r.episodes),
   getConsents:    ()                    => get('/patient/consents'),
   saveConsents:   (consentType, agreed, signatureData) =>
     post('/patient/consents', { consentType, agreed, signatureData }),
@@ -198,6 +225,16 @@ export const physicianAPI = {
 
 // ─── Payments ─────────────────────────────────────────────────────────────
 
+// ─── Appointments (initial booking) ────────────────────────────────────────
+// Step 8 of registration books the FIRST appointment and creates the
+// Razorpay order for it. This is a different endpoint/shape from
+// paymentAPI.createOrder below, which is for S1/S2/S3 FOLLOW-UP payments
+// only (episodeId/scenario/conditionType, not patientId/doctorId/scheduledAt).
+export const appointmentAPI = {
+  book:           (data) => post('/appointment/book', data),
+  verifyPayment:  (data) => post('/appointment/verify-payment', data),
+};
+
 export const paymentAPI = {
   createOrder:          (data)            => post('/payment/create-order', data),
   verifyPayment:        (data)            => post('/payment/verify', data),
@@ -255,7 +292,8 @@ export const doctorAPI = {
   // exact route path is a best guess pending the routes file confirming it.
   getProfile:           ()                => get('/doctor/profile'),
   updateProfile:        (data)            => put('/doctor/profile', data),
-  getAppointments:      ()                => get('/doctor/appointments'),
+  getAppointments:      (date)            => get('/doctor/appointments', { date }),
+  getWeeklyStats:       ()                => get('/doctor/weekly-stats'),
   getAppointmentDetail: (id)              => get(`/doctor/appointment/${id}`),
   updateAppointment:    (id, data)        => put(`/doctor/appointment/${id}`, data),
 };
@@ -264,12 +302,21 @@ export const doctorAPI = {
 
 export const adminAPI = {
   getDashboard:         ()                => get('/admin/dashboard'),
-  listPatients:         ()                => get('/admin/patients'),
+  listPatients:         (params)          => get('/admin/patients', params),
   getPatient:           (id)              => get(`/admin/patient/${id}`),
   updatePatient:        (id, data)        => put(`/admin/patient/${id}`, data),
   listDoctors:          ()                => get('/admin/doctors'),
   createDoctor:         (data)            => post('/admin/doctor', data),
   updateDoctor:         (id, data)        => put(`/admin/doctor/${id}`, data),
+  // setDoctorStatus reuses the same PUT /admin/doctor/:id route as
+  // updateDoctor — the backend controller behind it (adminController.
+  // setDoctorStatus) only toggles is_active from { isActive }, it doesn't
+  // do a full profile update, so keep call sites using the right body shape.
+  setDoctorStatus:      (id, isActive)    => put(`/admin/doctor/${id}`, { isActive }),
   listEpisodes:         ()                => get('/admin/episodes'),
   getPlatformStats:     ()                => get('/admin/stats'),
+  getAuditLog:          (params)          => get('/admin/audit-log', params),
+  exportAuditLog:       ()                => getBlob('/admin/audit-log/export'),
+  getEncryptionStatus:  ()                => get('/admin/encryption-status'),
+  getPaymentReport:     (params)          => get('/admin/payments/report', params),
 };

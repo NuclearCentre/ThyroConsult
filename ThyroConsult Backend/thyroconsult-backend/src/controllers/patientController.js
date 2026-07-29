@@ -338,7 +338,7 @@ const addBloodReportValue = async (req, res) => {
 const getPatientOpinions = async (req, res) => {
   try {
     const result = await query(
-      `SELECT c.id, c.opinion_number, c.opinion_appointment_type, c.status,
+      `SELECT c.id, c.opinion_number, c.status,
               c.started_at, c.completed_at, c.duration_minutes,
               c.chief_complaint, c.diagnosis, c.doctor_notes, c.follow_up_notes,
               d.first_name AS doctor_first, d.last_name AS doctor_last
@@ -352,7 +352,6 @@ const getPatientOpinions = async (req, res) => {
     const opinions = result.rows.map(r => ({
       id: r.id,
       opinionNumber: r.opinion_number,
-      type: r.opinion_appointment_type,
       status: r.status,
       startedAt: r.started_at,
       completedAt: r.completed_at,
@@ -382,8 +381,7 @@ const getInvoices = async (req, res) => {
     const result = await query(
       `SELECT p.id, p.invoice_number, p.opinion_fee, p.platform_fee,
               p.total_amount, p.status, p.payment_method, p.paid_at,
-              d.first_name AS doctor_first, d.last_name AS doctor_last,
-              c.opinion_appointment_type
+              d.first_name AS doctor_first, d.last_name AS doctor_last
        FROM payments p
        JOIN doctors d ON p.doctor_id = d.id
        LEFT JOIN appointments a ON p.appointment_id = a.id
@@ -403,7 +401,6 @@ const getInvoices = async (req, res) => {
       paymentMethod: r.payment_method,
       paidAt: r.paid_at,
       doctorName: `Dr. ${decryptPHI(r.doctor_first)} ${decryptPHI(r.doctor_last)}`,
-      opinionType: r.opinion_appointment_type,
     }));
 
     res.json({ invoices, total: invoices.length });

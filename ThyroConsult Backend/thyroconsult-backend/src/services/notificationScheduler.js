@@ -14,8 +14,9 @@
 
 const cron = require('node-cron');
 const db   = require('../config/database');
-const { notificationService }  = require('./notificationService');
+const notificationService  = require('./notificationService');
 const { notificationTemplates } = require('./notificationTemplates');
+const { decryptPHI } = require('../utils/encryption');
 
 // ─── IST helpers ───────────────────────────────────────────────────────────
 
@@ -40,7 +41,7 @@ async function sendDoctorAlert(doctor, episode, stage) {
   let errorMessage = null;
   try {
     await notificationService.notify(
-      { phone: doctor.phone, email: doctor.email },
+      { mobile: doctor.phone, email: doctor.email },
       template
     );
   } catch (err) {
@@ -76,11 +77,11 @@ async function runEscalation() {
          pce.primary_doctor_id,
          d.first_name  AS doc_first,
          d.last_name   AS doc_last,
-         d.phone       AS doc_phone,
+         d.mobile      AS doc_mobile,
          d.email       AS doc_email,
          p.first_name  AS pat_first,
          p.last_name   AS pat_last,
-         pce.condition_type
+         pce.condition
        FROM patient_condition_episodes pce
        JOIN doctors  d ON d.id  = pce.primary_doctor_id
        JOIN patients p ON p.id  = pce.patient_id
@@ -95,10 +96,13 @@ async function runEscalation() {
     for (const row of result.rows) {
       const hours = hoursSince(row.submitted_at);
 
-      const doctor  = { id: row.primary_doctor_id, phone: row.doc_phone, email: row.doc_email,
-                         name: `Dr. ${row.doc_first} ${row.doc_last}` };
-      const episode = { id: row.id, patientName: `${row.pat_first} ${row.pat_last}`,
-                         conditionType: row.condition_type, submittedAt: row.submitted_at };
+      // first_name/last_name/mobile/email are all encrypted PHI at rest —
+      // decrypt before use, or the doctor/patient's name in the alert
+      // message and the mobile/email actually dialled would be ciphertext.
+      const doctor  = { id: row.primary_doctor_id, phone: decryptPHI(row.doc_mobile), email: decryptPHI(row.doc_email),
+                         name: `Dr. ${decryptPHI(row.doc_first)} ${decryptPHI(row.doc_last)}` };
+      const episode = { id: row.id, patientName: `${decryptPHI(row.pat_first)} ${decryptPHI(row.pat_last)}`,
+                         conditionType: row.condition, submittedAt: row.submitted_at };
 
       // ── Stage: 72 h+ — stop all alerts ──────────────────────────────────
       if (hours >= 72) {

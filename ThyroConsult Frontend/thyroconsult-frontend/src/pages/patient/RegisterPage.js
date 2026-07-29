@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Webcam from 'react-webcam';
 import SignaturePad from 'react-signature-canvas';
-import { authAPI, doctorAPI, patientAPI, paymentAPI } from '../../api';
+import { authAPI, doctorAPI, patientAPI, appointmentAPI } from '../../api';
 import { Logo, HIPAABadge, Alert, Spinner } from '../../components/common/index';
 import ConditionSelection from '../../components/ConditionSelection';
 import CoreQuestionnaire from '../../components/CoreQuestionnaire';
@@ -16,6 +16,7 @@ import TcQuestionnaire from '../../components/TcQuestionnaire';
 // ConditionQuestionnaires.js should probably be removed to prevent this
 // mistake happening again — flagging rather than deleting it myself.
 import NoduleQuestionnaire from '../../components/NoduleQuestionnaire';
+import { loadRazorpayScript } from '../../utils/loadRazorpay';
 
 // ── Steps now include 5.5 (condition), 5.6 (core Q), 5.7 (condition Q)
 // These are sub-steps rendered inside the same step bar position
@@ -144,6 +145,12 @@ const RegisterPage = () => {
       });
       setPatientId(res.patientId);
       setPatientGender(form.gender);
+      // Registration Step 1 now issues a token pair (see authController.js
+      // registerPatientStep1) — store it so every subsequent call in this
+      // wizard that hits a verifyToken-protected route (document upload at
+      // Step 7, booking at Step 8) actually carries a valid Authorization
+      // header instead of 401'ing with no refresh token to fall back on.
+      authAPI.setTokens(res.accessToken, res.refreshToken);
       setStep(2);
     } catch (err) { setError(err.response?.data?.error || 'Registration failed'); }
     finally { setLoading(false); }
@@ -274,10 +281,10 @@ const RegisterPage = () => {
   const initiatePayment = async () => {
     setLoading(true); setError('');
     try {
-      const res = await paymentAPI.createOrder({
-        patientId, doctorId: selectedDoctor,
+      await loadRazorpayScript();
+      const res = await appointmentAPI.book({
+        doctorId: selectedDoctor,
         scheduledAt: new Date(Date.now() + 3600000).toISOString(),
-        opinionAppointmentType: 'video',
       });
       const { razorpayOrderId, amount } = res;
       const options = {
@@ -288,7 +295,7 @@ const RegisterPage = () => {
         description: 'Online thyroid opinion',
         order_id: razorpayOrderId,
         handler: async (response) => {
-          await paymentAPI.verifyPayment({
+          await appointmentAPI.verifyPayment({
             razorpayOrderId: response.razorpay_order_id,
             razorpayPaymentId: response.razorpay_payment_id,
             razorpaySignature: response.razorpay_signature,

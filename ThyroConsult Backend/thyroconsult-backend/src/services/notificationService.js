@@ -18,6 +18,10 @@
 //   'disabled'   — silently skip all email sends
 //
 // Required .env variables per provider — see PROVIDER SETUP
+
+const bcrypt = require('bcryptjs');
+const { pool } = require('../config/database');
+const { hmacHash, generateOTP } = require('../utils/encryption');
 // section below for the full list.
 //
 // Install:
@@ -261,4 +265,82 @@ async function notify(recipient, template) {
   ]);
 }
 
-module.exports = { sendWhatsApp, sendEmail, notify };
+/**
+ * Send an OTP and store its (bcrypt-hashed) value in otp_verifications.
+ * @param {string} channel     — 'sms' | 'whatsapp' | 'email'
+ * @param {string} destination — decrypted mobile/whatsapp number or email
+ * @param {string} purpose     — e.g. 'mobile_verify' — matches otp_purpose enum
+ * @param {string} ip
+ */
+async function sendOTP(channel, destination, purpose, ip) {
+  const otp = generateOTP(6);
+  const otpHash = await bcrypt.hash(otp, 10);
+  const identifier = hmacHash(destination);
+  const expiresMinutes = parseInt(process.env.OTP_EXPIRY_MINUTES) || 10;
+  const expiresAt = new Date(Date.now() + expiresMinutes * 60000);
+
+  await pool.query(
+    `INSERT INTO otp_verifications(identifier, purpose, otp_hash, expires_at, ip_address)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [identifier, purpose, otpHash, expiresAt, ip]
+  );
+
+  // No SMS gateway is wired up (only WhatsApp/email have real providers
+  // above) — and for local/dev testing without live Twilio/SendGrid/etc
+  // credentials, log the OTP to the server console so it's actually
+  // possible to complete Step 2 without a real inbox/phone.
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`[DEV OTP] ${channel} OTP for ${destination} (${purpose}): ${otp}`);
+  }
+
+  if (channel === 'whatsapp') {
+    await sendWhatsApp(destination, `Your ThyroConsult verification code is ${otp}. Valid for ${expiresMinutes} minutes.`);
+  } else if (channel === 'email') {
+    await sendEmail({
+      to: destination,
+      subject: 'Your ThyroConsult verification code',
+      text: `Your verification code is ${otp}. Valid for ${expiresMinutes} minutes.`,
+    });
+  }
+  // channel === 'sms': no provider configured — dev-console log above is
+  // the only delivery path until an SMS gateway is added.
+
+  return { sent: true };
+}
+
+/**
+ * Verify an OTP against the most recent unverified row for this identifier+purpose.
+ * @param {string} destinationRaw — decrypted mobile/whatsapp/email (NOT the hash)
+ * @param {string} purpose
+ * @param {string} otp
+ * @returns {{ valid: boolean, reason?: string }}
+ */
+async function verifyOTP(destinationRaw, purpose, otp) {
+  const identifier = hmacHash(destinationRaw);
+
+  const { rows } = await pool.query(
+    `SELECT id, otp_hash, expires_at, attempts, max_attempts, verified
+     FROM otp_verifications
+     WHERE identifier = $1 AND purpose = $2
+     ORDER BY created_at DESC LIMIT 1`,
+    [identifier, purpose]
+  );
+
+  if (!rows.length) return { valid: false, reason: 'No OTP was requested for this contact' };
+  const row = rows[0];
+
+  if (row.verified) return { valid: false, reason: 'OTP already used' };
+  if (new Date(row.expires_at) < new Date()) return { valid: false, reason: 'OTP expired' };
+  if (row.attempts >= row.max_attempts) return { valid: false, reason: 'Too many incorrect attempts — request a new OTP' };
+
+  const match = await bcrypt.compare(otp, row.otp_hash);
+  if (!match) {
+    await pool.query('UPDATE otp_verifications SET attempts = attempts + 1 WHERE id = $1', [row.id]);
+    return { valid: false, reason: 'Incorrect OTP' };
+  }
+
+  await pool.query('UPDATE otp_verifications SET verified = TRUE, verified_at = NOW() WHERE id = $1', [row.id]);
+  return { valid: true };
+}
+
+module.exports = { sendWhatsApp, sendEmail, notify, sendOTP, verifyOTP };
