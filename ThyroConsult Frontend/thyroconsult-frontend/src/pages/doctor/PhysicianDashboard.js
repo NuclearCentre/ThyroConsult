@@ -13,17 +13,17 @@ import InvestigationReview from '../../components/physician/InvestigationReview'
 import FollowUpReview      from '../../components/physician/FollowUpReview';
 
 const CONDITION_COLORS = {
-  hypo:   '#185FA5',
-  hyper:  '#854F0B',
-  tc:     '#993C1D',
-  nodule: '#534AB7',
+  hypothyroidism:  '#185FA5',
+  hyperthyroidism: '#854F0B',
+  thyroid_cancer:  '#993C1D',
+  nodule:          '#534AB7',
 };
 
 const CONDITION_LABELS = {
-  hypo:   'Hypothyroidism',
-  hyper:  'Hyperthyroidism',
-  tc:     'CA Thyroid',
-  nodule: 'Thyroid Nodule',
+  hypothyroidism:  'Hypothyroidism',
+  hyperthyroidism: 'Hyperthyroidism',
+  thyroid_cancer:  'CA Thyroid',
+  nodule:          'Thyroid Nodule',
 };
 
 function fmtDate(d) {
@@ -93,7 +93,9 @@ export default function PhysicianDashboard({ doctor }) {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 0', borderBottom: '1px solid #e8e8e8', marginBottom: 24 }}>
         <div>
           <div style={{ fontSize: 18, fontWeight: 600, color: '#1a1a2e' }}>ThyroConsult — Physician Portal</div>
-          <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>Dr. {doctor?.name || 'Physician'}</div>
+          <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>
+            {doctor ? `Dr. ${doctor.firstName} ${doctor.lastName}` : 'Physician'}
+          </div>
         </div>
         {totalPending > 0 && (
           <div style={{ background: '#FCEBEB', color: '#791F1F', fontSize: 12, fontWeight: 600, padding: '5px 12px', borderRadius: 20 }}>

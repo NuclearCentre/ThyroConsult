@@ -234,13 +234,13 @@ export const physicianAPI = {
   // Existing physician controller endpoints
   getPendingWork:       ()                => get('/physician/pending'),
   getEpisodeSummary:    (episodeId)       => get(`/physician/episode/${episodeId}/summary`),
-  adviseInvestigations: (episodeId, data) => post(`/physician/episode/${episodeId}/advise-investigations`, data),
+  adviseInvestigations: (episodeId, investigations) => post(`/physician/episode/${episodeId}/advise-investigations`, { investigations }),
   getEpisodeInvestigations: (episodeId)   => get(`/physician/episode/${episodeId}/investigations`),
-  updateInvestigation:  (id, data)        => put(`/physician/investigation/${id}`, data),
-  deleteInvestigation:  (id)              => del(`/physician/investigation/${id}`),
-  markInvestigationReviewed: (episodeId)  => post(`/physician/episode/${episodeId}/mark-investigation-reviewed`),
+  updateInvestigation:  (episodeId, invId, data) => put(`/physician/episode/${episodeId}/investigation/${invId}`, data),
+  deleteInvestigation:  (episodeId, invId)       => del(`/physician/episode/${episodeId}/investigation/${invId}`),
+  markInvestigationReviewed: (episodeId, invId)  => post(`/physician/episode/${episodeId}/investigation/${invId}/mark-reviewed`),
   getFollowUpVisit:     (episodeId)       => get(`/physician/followup/${episodeId}`),
-  reviewFollowUpVisit:  (episodeId, data) => post(`/physician/followup/${episodeId}/review`, data),
+  reviewFollowUpVisit:  (episodeId, visitId, data) => post(`/physician/followup/${episodeId}/${visitId}/review`, data),
 };
 
 // ─── Payments ─────────────────────────────────────────────────────────────

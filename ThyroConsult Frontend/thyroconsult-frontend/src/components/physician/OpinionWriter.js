@@ -3,7 +3,7 @@
 // Sections: Clinical Summary | Impression | Advice | Investigations + Remarks
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { physicianAPI, opinionAPI, adviseLetterAPI } from '../../api/index';
+import { physicianAPI, adviseLetterAPI } from '../../api/index';
 
 // ─── Tiny reusable field ──────────────────────────────────────────────────
 
@@ -50,7 +50,7 @@ function InvestigationPicker({ selected, onChange }) {
   const [searchTerm, setSearchTerm]   = useState('');
 
   useEffect(() => {
-    opinionAPI.getInvestigationMaster()
+    physicianAPI.getInvestigationMaster()
       .then(res => setMasterList(res.data || {}))
       .catch(() => setMasterList({}))
       .finally(() => setLoadingList(false));
@@ -309,10 +309,10 @@ export default function OpinionWriter({ episodeId, existingOpinion, onSaved, onS
     setSavedMsg('');
     try {
       if (isAmending) {
-        await opinionAPI.amendOpinion(existingOpinion.opinionId, form);
+        await physicianAPI.amendOpinion(existingOpinion.opinionId, form);
         setSavedMsg('Amendment saved.');
       } else {
-        await opinionAPI.saveDraftOpinion(episodeId, form);
+        await physicianAPI.saveDraftOpinion(episodeId, form);
         setSavedMsg('Draft saved.');
       }
       onSaved && onSaved();
@@ -327,7 +327,7 @@ export default function OpinionWriter({ episodeId, existingOpinion, onSaved, onS
     if (!validate()) return;
     setSubmitting(true);
     try {
-      await opinionAPI.submitOpinion(episodeId, form);
+      await physicianAPI.submitOpinion(episodeId, form);
       onSubmitted && onSubmitted();
     } catch (err) {
       setErrors({ submit: err?.response?.data?.message || 'Submission failed — please try again.' });

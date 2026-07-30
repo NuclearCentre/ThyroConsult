@@ -341,15 +341,21 @@ router.post('/physician/episode/:episodeId/advise-investigations',
   verifyToken, requireRole('doctor'), sessionTimeout, physicianController.adviseInvestigations);
 router.get ('/physician/episode/:episodeId/investigations',
   verifyToken, requireRole('doctor'), physicianController.getEpisodeInvestigations);
-router.put ('/physician/investigation/:investigationId',
+// NOTE: updateInvestigation/deleteInvestigation/markInvestigationReviewed
+// all read BOTH req.params.episodeId and req.params.invId — the routes
+// below previously supplied only one of the two (either :investigationId
+// alone, or :episodeId alone), so the other was always undefined and
+// every one of these calls was broken (queries either errored on an
+// invalid id or matched zero rows).
+router.put ('/physician/episode/:episodeId/investigation/:invId',
   verifyToken, requireRole('doctor'), sessionTimeout, physicianController.updateInvestigation);
-router.delete('/physician/investigation/:investigationId',
+router.delete('/physician/episode/:episodeId/investigation/:invId',
   verifyToken, requireRole('doctor'), sessionTimeout, physicianController.deleteInvestigation);
-router.post('/physician/episode/:episodeId/mark-investigation-reviewed',
+router.post('/physician/episode/:episodeId/investigation/:invId/mark-reviewed',
   verifyToken, requireRole('doctor'), sessionTimeout, physicianController.markInvestigationReviewed);
 router.get ('/physician/followup/:episodeId',
   verifyToken, requireRole('doctor'), physicianController.getFollowUpVisit);
-router.post('/physician/followup/:episodeId/review',
+router.post('/physician/followup/:episodeId/:visitId/review',
   verifyToken, requireRole('doctor'), sessionTimeout, physicianController.reviewFollowUpVisit);
 
 // ═══════════════════════════════════════════════════════════════════════════

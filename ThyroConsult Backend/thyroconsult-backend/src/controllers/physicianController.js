@@ -164,7 +164,7 @@ async function getEpisodeSummary(req, res) {
     );
 
     res.json({
-      episode,
+      episode: { ...episode, submitted_at: episode.questionnaire_completed_at },
       questionnaire,
       advisedInvestigations: invRows,
       followUpVisits: fvRows,

@@ -5,7 +5,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/patient/RegisterPage';
 import PatientPortal from './pages/patient/PatientPortal';
-import DoctorPortal from './pages/doctor/DoctorPortal';
+import PhysicianPortal from './pages/doctor/PhysicianPortal';
 import AdminPortal from './pages/admin/AdminPortal';
 import { Spinner } from './components/common/index';
 
@@ -25,7 +25,7 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
 
   if (allowedRoles && !allowedRoles.includes(user.role)) {
     // Redirect to correct portal based on role
-    if (user.role === 'doctor') return <Navigate to="/doctor/appointments" replace />;
+    if (user.role === 'doctor') return <Navigate to="/doctor/dashboard" replace />;
     if (user.role === 'admin' || user.role === 'super_admin') return <Navigate to="/admin/stats" replace />;
     return <Navigate to="/patient/dashboard" replace />;
   }
@@ -38,7 +38,7 @@ const RootRedirect = () => {
   const { user, loading } = useAuth();
   if (loading) return <div className="loading-screen"><Spinner size={32} /></div>;
   if (!user) return <Navigate to="/login" replace />;
-  if (user.role === 'doctor') return <Navigate to="/doctor/appointments" replace />;
+  if (user.role === 'doctor') return <Navigate to="/doctor/dashboard" replace />;
   if (user.role === 'admin' || user.role === 'super_admin') return <Navigate to="/admin/stats" replace />;
   return <Navigate to="/patient/dashboard" replace />;
 };
@@ -63,7 +63,7 @@ const App = () => {
           {/* Doctor portal */}
           <Route path="/doctor/*" element={
             <ProtectedRoute allowedRoles={['doctor']}>
-              <DoctorPortal />
+              <PhysicianPortal />
             </ProtectedRoute>
           } />
 

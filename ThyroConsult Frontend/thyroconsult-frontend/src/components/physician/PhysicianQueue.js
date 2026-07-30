@@ -9,7 +9,7 @@ const CONDITION_LABELS = {
   hypothyroidism: 'Hypothyroidism',
   hyperthyroidism: 'Hyperthyroidism',
   thyroid_cancer: 'CA Thyroid',
-  thyroid_nodule: 'Thyroid Nodule',
+  nodule: 'Thyroid Nodule',
 };
 
 const OPINION_STATUS_LABELS = {
@@ -236,7 +236,7 @@ export default function PhysicianQueue({ onSelectEpisode }) {
 
                 {/* Badges */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                  <Hoursbage hours={ep.hoursSinceSubmission} isOverdue={ep.isOverdue} isCritical={ep.isCritical} />
+                  <Hoursbadge hours={ep.hoursSinceSubmission} isOverdue={ep.isOverdue} isCritical={ep.isCritical} />
                   <StatusBadge status={ep.opinionStatus} />
                 </div>
 
@@ -265,6 +265,3 @@ export default function PhysicianQueue({ onSelectEpisode }) {
     </div>
   );
 }
-
-// Fix: typo in component name inside render
-function Hoursbage(props) { return <Hoursbadge {...props} />; }

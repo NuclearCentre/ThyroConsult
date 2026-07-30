@@ -76,12 +76,6 @@ export const DoctorSidebar = ({ doctor }) => {
       </div>
       <div style={{ flex: 1 }}>
         <NavItem to="/doctor/dashboard" icon="⊞" label="Dashboard" />
-        <NavItem to="/doctor/appointments" icon="📅" label="Appointments" />
-        <NavItem to="/doctor/patients" icon="👥" label="My Patients" />
-        <NavItem to="/doctor/trends" icon="📈" label="Report Trends" />
-        <NavItem to="/doctor/documents" icon="📁" label="Documents" />
-        <NavItem to="/doctor/payments" icon="💳" label="Payments" />
-        <NavItem to="/doctor/notes" icon="📝" label="Consultation Notes" />
       </div>
       <div style={{ borderTop: '1px solid var(--border)', padding: '12px 0' }}>
         <button onClick={handleLogout} className="nav-item" style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', fontSize: 14 }}>

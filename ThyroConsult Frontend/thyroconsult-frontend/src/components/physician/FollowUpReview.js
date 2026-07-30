@@ -18,10 +18,10 @@ import React, { useEffect, useState } from 'react';
 import { physicianAPI } from '../../api';
 
 const CONDITION_LABELS = {
-  hypo:   'Hypothyroidism',
-  hyper:  'Hyperthyroidism',
-  tc:     'CA Thyroid',
-  nodule: 'Thyroid Nodule',
+  hypothyroidism:  'Hypothyroidism',
+  hyperthyroidism: 'Hyperthyroidism',
+  thyroid_cancer:  'CA Thyroid',
+  nodule:          'Thyroid Nodule',
 };
 
 const DELTA_COLORS = {

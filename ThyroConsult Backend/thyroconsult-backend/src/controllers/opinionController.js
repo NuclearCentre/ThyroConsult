@@ -175,13 +175,25 @@ exports.getEpisodeForReview = async (req, res) => {
     }
 
     // Uploaded documents
+    // NOTE: documents has no episode_id column at all — it's associated by
+    // patient_id, not episode. This query previously filtered on a column
+    // that doesn't exist and used four more wrong column names on top of
+    // that (doc_type/file_name/file_url/uploaded_at vs the real
+    // category/original_name/storage_path/mime_type/created_at) —
+    // every single call to this endpoint would have thrown a hard SQL
+    // error ("column episode_id does not exist"). original_name is also
+    // PHI-encrypted and needs decrypting in JS, not read raw.
     const docsResult = await db.query(
-      `SELECT id, doc_type, file_name, file_url, uploaded_at
+      `SELECT id, category, original_name, mime_type, created_at
        FROM documents
-       WHERE episode_id = $1
-       ORDER BY uploaded_at DESC`,
-      [episodeId]
+       WHERE patient_id = $1 AND is_deleted = FALSE
+       ORDER BY created_at DESC`,
+      [episode.patient_id]
     );
+    const documents = docsResult.rows.map(d => ({
+      ...d,
+      original_name: d.original_name ? decryptPHI(d.original_name) : null,
+    }));
 
     // Existing draft opinion if any
     const opinionResult = await db.query(
@@ -194,7 +206,7 @@ exports.getEpisodeForReview = async (req, res) => {
       data: {
         episode,
         questionnaire: questionnaireData,
-        documents: docsResult.rows,
+        documents,
         opinion: opinionResult.rows[0] || null,
       }
     });
