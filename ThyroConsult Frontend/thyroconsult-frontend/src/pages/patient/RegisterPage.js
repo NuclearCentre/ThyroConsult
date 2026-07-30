@@ -669,6 +669,7 @@ const RegisterPage = () => {
             episodeId={episodeId}
             condition={selectedCondition}
             patientGender={patientGender}
+            patientDob={form.dob}
             onComplete={handleCoreQComplete}
             onBack={() => setSubStep(SUB_STEP_CONDITION_SELECT)}
           />

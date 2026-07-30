@@ -37,7 +37,7 @@ export const PatientSidebar = ({ patient }) => {
         <NavItem to="/patient/dashboard" icon="⊞" label="Dashboard" />
         <NavItem to="/patient/conditions" icon="🩺" label="My Conditions" />
         <NavItem to="/patient/appointments" icon="📅" label="Appointments" />
-        <NavItem to="/patient/consultations" icon="📋" label="Online Opinions" />
+        <NavItem to="/patient/opinions" icon="📋" label="Online Opinions" />
         <NavItem to="/patient/trends" icon="📈" label="Report Trends" />
         <NavItem to="/patient/documents" icon="📁" label="My Reports" />
         <NavItem to="/patient/invoices" icon="🧾" label="Invoices" />

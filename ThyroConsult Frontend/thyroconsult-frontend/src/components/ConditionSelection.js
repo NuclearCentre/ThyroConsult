@@ -89,7 +89,6 @@ const ConditionSelection = ({ patientId, doctorId, onComplete, onBack }) => {
       <h3 style={{ marginBottom: 4 }}>Select your thyroid condition</h3>
       <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 20 }}>
         Please select the condition for which you are seeking an online opinion.
-        Your questionnaire will be tailored to your selection.
       </p>
 
       {error && <Alert type="error" message={error} style={{ marginBottom: 16 }} />}
@@ -159,10 +158,7 @@ const ConditionSelection = ({ patientId, doctorId, onComplete, onBack }) => {
       </div>
 
       {/* ── Navigation ── */}
-      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-        <button className="btn btn-secondary" onClick={onBack}>
-          ← Back
-        </button>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <button
           className="btn btn-primary btn-lg"
           onClick={handleConfirm}

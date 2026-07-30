@@ -15,7 +15,7 @@
 //   TSH normal      → continue Q14–Q48
 // ============================================================
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { conditionAPI } from "../api/index";
 
 // ─── Nodule-prefixed UI primitives ───────────────────────────────────────────
@@ -39,6 +39,24 @@ const NoduleInput = ({ value, onChange, type = "text", placeholder, min, max, st
     style={{ width: "100%", padding: "10px 12px", border: "1.5px solid #d0d7e8", borderRadius: 8, fontSize: 14, outline: "none", boxSizing: "border-box", ...style }}
   />
 );
+
+// Year-of-event input that can't be before the patient's own birth year.
+const NoduleYearInput = ({ value, onChange, dob, placeholder, style }) => {
+  const dobYear = dob ? new Date(dob).getFullYear() : null;
+  const thisYear = new Date().getFullYear();
+  const invalid = dobYear && value && parseInt(value) < dobYear;
+  return (
+    <div>
+      <NoduleInput type="number" value={value} onChange={onChange} placeholder={placeholder}
+        min={dobYear || 1950} max={thisYear} style={style} />
+      {invalid && (
+        <div style={{ fontSize: 11, color: "#c0392b", marginTop: 4 }}>
+          Can't be before your birth year ({dobYear})
+        </div>
+      )}
+    </div>
+  );
+};
 
 const NoduleSelect = ({ value, onChange, options, placeholder }) => (
   <select
@@ -87,12 +105,12 @@ const NoduleYesNo = ({ value, onChange }) => (
   <NoduleRadioGroup value={value} onChange={onChange} inline options={[{ value: "no", label: "No" }, { value: "yes", label: "Yes" }]} />
 );
 
-const NoduleDurationPicker = ({ label = "Since when?", sinceDate, onSinceDate, years, onYears, months, onMonths }) => (
+const NoduleDurationPicker = ({ label = "Since when?", sinceDate, onSinceDate, years, onYears, months, onMonths, minDate }) => (
   <NoduleField label={label}>
     <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
       <div style={{ flex: "1 1 180px" }}>
         <label style={{ fontSize: 12, color: "#555", display: "block", marginBottom: 4 }}>Date (if known)</label>
-        <NoduleInput type="date" value={sinceDate} onChange={onSinceDate} max={new Date().toISOString().split("T")[0]} />
+        <NoduleInput type="date" value={sinceDate} onChange={onSinceDate} max={new Date().toISOString().split("T")[0]} min={minDate || undefined} />
       </div>
       <div style={{ display: "flex", gap: 8, flex: "1 1 160px", alignItems: "flex-end" }}>
         <div style={{ flex: 1 }}>
@@ -123,15 +141,9 @@ const NoduleMedBlock = ({ med, index, onChange, onRemove }) => (
   </div>
 );
 
-const NoduleOutputBox = ({ text }) => {
-  if (!text) return null;
-  return (
-    <div style={{ margin: "18px 0 0", padding: "12px 16px", background: "#f0faf4", border: "1px solid #a8d5b5", borderRadius: 8, borderLeft: "4px solid #27ae60" }}>
-      <span style={{ fontSize: 12, fontWeight: 700, color: "#27ae60", textTransform: "uppercase", letterSpacing: 0.5 }}>Physician summary</span>
-      <p style={{ margin: "4px 0 0", fontSize: 14, color: "#1a4a2e", fontStyle: "italic" }}>{text}</p>
-    </div>
-  );
-};
+// No longer rendered on the patient-facing screen (per explicit request).
+// Underlying answers still save normally regardless of this.
+const NoduleOutputBox = () => null;
 
 const NoduleSectionCard = ({ title, children }) => (
   <div style={{ marginTop: 20, padding: "16px 20px", border: "1.5px solid #d0d7e8", borderRadius: 10, background: "#fff" }}>
@@ -219,6 +231,8 @@ export default function NoduleQuestionnaire({
   const [saveMsg, setSaveMsg]       = useState("");
   const [tshBranch, setTshBranch]   = useState(null); // null | "high" | "low" | "normal"
   const [branchConfirmed, setBranchConfirmed] = useState(false);
+  const [savedPageId, setSavedPageId] = useState(null);
+  const [resumedFrom, setResumedFrom] = useState(false);
 
   const set = useCallback((key, value) => setData(prev => ({ ...prev, [key]: value })), []);
   const get = useCallback((key, fallback = "") => (data[key] !== undefined ? data[key] : fallback), [data]);
@@ -286,45 +300,93 @@ export default function NoduleQuestionnaire({
   const pageId     = allPages[currentPage] || "Q3";
   const progress   = Math.round(((currentPage + 1) / totalPages) * 100);
 
+  // Blocks proceeding past a screen whose year-of-event field is before
+  // the patient's own birth year.
+  const dobYear = patientDob ? new Date(patientDob).getFullYear() : null;
+  const yearFieldByPage = { B1: "hysterectomy_year", C1: "thyroid_dx_year", C2: "thyroid_tx_year", J7: "radiation_exposure_year" };
+  const currentYearField = yearFieldByPage[pageId];
+  const yearInvalid = dobYear && currentYearField && get(currentYearField) && parseInt(get(currentYearField)) < dobYear;
+
+  // Resume exactly where the patient left off, once, after allPages has
+  // recomputed with the branching-relevant answers (and TSH branch)
+  // restored.
+  useEffect(() => {
+    if (!resumedFrom && savedPageId) {
+      const idx = allPages.indexOf(savedPageId);
+      if (idx > 0) setCurrentPage(idx);
+      setResumedFrom(true);
+    }
+  }, [savedPageId, resumedFrom, allPages]);
+
   // ── Load draft ────────────────────────────────────────────────────────────
+  // NOTE: this previously had no .then() at all — the response was
+  // fetched and immediately discarded. Nodule was the only one of the
+  // four condition questionnaires where a returning patient's answers
+  // were never restored under any circumstances, not even buggily.
   useEffect(() => {
     if (patientId && episodeId) {
       conditionAPI.getNoduleQ(patientId, episodeId)
+        .then(d => {
+          if (d && Object.keys(d).length) {
+            setData(prev => ({ ...prev, ...d }));
+            if (d.current_page) setSavedPageId(d.current_page);
+          }
+        })
         .catch(() => {});
     }
   }, [patientId, episodeId]);
 
-  // ── Save draft ────────────────────────────────────────────────────────────
-  const saveDraft = useCallback(async () => {
+  // ── Autosave ───────────────────────────────────────────────────────────────
+  // Replaces saving only when the patient clicked Next. Saves
+  // automatically ~1.5s after the patient stops interacting, and on page
+  // change, so a network outage or a voluntary pause never loses answers.
+  const skipFirstAutosave = useRef(true);
+  useEffect(() => {
+    if (skipFirstAutosave.current) { skipFirstAutosave.current = false; return; }
+    if (!patientId || !episodeId) return;
+    const t = setTimeout(async () => {
+      try {
+        await conditionAPI.saveNoduleQ(patientId, episodeId, { ...data, _draft: true, _currentPage: pageId });
+        setSaveMsg("✓ Saved");
+      } catch { /* silent — retries on next change */ }
+    }, 1500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, currentPage]);
+
+  // ── Final submit ─────────────────────────────────────────────────────────
+  // NOTE: all three exit paths (normal completion, switchToHypo,
+  // switchToHyper) previously called saveDraft(), which always sent
+  // _draft:true — none of them could ever actually mark the
+  // questionnaire complete. Separated out a real final-submit path.
+  const submitFinal = useCallback(async (result) => {
     if (!patientId || !episodeId) return;
     setSaving(true);
     try {
-      await conditionAPI.saveNoduleQ(patientId, episodeId, { ...data, _draft: true });
-      setSaveMsg("Draft saved");
-      setTimeout(() => setSaveMsg(""), 2000);
-    } catch { setSaveMsg("Save failed"); }
+      await conditionAPI.saveNoduleQ(patientId, episodeId, { ...data, _draft: false });
+      onComplete && onComplete(result);
+    } catch { setSaveMsg("Submission failed. Please try again."); }
     finally { setSaving(false); }
-  }, [data, patientId, episodeId]);
+  }, [data, patientId, episodeId, onComplete]);
 
   const next = useCallback(() => {
+    if (yearInvalid) return;
     // TSH branch — trigger switch before moving past Q13
     if (pageId === "Q13" && (tshBranch === "high" || tshBranch === "low") && !branchConfirmed) {
       setBranchConfirmed(true);
       return; // show the alert on same page; user clicks Next again to confirm
     }
     if (pageId === "Q13" && tshBranch === "high" && branchConfirmed) {
-      saveDraft();
-      onComplete && onComplete({ switchToHypo: true, data });
+      submitFinal({ switchToHypo: true, data });
       return;
     }
     if (pageId === "Q13" && tshBranch === "low" && branchConfirmed) {
-      saveDraft();
-      onComplete && onComplete({ switchToHyper: true, data });
+      submitFinal({ switchToHyper: true, data });
       return;
     }
     if (currentPage < totalPages - 1) setCurrentPage(p => p + 1);
-    else { saveDraft(); onComplete && onComplete(data); }
-  }, [currentPage, totalPages, pageId, tshBranch, branchConfirmed, saveDraft, onComplete, data]);
+    else submitFinal(data);
+  }, [currentPage, totalPages, pageId, tshBranch, branchConfirmed, submitFinal, data, yearInvalid]);
 
   const prev = useCallback(() => {
     setBranchConfirmed(false);
@@ -365,12 +427,7 @@ export default function NoduleQuestionnaire({
           {get("occupation") === "other" && (
             <NoduleField label="Please specify"><NoduleInput value={get("occupation_other")} onChange={v => set("occupation_other", v)} placeholder="Your occupation" /></NoduleField>
           )}
-          {["teacher","singer","actor","lawyer","call_centre","sales"].includes(get("occupation")) && (
-            <div style={{ background: "#fff8e6", border: "1px solid #f5a623", borderRadius: 8, padding: 12, fontSize: 13, color: "#7d5200", marginTop: 12 }}>
-              ⚠ Voice-dependent profession — physician will be alerted to assess voice and pressure symptoms carefully.
-            </div>
-          )}
-          <NoduleOutputBox text={get("occupation") ? `Occupation: ${get("occupation") === "other" ? get("occupation_other") : get("occupation").replace(/_/g, " ")}${["teacher","singer","actor","lawyer","call_centre","sales"].includes(get("occupation")) ? " [Voice-dependent — FLAG]" : ""}` : ""} />
+          <NoduleOutputBox text={get("occupation") ? `Occupation: ${get("occupation") === "other" ? get("occupation_other") : get("occupation").replace(/_/g, " ")}` : ""} />
         </div>
       );
 
@@ -394,7 +451,7 @@ export default function NoduleQuestionnaire({
           {get("nodule_discovery_mode") === "other" && (
             <NoduleField label="Please specify"><NoduleInput value={get("nodule_discovery_other")} onChange={v => set("nodule_discovery_other", v)} /></NoduleField>
           )}
-          <NoduleDurationPicker label="When was it first noticed?" sinceDate={get("nodule_noticed_date")} onSinceDate={v => set("nodule_noticed_date", v)} years={get("nodule_duration_years")} onYears={v => set("nodule_duration_years", v)} months={get("nodule_duration_months")} onMonths={v => set("nodule_duration_months", v)} />
+          <NoduleDurationPicker minDate={patientDob} label="When was it first noticed?" sinceDate={get("nodule_noticed_date")} onSinceDate={v => set("nodule_noticed_date", v)} years={get("nodule_duration_years")} onYears={v => set("nodule_duration_years", v)} months={get("nodule_duration_months")} onMonths={v => set("nodule_duration_months", v)} />
           <NoduleOutputBox text={get("nodule_discovery_mode") ? `Nodule / swelling in neck noticed by ${get("nodule_discovery_mode").replace(/_/g, " ")}${get("nodule_noticed_date") || get("nodule_duration_years") || get("nodule_duration_months") ? " — " + durationText(get("nodule_duration_years"), get("nodule_duration_months"), get("nodule_noticed_date")) + " ago" : ""}.` : ""} />
         </div>
       );
@@ -413,7 +470,7 @@ export default function NoduleQuestionnaire({
               </NoduleField>
               {get("nodule_growth_direction") === "larger" && (
                 <>
-                  <NoduleDurationPicker label="Over what time period?" years={get("nodule_growth_years")} onYears={v => set("nodule_growth_years", v)} months={get("nodule_growth_months")} onMonths={v => set("nodule_growth_months", v)} />
+                  <NoduleDurationPicker minDate={patientDob} label="Over what time period?" years={get("nodule_growth_years")} onYears={v => set("nodule_growth_years", v)} months={get("nodule_growth_months")} onMonths={v => set("nodule_growth_months", v)} />
                   <NoduleField label="How fast has it grown?">
                     <NoduleRadioGroup value={get("nodule_growth_rate")} onChange={v => set("nodule_growth_rate", v)} options={[
                       { value: "rapid_weeks", label: "Rapidly — within weeks" },
@@ -720,16 +777,16 @@ export default function NoduleQuestionnaire({
                 ]} />
               </NoduleField>
               {get("hysterectomy_date_precision", "full") === "full" && (
-                <NoduleField label="Date of surgery"><NoduleInput type="date" value={get("hysterectomy_date")} onChange={v => set("hysterectomy_date", v)} max={new Date().toISOString().split("T")[0]} /></NoduleField>
+                <NoduleField label="Date of surgery"><NoduleInput type="date" value={get("hysterectomy_date")} onChange={v => set("hysterectomy_date", v)} max={new Date().toISOString().split("T")[0]} min={patientDob || undefined} /></NoduleField>
               )}
               {get("hysterectomy_date_precision") === "month_year" && (
                 <div style={{ display: "flex", gap: 10 }}>
                   <NoduleField label="Month"><NoduleSelect value={get("hysterectomy_month")} onChange={v => set("hysterectomy_month", v)} placeholder="Month" options={["1","2","3","4","5","6","7","8","9","10","11","12"].map((m,i) => ({ value: m, label: ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][i] }))} /></NoduleField>
-                  <NoduleField label="Year"><NoduleInput type="number" value={get("hysterectomy_year")} onChange={v => set("hysterectomy_year", v)} min={1950} max={new Date().getFullYear()} placeholder="e.g. 2019" /></NoduleField>
+                  <NoduleField label="Year"><NoduleYearInput value={get("hysterectomy_year")} onChange={v => set("hysterectomy_year", v)} dob={patientDob} placeholder="e.g. 2019" /></NoduleField>
                 </div>
               )}
               {get("hysterectomy_date_precision") === "year_only" && (
-                <NoduleField label="Year"><NoduleInput type="number" value={get("hysterectomy_year")} onChange={v => set("hysterectomy_year", v)} min={1950} max={new Date().getFullYear()} placeholder="e.g. 2019" /></NoduleField>
+                <NoduleField label="Year"><NoduleYearInput value={get("hysterectomy_year")} onChange={v => set("hysterectomy_year", v)} dob={patientDob} placeholder="e.g. 2019" /></NoduleField>
               )}
               <NoduleField label="Reason">
                 <NoduleRadioGroup value={get("hysterectomy_reason")} onChange={v => set("hysterectomy_reason", v)} options={[
@@ -763,7 +820,7 @@ export default function NoduleQuestionnaire({
               <NoduleField label="Flow (select all that apply)">
                 <NoduleCheckGroup values={get("menstrual_flow", [])} onChange={v => set("menstrual_flow", v)} options={[{ value: "heavy", label: "Heavy" }, { value: "scanty", label: "Scanty" }, { value: "absent", label: "Absent" }, { value: "prolonged", label: "Prolonged" }]} />
               </NoduleField>
-              <NoduleDurationPicker label="Since when?" sinceDate={get("menstrual_since_date")} onSinceDate={v => set("menstrual_since_date", v)} years={get("menstrual_years")} onYears={v => set("menstrual_years", v)} months={get("menstrual_months")} onMonths={v => set("menstrual_months", v)} />
+              <NoduleDurationPicker minDate={patientDob} label="Since when?" sinceDate={get("menstrual_since_date")} onSinceDate={v => set("menstrual_since_date", v)} years={get("menstrual_years")} onYears={v => set("menstrual_years", v)} months={get("menstrual_months")} onMonths={v => set("menstrual_months", v)} />
             </NoduleSectionCard>
           )}
           <NoduleOutputBox text={get("menstrual_change_status") === "yes" && get("menstrual_pattern") ? `${get("menstrual_pattern")} ${get("menstrual_flow", []).join(", ")} flow since last ${durationText(get("menstrual_years"), get("menstrual_months"), get("menstrual_since_date"))}.` : ""} />
@@ -819,7 +876,7 @@ export default function NoduleQuestionnaire({
                   { value: "thyroid_cancer", label: "Thyroid cancer" }, { value: "other", label: "Other" },
                 ]} />
               </NoduleField>
-              <NoduleField label="Year of diagnosis"><NoduleInput type="number" value={get("thyroid_dx_year")} onChange={v => set("thyroid_dx_year", v)} min={1950} max={new Date().getFullYear()} placeholder="e.g. 2018" /></NoduleField>
+              <NoduleField label="Year of diagnosis"><NoduleYearInput value={get("thyroid_dx_year")} onChange={v => set("thyroid_dx_year", v)} dob={patientDob} placeholder="e.g. 2018" /></NoduleField>
             </NoduleSectionCard>
           )}
           <NoduleOutputBox text={get("thyroid_dx_status") === "yes" && get("thyroid_dx_type") ? `K/c/o ${get("thyroid_dx_type").replace(/_/g, " ")} since ${get("thyroid_dx_year") || "?"}.` : ""} />
@@ -833,7 +890,7 @@ export default function NoduleQuestionnaire({
           {get("thyroid_tx_status") === "yes" && (
             <NoduleSectionCard title="Prior thyroid treatment">
               <NoduleField label="Type"><NoduleRadioGroup value={get("thyroid_tx_type")} onChange={v => set("thyroid_tx_type", v)} options={[{ value: "surgery", label: "Surgery" }, { value: "rai", label: "RAI (Radioiodine)" }, { value: "both", label: "Both" }]} /></NoduleField>
-              <NoduleField label="Year"><NoduleInput type="number" value={get("thyroid_tx_year")} onChange={v => set("thyroid_tx_year", v)} min={1950} max={new Date().getFullYear()} placeholder="e.g. 2020" /></NoduleField>
+              <NoduleField label="Year"><NoduleYearInput value={get("thyroid_tx_year")} onChange={v => set("thyroid_tx_year", v)} dob={patientDob} placeholder="e.g. 2020" /></NoduleField>
             </NoduleSectionCard>
           )}
           <NoduleOutputBox text={get("thyroid_tx_status") === "yes" && get("thyroid_tx_type") ? `H/o ${get("thyroid_tx_type")} for thyroid in ${get("thyroid_tx_year") || "?"}.` : ""} />
@@ -1011,7 +1068,7 @@ export default function NoduleQuestionnaire({
           <NoduleYesNoUnsure value={get("nodule_visible_status")} onChange={v => set("nodule_visible_status", v)} />
           {get("nodule_visible_status") === "yes" && (
             <NoduleSectionCard title="Visible swelling details">
-              <NoduleDurationPicker label="Since when has it been visible?" sinceDate={get("nodule_visible_since_date")} onSinceDate={v => set("nodule_visible_since_date", v)} years={get("nodule_visible_years")} onYears={v => set("nodule_visible_years", v)} months={get("nodule_visible_months")} onMonths={v => set("nodule_visible_months", v)} />
+              <NoduleDurationPicker minDate={patientDob} label="Since when has it been visible?" sinceDate={get("nodule_visible_since_date")} onSinceDate={v => set("nodule_visible_since_date", v)} years={get("nodule_visible_years")} onYears={v => set("nodule_visible_years", v)} months={get("nodule_visible_months")} onMonths={v => set("nodule_visible_months", v)} />
               <NoduleField label="When is it visible? (select all that apply)">
                 <NoduleCheckGroup values={get("nodule_visible_pattern", [])} onChange={v => set("nodule_visible_pattern", v)} options={[{ value: "constant", label: "Constant" }, { value: "on_swallowing", label: "Only on swallowing" }]} />
               </NoduleField>
@@ -1035,7 +1092,7 @@ export default function NoduleQuestionnaire({
                 ]} />
               </NoduleField>
               <NoduleField label="Severity"><NoduleRadioGroup value={get("neck_pain_severity")} onChange={v => set("neck_pain_severity", v)} inline options={[{ value: "mild", label: "Mild" }, { value: "moderate", label: "Moderate" }, { value: "severe", label: "Severe" }]} /></NoduleField>
-              <NoduleDurationPicker label="Since when?" sinceDate={get("neck_pain_since_date")} onSinceDate={v => set("neck_pain_since_date", v)} years={get("neck_pain_years")} onYears={v => set("neck_pain_years", v)} months={get("neck_pain_months")} onMonths={v => set("neck_pain_months", v)} />
+              <NoduleDurationPicker minDate={patientDob} label="Since when?" sinceDate={get("neck_pain_since_date")} onSinceDate={v => set("neck_pain_since_date", v)} years={get("neck_pain_years")} onYears={v => set("neck_pain_years", v)} months={get("neck_pain_months")} onMonths={v => set("neck_pain_months", v)} />
             </NoduleSectionCard>
           )}
           <NoduleOutputBox text={get("neck_pain_status") === "yes" && get("neck_pain_types", []).length ? `${get("neck_pain_severity") || ""} ${get("neck_pain_types", []).join(", ")} in neck since last ${durationText(get("neck_pain_years"), get("neck_pain_months"), get("neck_pain_since_date"))}.` : ""} />
@@ -1054,7 +1111,7 @@ export default function NoduleQuestionnaire({
                   { value: "mild", label: "Mild (slight discomfort)" }, { value: "moderate", label: "Moderate (need to take sips of water)" }, { value: "severe", label: "Severe (food gets stuck)" },
                 ]} />
               </NoduleField>
-              <NoduleDurationPicker label="Since when?" sinceDate={get("dysphagia_since_date")} onSinceDate={v => set("dysphagia_since_date", v)} years={get("dysphagia_years")} onYears={v => set("dysphagia_years", v)} months={get("dysphagia_months")} onMonths={v => set("dysphagia_months", v)} />
+              <NoduleDurationPicker minDate={patientDob} label="Since when?" sinceDate={get("dysphagia_since_date")} onSinceDate={v => set("dysphagia_since_date", v)} years={get("dysphagia_years")} onYears={v => set("dysphagia_years", v)} months={get("dysphagia_months")} onMonths={v => set("dysphagia_months", v)} />
             </NoduleSectionCard>
           )}
           <NoduleOutputBox text={get("dysphagia_status") === "yes" && get("dysphagia_type") ? `${get("dysphagia_severity") || ""} difficulty in swallowing ${get("dysphagia_type").replace(/_/g, " ")} since last ${durationText(get("dysphagia_years"), get("dysphagia_months"), get("dysphagia_since_date"))}.` : ""} />
@@ -1076,7 +1133,7 @@ export default function NoduleQuestionnaire({
               <NoduleField label="When does it occur?">
                 <NoduleRadioGroup value={get("resp_symptom_trigger")} onChange={v => set("resp_symptom_trigger", v)} options={[{ value: "at_rest", label: "At rest" }, { value: "on_exertion", label: "On exertion" }, { value: "lying_flat", label: "On lying flat" }, { value: "all_the_time", label: "All the time" }]} />
               </NoduleField>
-              <NoduleDurationPicker label="Since when?" sinceDate={get("resp_since_date")} onSinceDate={v => set("resp_since_date", v)} years={get("resp_years")} onYears={v => set("resp_years", v)} months={get("resp_months")} onMonths={v => set("resp_months", v)} />
+              <NoduleDurationPicker minDate={patientDob} label="Since when?" sinceDate={get("resp_since_date")} onSinceDate={v => set("resp_since_date", v)} years={get("resp_years")} onYears={v => set("resp_years", v)} months={get("resp_months")} onMonths={v => set("resp_months", v)} />
             </NoduleSectionCard>
           )}
           <NoduleOutputBox text={get("resp_symptom_status") === "yes" && get("resp_symptom_types", []).length ? `${get("resp_symptom_types", []).join(", ")} ${get("resp_symptom_trigger") ? "— " + get("resp_symptom_trigger").replace(/_/g, " ") : ""} since last ${durationText(get("resp_years"), get("resp_months"), get("resp_since_date"))}.` : ""} />
@@ -1094,7 +1151,7 @@ export default function NoduleQuestionnaire({
           <NoduleYesNoUnsure value={get("hoarseness_status")} onChange={v => set("hoarseness_status", v)} />
           {get("hoarseness_status") === "yes" && (
             <NoduleSectionCard title="Voice change details">
-              <NoduleDurationPicker label="Since when?" sinceDate={get("hoarseness_since_date")} onSinceDate={v => set("hoarseness_since_date", v)} years={get("hoarseness_years")} onYears={v => set("hoarseness_years", v)} months={get("hoarseness_months")} onMonths={v => set("hoarseness_months", v)} />
+              <NoduleDurationPicker minDate={patientDob} label="Since when?" sinceDate={get("hoarseness_since_date")} onSinceDate={v => set("hoarseness_since_date", v)} years={get("hoarseness_years")} onYears={v => set("hoarseness_years", v)} months={get("hoarseness_months")} onMonths={v => set("hoarseness_months", v)} />
               <NoduleField label="Pattern"><NoduleRadioGroup value={get("hoarseness_pattern")} onChange={v => set("hoarseness_pattern", v)} inline options={[{ value: "constant", label: "Constant" }, { value: "intermittent", label: "Intermittent" }]} /></NoduleField>
               <NoduleField label="Does your voice fatigue easily?"><NoduleYesNo value={get("voice_fatigue_status")} onChange={v => set("voice_fatigue_status", v)} /></NoduleField>
               <div style={{ background: "#FCEBEB", border: "1px solid #E24B4A", borderRadius: 8, padding: 10, fontSize: 12, color: "#791F1F", marginTop: 8 }}>
@@ -1102,7 +1159,7 @@ export default function NoduleQuestionnaire({
               </div>
             </NoduleSectionCard>
           )}
-          <NoduleOutputBox text={get("hoarseness_status") === "yes" ? `${get("hoarseness_pattern") || ""} hoarseness of voice since last ${durationText(get("hoarseness_years"), get("hoarseness_months"), get("hoarseness_since_date"))}${get("voice_fatigue_status") === "yes" ? " — voice fatigue present" : ""}${["teacher","singer","actor","lawyer","call_centre","sales"].includes(get("occupation")) ? " [" + get("occupation").toUpperCase() + " — FLAG]" : ""}.` : ""} />
+          <NoduleOutputBox text={get("hoarseness_status") === "yes" ? `${get("hoarseness_pattern") || ""} hoarseness of voice since last ${durationText(get("hoarseness_years"), get("hoarseness_months"), get("hoarseness_since_date"))}${get("voice_fatigue_status") === "yes" ? " — voice fatigue present" : ""}.` : ""} />
         </div>
       );
 
@@ -1113,7 +1170,7 @@ export default function NoduleQuestionnaire({
           {get("nodule_cough_status") === "yes" && (
             <NoduleSectionCard title="Cough details">
               <NoduleField label="Character"><NoduleRadioGroup value={get("nodule_cough_type")} onChange={v => set("nodule_cough_type", v)} inline options={[{ value: "dry", label: "Dry cough" }, { value: "productive", label: "Cough with sputum" }]} /></NoduleField>
-              <NoduleDurationPicker label="Since when?" sinceDate={get("nodule_cough_since_date")} onSinceDate={v => set("nodule_cough_since_date", v)} years={get("nodule_cough_years")} onYears={v => set("nodule_cough_years", v)} months={get("nodule_cough_months")} onMonths={v => set("nodule_cough_months", v)} />
+              <NoduleDurationPicker minDate={patientDob} label="Since when?" sinceDate={get("nodule_cough_since_date")} onSinceDate={v => set("nodule_cough_since_date", v)} years={get("nodule_cough_years")} onYears={v => set("nodule_cough_years", v)} months={get("nodule_cough_months")} onMonths={v => set("nodule_cough_months", v)} />
             </NoduleSectionCard>
           )}
           <NoduleOutputBox text={get("nodule_cough_status") === "yes" && get("nodule_cough_type") ? `${get("nodule_cough_type")} cough possibly related to neck swelling since last ${durationText(get("nodule_cough_years"), get("nodule_cough_months"), get("nodule_cough_since_date"))}.` : ""} />
@@ -1134,7 +1191,7 @@ export default function NoduleQuestionnaire({
             <NoduleSectionCard title="Weight change details">
               <NoduleField label="Direction"><NoduleRadioGroup value={get("weight_direction")} onChange={v => set("weight_direction", v)} inline options={[{ value: "gained", label: "Weight gained" }, { value: "lost", label: "Weight lost" }]} /></NoduleField>
               <NoduleField label="How much (kg)?"><NoduleInput type="number" value={get("weight_kg")} onChange={v => set("weight_kg", v)} min={0} placeholder="e.g. 5" /></NoduleField>
-              <NoduleDurationPicker label="Since when?" sinceDate={get("weight_since_date")} onSinceDate={v => set("weight_since_date", v)} years={get("weight_years")} onYears={v => set("weight_years", v)} months={get("weight_months")} onMonths={v => set("weight_months", v)} />
+              <NoduleDurationPicker minDate={patientDob} label="Since when?" sinceDate={get("weight_since_date")} onSinceDate={v => set("weight_since_date", v)} years={get("weight_years")} onYears={v => set("weight_years", v)} months={get("weight_months")} onMonths={v => set("weight_months", v)} />
             </NoduleSectionCard>
           )}
           <NoduleOutputBox text={get("weight_change_status") === "yes" && get("weight_direction") ? `Weight ${get("weight_direction")}${get("weight_kg") ? " of " + get("weight_kg") + " kg" : ""} over last ${durationText(get("weight_years"), get("weight_months"), get("weight_since_date"))}.` : ""} />
@@ -1147,7 +1204,7 @@ export default function NoduleQuestionnaire({
           {get("appetite_change_status") === "yes" && (
             <NoduleSectionCard title="Appetite change details">
               <NoduleField label="Direction"><NoduleRadioGroup value={get("appetite_direction")} onChange={v => set("appetite_direction", v)} inline options={[{ value: "decreased", label: "Decreased" }, { value: "increased", label: "Increased" }]} /></NoduleField>
-              <NoduleDurationPicker label="Since when?" sinceDate={get("appetite_since_date")} onSinceDate={v => set("appetite_since_date", v)} years={get("appetite_years")} onYears={v => set("appetite_years", v)} months={get("appetite_months")} onMonths={v => set("appetite_months", v)} />
+              <NoduleDurationPicker minDate={patientDob} label="Since when?" sinceDate={get("appetite_since_date")} onSinceDate={v => set("appetite_since_date", v)} years={get("appetite_years")} onYears={v => set("appetite_years", v)} months={get("appetite_months")} onMonths={v => set("appetite_months", v)} />
             </NoduleSectionCard>
           )}
           <NoduleOutputBox text={get("appetite_change_status") === "yes" && get("appetite_direction") ? `${get("appetite_direction").charAt(0).toUpperCase() + get("appetite_direction").slice(1)} appetite since last ${durationText(get("appetite_years"), get("appetite_months"), get("appetite_since_date"))}.` : ""} />
@@ -1161,7 +1218,7 @@ export default function NoduleQuestionnaire({
           {get("bowel_change_status") === "yes" && (
             <NoduleSectionCard title="Bowel change details">
               <NoduleField label="Type"><NoduleRadioGroup value={get("bowel_type")} onChange={v => set("bowel_type", v)} options={[{ value: "constipation", label: "Constipation" }, { value: "diarrhoea", label: "Diarrhoea" }, { value: "alternating", label: "Alternating" }]} /></NoduleField>
-              <NoduleDurationPicker label="Since when?" sinceDate={get("bowel_since_date")} onSinceDate={v => set("bowel_since_date", v)} years={get("bowel_years")} onYears={v => set("bowel_years", v)} months={get("bowel_months")} onMonths={v => set("bowel_months", v)} />
+              <NoduleDurationPicker minDate={patientDob} label="Since when?" sinceDate={get("bowel_since_date")} onSinceDate={v => set("bowel_since_date", v)} years={get("bowel_years")} onYears={v => set("bowel_years", v)} months={get("bowel_months")} onMonths={v => set("bowel_months", v)} />
             </NoduleSectionCard>
           )}
           <NoduleOutputBox text={get("bowel_change_status") === "yes" && get("bowel_type") ? `${get("bowel_type").charAt(0).toUpperCase() + get("bowel_type").slice(1)} since last ${durationText(get("bowel_years"), get("bowel_months"), get("bowel_since_date"))}.` : ""} />
@@ -1181,7 +1238,7 @@ export default function NoduleQuestionnaire({
               {get("muscle_sx_types", []).includes("weakness") && (
                 <NoduleField label="Location of weakness"><NoduleRadioGroup value={get("muscle_weakness_location")} onChange={v => set("muscle_weakness_location", v)} options={[{ value: "proximal", label: "Proximal (upper arms / thighs)" }, { value: "generalised", label: "Generalised" }]} /></NoduleField>
               )}
-              <NoduleDurationPicker label="Since when?" sinceDate={get("muscle_sx_since_date")} onSinceDate={v => set("muscle_sx_since_date", v)} years={get("muscle_sx_years")} onYears={v => set("muscle_sx_years", v)} months={get("muscle_sx_months")} onMonths={v => set("muscle_sx_months", v)} />
+              <NoduleDurationPicker minDate={patientDob} label="Since when?" sinceDate={get("muscle_sx_since_date")} onSinceDate={v => set("muscle_sx_since_date", v)} years={get("muscle_sx_years")} onYears={v => set("muscle_sx_years", v)} months={get("muscle_sx_months")} onMonths={v => set("muscle_sx_months", v)} />
             </NoduleSectionCard>
           )}
           <NoduleOutputBox text={get("muscle_sx_status") === "yes" && get("muscle_sx_types", []).length ? `${get("muscle_sx_types", []).join(", ")} since last ${durationText(get("muscle_sx_years"), get("muscle_sx_months"), get("muscle_sx_since_date"))}.` : ""} />
@@ -1193,7 +1250,7 @@ export default function NoduleQuestionnaire({
           <NoduleYesNoUnsure value={get("depression_status")} onChange={v => set("depression_status", v)} />
           {get("depression_status") === "yes" && (
             <NoduleSectionCard title="Depression details">
-              <NoduleDurationPicker label="Since when?" sinceDate={get("depression_since_date")} onSinceDate={v => set("depression_since_date", v)} years={get("depression_years")} onYears={v => set("depression_years", v)} months={get("depression_months")} onMonths={v => set("depression_months", v)} />
+              <NoduleDurationPicker minDate={patientDob} label="Since when?" sinceDate={get("depression_since_date")} onSinceDate={v => set("depression_since_date", v)} years={get("depression_years")} onYears={v => set("depression_years", v)} months={get("depression_months")} onMonths={v => set("depression_months", v)} />
               <NoduleField label="Have you seen a doctor for this?"><NoduleYesNo value={get("depression_treated")} onChange={v => set("depression_treated", v)} /></NoduleField>
               <NoduleField label="Formally diagnosed with depression?"><NoduleYesNo value={get("depression_diagnosed")} onChange={v => set("depression_diagnosed", v)} /></NoduleField>
             </NoduleSectionCard>
@@ -1238,7 +1295,7 @@ export default function NoduleQuestionnaire({
                   { value: "gestational", label: "Gestational" }, { value: "pre_diabetes", label: "Pre-diabetes" }, { value: "not_known", label: "Not known" },
                 ]} />
               </NoduleField>
-              <NoduleDurationPicker label="Since when?" sinceDate={get("diabetes_since_date")} onSinceDate={v => set("diabetes_since_date", v)} years={get("diabetes_years")} onYears={v => set("diabetes_years", v)} months={get("diabetes_months")} onMonths={v => set("diabetes_months", v)} />
+              <NoduleDurationPicker minDate={patientDob} label="Since when?" sinceDate={get("diabetes_since_date")} onSinceDate={v => set("diabetes_since_date", v)} years={get("diabetes_years")} onYears={v => set("diabetes_years", v)} months={get("diabetes_months")} onMonths={v => set("diabetes_months", v)} />
               <NoduleField label="Current medications (optional)"><NoduleInput value={get("diabetes_meds")} onChange={v => set("diabetes_meds", v)} placeholder="e.g. Metformin 500 mg" /></NoduleField>
             </NoduleSectionCard>
           )}
@@ -1254,7 +1311,7 @@ export default function NoduleQuestionnaire({
           {get("pcos_status") === "yes" && (
             <NoduleSectionCard title="PCOS / PMOS details">
               <NoduleField label="Which diagnosis?"><NoduleRadioGroup value={get("pcos_label")} onChange={v => set("pcos_label", v)} inline options={[{ value: "pcos", label: "PCOS" }, { value: "pmos", label: "PMOS" }]} /></NoduleField>
-              <NoduleDurationPicker label="Since when?" sinceDate={get("pcos_since_date")} onSinceDate={v => set("pcos_since_date", v)} years={get("pcos_years")} onYears={v => set("pcos_years", v)} months={get("pcos_months")} onMonths={v => set("pcos_months", v)} />
+              <NoduleDurationPicker minDate={patientDob} label="Since when?" sinceDate={get("pcos_since_date")} onSinceDate={v => set("pcos_since_date", v)} years={get("pcos_years")} onYears={v => set("pcos_years", v)} months={get("pcos_months")} onMonths={v => set("pcos_months", v)} />
               <NoduleField label="On medication?"><NoduleYesNoUnsure value={get("pcos_on_med")} onChange={v => set("pcos_on_med", v)} /></NoduleField>
               {get("pcos_on_med") === "yes" && (
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
@@ -1337,7 +1394,7 @@ export default function NoduleQuestionnaire({
               </NoduleField>
               {get("radiation_exposure_types", []).includes("other") && <NoduleField label="Please specify"><NoduleInput value={get("radiation_exposure_other")} onChange={v => set("radiation_exposure_other", v)} /></NoduleField>}
               <NoduleField label="Approximate year of exposure">
-                <NoduleInput type="number" value={get("radiation_exposure_year")} onChange={v => set("radiation_exposure_year", v)} min={1950} max={new Date().getFullYear()} placeholder="e.g. 2018" />
+                <NoduleYearInput value={get("radiation_exposure_year")} onChange={v => set("radiation_exposure_year", v)} dob={patientDob} placeholder="e.g. 2018" />
               </NoduleField>
               <div style={{ background: "#FCEBEB", border: "1px solid #E24B4A", borderRadius: 8, padding: 10, fontSize: 12, color: "#791F1F", marginTop: 8 }}>
                 ⚠ History of radiation to the neck is a known risk factor for thyroid nodules and thyroid cancer — flagged for physician review.
@@ -1353,7 +1410,7 @@ export default function NoduleQuestionnaire({
           <NoduleYesNoUnsure value={get("iodine_deficiency_status")} onChange={v => set("iodine_deficiency_status", v)} />
           {get("iodine_deficiency_status") === "yes" && (
             <NoduleSectionCard title="Iodine deficiency details">
-              <NoduleDurationPicker label="How long ago / for how long?" sinceDate={get("iodine_deficiency_since_date")} onSinceDate={v => set("iodine_deficiency_since_date", v)} years={get("iodine_deficiency_years")} onYears={v => set("iodine_deficiency_years", v)} months={get("iodine_deficiency_months")} onMonths={v => set("iodine_deficiency_months", v)} />
+              <NoduleDurationPicker minDate={patientDob} label="How long ago / for how long?" sinceDate={get("iodine_deficiency_since_date")} onSinceDate={v => set("iodine_deficiency_since_date", v)} years={get("iodine_deficiency_years")} onYears={v => set("iodine_deficiency_years", v)} months={get("iodine_deficiency_months")} onMonths={v => set("iodine_deficiency_months", v)} />
             </NoduleSectionCard>
           )}
           <NoduleOutputBox text={get("iodine_deficiency_status") === "yes" ? `H/o iodine deficiency for ${durationText(get("iodine_deficiency_years"), get("iodine_deficiency_months"), get("iodine_deficiency_since_date"))}.` : ""} />
@@ -1367,7 +1424,7 @@ export default function NoduleQuestionnaire({
           {get("iodine_med_status") === "yes" && (
             <NoduleSectionCard title="Iodine medication / supplement details">
               <NoduleField label="Name of medication / supplement"><NoduleInput value={get("iodine_med_name")} onChange={v => set("iodine_med_name", v)} placeholder="e.g. Amiodarone, Kelp supplement" /></NoduleField>
-              <NoduleDurationPicker label="Taking since?" sinceDate={get("iodine_med_since_date")} onSinceDate={v => set("iodine_med_since_date", v)} years={get("iodine_med_years")} onYears={v => set("iodine_med_years", v)} months={get("iodine_med_months")} onMonths={v => set("iodine_med_months", v)} />
+              <NoduleDurationPicker minDate={patientDob} label="Taking since?" sinceDate={get("iodine_med_since_date")} onSinceDate={v => set("iodine_med_since_date", v)} years={get("iodine_med_years")} onYears={v => set("iodine_med_years", v)} months={get("iodine_med_months")} onMonths={v => set("iodine_med_months", v)} />
             </NoduleSectionCard>
           )}
           <NoduleOutputBox text={get("iodine_med_status") === "yes" && get("iodine_med_name") ? `On ${get("iodine_med_name")} since last ${durationText(get("iodine_med_years"), get("iodine_med_months"), get("iodine_med_since_date"))}.` : ""} />
@@ -1441,7 +1498,7 @@ export default function NoduleQuestionnaire({
         {get(`${key}_status`) === "yes" && (
           <NoduleSectionCard title="Details">
             {hasSeverity && <NoduleField label="Severity"><NoduleRadioGroup value={get(`${key}_severity`)} onChange={v => set(`${key}_severity`, v)} inline options={[{ value: "mild", label: "Mild" }, { value: "moderate", label: "Moderate" }, { value: "severe", label: "Severe" }]} /></NoduleField>}
-            <NoduleDurationPicker label="Since when?" sinceDate={get(`${key}_since_date`)} onSinceDate={v => set(`${key}_since_date`, v)} years={get(`${key}_years`)} onYears={v => set(`${key}_years`, v)} months={get(`${key}_months`)} onMonths={v => set(`${key}_months`, v)} />
+            <NoduleDurationPicker minDate={patientDob} label="Since when?" sinceDate={get(`${key}_since_date`)} onSinceDate={v => set(`${key}_since_date`, v)} years={get(`${key}_years`)} onYears={v => set(`${key}_years`, v)} months={get(`${key}_months`)} onMonths={v => set(`${key}_months`, v)} />
           </NoduleSectionCard>
         )}
         <NoduleOutputBox text={get(`${key}_status`) === "yes" ? `${get(`${key}_severity`) ? get(`${key}_severity`) + " " : ""}${key.replace(/_/g, " ")} since last ${durationText(get(`${key}_years`), get(`${key}_months`), get(`${key}_since_date`))}.` : ""} />
@@ -1459,7 +1516,7 @@ export default function NoduleQuestionnaire({
             <NoduleField label="Type (select all that apply)">
               <NoduleCheckGroup values={get(`${key}_types`, [])} onChange={v => set(`${key}_types`, v)} options={typeOptions.map(t => ({ value: t.toLowerCase().replace(/[\s/()]+/g, "_"), label: t }))} />
             </NoduleField>
-            <NoduleDurationPicker label="Since when?" sinceDate={get(`${key}_since_date`)} onSinceDate={v => set(`${key}_since_date`, v)} years={get(`${key}_years`)} onYears={v => set(`${key}_years`, v)} months={get(`${key}_months`)} onMonths={v => set(`${key}_months`, v)} />
+            <NoduleDurationPicker minDate={patientDob} label="Since when?" sinceDate={get(`${key}_since_date`)} onSinceDate={v => set(`${key}_since_date`, v)} years={get(`${key}_years`)} onYears={v => set(`${key}_years`, v)} months={get(`${key}_months`)} onMonths={v => set(`${key}_months`, v)} />
           </NoduleSectionCard>
         )}
         <NoduleOutputBox text={get(`${key}_status`) === "yes" && get(`${key}_types`, []).length ? `${get(`${key}_types`, []).map(t => t.replace(/_/g, " ")).join(", ")} since last ${durationText(get(`${key}_years`), get(`${key}_months`), get(`${key}_since_date`))}.` : ""} />
@@ -1474,7 +1531,7 @@ export default function NoduleQuestionnaire({
         <NoduleYesNoUnsure value={get(`${key}_status`)} onChange={v => set(`${key}_status`, v)} />
         {get(`${key}_status`) === "yes" && (
           <NoduleSectionCard title="Details">
-            <NoduleDurationPicker label="Since when?" sinceDate={get(`${key}_since_date`)} onSinceDate={v => set(`${key}_since_date`, v)} years={get(`${key}_years`)} onYears={v => set(`${key}_years`, v)} months={get(`${key}_months`)} onMonths={v => set(`${key}_months`, v)} />
+            <NoduleDurationPicker minDate={patientDob} label="Since when?" sinceDate={get(`${key}_since_date`)} onSinceDate={v => set(`${key}_since_date`, v)} years={get(`${key}_years`)} onYears={v => set(`${key}_years`, v)} months={get(`${key}_months`)} onMonths={v => set(`${key}_months`, v)} />
             <NoduleField label="On medication?"><NoduleYesNoUnsure value={get(`${key}_on_med`)} onChange={v => set(`${key}_on_med`, v)} /></NoduleField>
             {get(`${key}_on_med`) === "yes" && (
               <div>
@@ -1513,7 +1570,7 @@ export default function NoduleQuestionnaire({
       {/* Progress bar */}
       <div style={{ position: "sticky", top: 0, background: "#fff", paddingTop: 16, paddingBottom: 12, zIndex: 10, borderBottom: "1px solid #f0f0f0" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-          <span style={{ fontSize: 12, color: "#888" }}>Thyroid Nodule — Page {currentPage + 1} of {totalPages}</span>
+          <span style={{ fontSize: 12, color: "#888" }}>Thyroid Nodule</span>
           <span style={{ fontSize: 12, fontWeight: 600, color: "#534AB7" }}>{progress}%</span>
         </div>
         <div style={{ height: 6, background: "#f0f0f0", borderRadius: 3 }}>
@@ -1543,17 +1600,12 @@ export default function NoduleQuestionnaire({
           ← Back
         </button>
 
-        <button
-          onClick={saveDraft}
-          disabled={saving}
-          style={{ padding: "8px 16px", border: "1.5px solid #534AB7", borderRadius: 8, background: "transparent", color: "#534AB7", cursor: "pointer", fontSize: 13 }}
-        >
-          {saving ? "Saving..." : "Save draft"}
-        </button>
+        {saveMsg === "✓ Saved" && <span style={{ fontSize: 12, color: "#888" }}>✓ Saved</span>}
 
         <button
           onClick={next}
-          style={{ padding: "10px 28px", border: "none", borderRadius: 8, background: "#534AB7", color: "#fff", cursor: "pointer", fontSize: 14, fontWeight: 600 }}
+          disabled={yearInvalid}
+          style={{ padding: "10px 28px", border: "none", borderRadius: 8, background: yearInvalid ? "#ccc" : "#534AB7", color: "#fff", cursor: yearInvalid ? "not-allowed" : "pointer", fontSize: 14, fontWeight: 600 }}
         >
           {nextBtnLabel()}
         </button>

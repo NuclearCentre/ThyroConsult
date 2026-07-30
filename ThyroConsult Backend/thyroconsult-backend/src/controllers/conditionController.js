@@ -235,7 +235,7 @@ const getEpisode = async (req, res) => {
 const saveCoreQuestionnaire = async (req, res) => {
   const patientId = req.user.patientId;
   const { episodeId } = req.params;
-  const b = req.body;
+  const { _currentSection, ...b } = req.body;
 
   // PHI fields that need encryption
   const phiFields = [
@@ -361,6 +361,7 @@ const saveCoreQuestionnaire = async (req, res) => {
 
     // Remove undefined values
     const defined = Object.fromEntries(Object.entries(cols).filter(([, v]) => v !== undefined));
+    if (_currentSection !== undefined) defined.current_section = _currentSection;
 
     if (existing.rows.length) {
       // UPDATE
@@ -436,7 +437,7 @@ const getCoreQuestionnaire = async (req, res) => {
 const saveHypoQuestionnaire = async (req, res) => {
   const patientId = req.user.patientId;
   const { episodeId } = req.params;
-  const b = req.body;
+  const { _draft, _currentPage, ...b } = req.body;
 
   try {
     const ep = await query(
@@ -487,6 +488,8 @@ const saveHypoQuestionnaire = async (req, res) => {
     };
 
     const defined = Object.fromEntries(Object.entries(cols).filter(([, v]) => v !== undefined));
+    defined.is_draft = !!_draft;
+    if (_currentPage !== undefined) defined.current_page = _currentPage;
 
     if (existing.rows.length) {
       const sets = Object.keys(defined).map((k, i) => `${k} = $${i + 1}`);
@@ -504,7 +507,14 @@ const saveHypoQuestionnaire = async (req, res) => {
       );
     }
 
-    await markQuestionnaireComplete(episodeId);
+    // NOTE: this used to run unconditionally on every save, including
+    // interim autosaves — meaning the episode's questionnaire_status
+    // flipped to 'completed' (and questionnaire_completed_at got set,
+    // which drives the doctor queue and the 48h/72h escalation timers)
+    // the moment the FIRST field was ever saved, not when the patient
+    // actually finished. saveNoduleQuestionnaire already had this fixed
+    // with a _draft flag; applying the same pattern here.
+    if (!_draft) await markQuestionnaireComplete(episodeId);
 
     logger.audit('HYPO_QUESTIONNAIRE_SAVED', {
       userId: req.user.id, userRole: req.user.role, patientId, ip: req.ip,
@@ -537,7 +547,7 @@ const getHypoQuestionnaire = async (req, res) => {
 const saveHyperQuestionnaire = async (req, res) => {
   const patientId = req.user.patientId;
   const { episodeId } = req.params;
-  const b = req.body;
+  const { _draft, _currentPage, ...b } = req.body;
 
   try {
     const ep = await query(
@@ -618,6 +628,8 @@ const saveHyperQuestionnaire = async (req, res) => {
     };
 
     const defined = Object.fromEntries(Object.entries(cols).filter(([, v]) => v !== undefined));
+    defined.is_draft = !!_draft;
+    if (_currentPage !== undefined) defined.current_page = _currentPage;
 
     if (existing.rows.length) {
       const sets = Object.keys(defined).map((k, i) => `${k} = $${i + 1}`);
@@ -635,7 +647,9 @@ const saveHyperQuestionnaire = async (req, res) => {
       );
     }
 
-    await markQuestionnaireComplete(episodeId);
+    // Same fix as saveHypoQuestionnaire — this ran unconditionally on
+    // every save before, prematurely marking the episode "completed".
+    if (!_draft) await markQuestionnaireComplete(episodeId);
 
     logger.audit('HYPER_QUESTIONNAIRE_SAVED', {
       userId: req.user.id, userRole: req.user.role, patientId, ip: req.ip,
@@ -668,7 +682,7 @@ const getHyperQuestionnaire = async (req, res) => {
 const saveTcQuestionnaire = async (req, res) => {
   const patientId = req.user.patientId;
   const { episodeId } = req.params;
-  const b = req.body;
+  const { _draft, _currentPage, ...b } = req.body;
 
   try {
     const ep = await query(
@@ -748,6 +762,8 @@ const saveTcQuestionnaire = async (req, res) => {
     };
 
     const defined = Object.fromEntries(Object.entries(cols).filter(([, v]) => v !== undefined));
+    defined.is_draft = !!_draft;
+    if (_currentPage !== undefined) defined.current_page = _currentPage;
 
     if (existing.rows.length) {
       const sets = Object.keys(defined).map((k, i) => `${k} = $${i + 1}`);
@@ -765,7 +781,9 @@ const saveTcQuestionnaire = async (req, res) => {
       );
     }
 
-    await markQuestionnaireComplete(episodeId);
+    // Same fix as saveHypoQuestionnaire — this ran unconditionally on
+    // every save before, prematurely marking the episode "completed".
+    if (!_draft) await markQuestionnaireComplete(episodeId);
 
     logger.audit('TC_QUESTIONNAIRE_SAVED', {
       userId: req.user.id, userRole: req.user.role, patientId, ip: req.ip,
@@ -897,7 +915,7 @@ const NODULE_Q_JSONB_COLUMNS = new Set(['dyslipidaemia_meds', 'diabetes_meds', '
 const saveNoduleQuestionnaire = async (req, res) => {
   const patientId = req.user.patientId;
   const { episodeId } = req.params;
-  const { _draft, ...body } = req.body;
+  const { _draft, _currentPage, ...body } = req.body;
 
   try {
     const ep = await query(
@@ -913,6 +931,7 @@ const saveNoduleQuestionnaire = async (req, res) => {
       defined[col] = NODULE_Q_JSONB_COLUMNS.has(col) ? JSON.stringify(body[col]) : body[col];
     }
     defined.is_draft = !!_draft;
+    if (_currentPage !== undefined) defined.current_page = _currentPage;
 
     const existing = await query(
       'SELECT id FROM nodule_questionnaire WHERE episode_id = $1', [episodeId]

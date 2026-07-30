@@ -40,6 +40,24 @@ const Input = ({ value, onChange, type = 'text', placeholder, max, min, style })
   />
 );
 
+// Year-of-event input that can't be before the patient's own birth year.
+const YearInput = ({ value, onChange, dob, placeholder, style }) => {
+  const dobYear = dob ? new Date(dob).getFullYear() : null;
+  const thisYear = new Date().getFullYear();
+  const invalid = dobYear && value && parseInt(value) < dobYear;
+  return (
+    <div>
+      <Input type="number" value={value} onChange={onChange} placeholder={placeholder}
+        min={dobYear || 1950} max={thisYear} style={style} />
+      {invalid && (
+        <div style={{ fontSize: 11, color: '#c0392b', marginTop: 4 }}>
+          Can't be before your birth year ({dobYear})
+        </div>
+      )}
+    </div>
+  );
+};
+
 const Select = ({ value, onChange, options, placeholder = 'Select...' }) => (
   <select className="form-control" value={value || ''} onChange={e => onChange(e.target.value)} style={{ fontSize: 13 }}>
     <option value="">{placeholder}</option>
@@ -91,11 +109,14 @@ const MedRow = ({ med, onChange, onRemove }) => (
 // ─────────────────────────────────────────────────────────
 // Main component
 // ─────────────────────────────────────────────────────────
-const CoreQuestionnaire = ({ patientId, episodeId, condition, patientGender, onComplete, onBack }) => {
+const CoreQuestionnaire = ({ patientId, episodeId, condition, patientGender, patientDob, onComplete, onBack }) => {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [activeSection, setActiveSection] = useState(0);
+  const [savedSection, setSavedSection] = useState(null);
+  const [resumedFrom, setResumedFrom] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState(null);
 
   const [f, setF] = useState({
     // Chief complaint
@@ -138,7 +159,7 @@ const CoreQuestionnaire = ({ patientId, episodeId, condition, patientGender, onC
     menopauseStatus: 'pre', menopauseYearsAgo: '',
     menstrualChangeStatus: '', menstrualPattern: '', menstrualFlow: [],
     menstrualSinceDate: '', menstrualYears: '', menstrualMonths: '',
-    isPregnant: false, isBreastfeeding: false, gravida: '', para: '', lastMenstrualPeriod: '', eddDate: '',
+    isPregnant: false, isBreastfeeding: false, gravida: '', para: '', lastMenstrualPeriod: '', lmpApproxWeeks: '', lmpUnknown: false, eddDate: '',
     // Previous investigations
     prevTshDone: false, prevTshValue: '', prevTshDate: '',
     prevUsgDone: false, prevUsgDate: '',
@@ -177,12 +198,33 @@ const CoreQuestionnaire = ({ patientId, episodeId, condition, patientGender, onC
   }, [f.isPregnant, f.lastMenstrualPeriod]);
 
   // ── Load existing data ────────────────────────────────
+  // NOTE: backend returns the row flat, not wrapped in { data } — reading
+  // res.data here meant previously-saved answers were never restored.
   useEffect(() => {
     if (!patientId || !episodeId) return;
     conditionAPI.getCoreQ(patientId, episodeId)
-      .then(res => { if (res.data) setF(p => ({ ...p, ...mapDbToForm(res.data) })); })
+      .then(res => {
+        if (res) {
+          setF(p => ({ ...p, ...mapDbToForm(res) }));
+          if (res.current_section != null) setSavedSection(res.current_section);
+        }
+      })
       .catch(() => {});
   }, [patientId, episodeId]);
+
+  // Resume exactly where the patient left off, once.
+  useEffect(() => {
+    if (!resumedFrom && savedSection != null) {
+      setActiveSection(savedSection);
+      setResumedFrom(true);
+    }
+  }, [savedSection, resumedFrom]);
+
+  // Blocks proceeding while the hysterectomy year field is before the
+  // patient's own birth year (the other date-of-event fields use native
+  // date-input min/max, which the browser enforces directly).
+  const dobYear = patientDob ? new Date(patientDob).getFullYear() : null;
+  const yearInvalid = dobYear && f.hysterectomyYear && parseInt(f.hysterectomyYear) < dobYear;
 
   const handleSave = async (andContinue = false) => {
     setSaving(true); setError('');
@@ -195,6 +237,24 @@ const CoreQuestionnaire = ({ patientId, episodeId, condition, patientGender, onC
       setSaving(false);
     }
   };
+
+  // ── Autosave ───────────────────────────────────────────
+  // Saves automatically ~1.5s after the patient stops interacting, and
+  // on section change, so a network outage or a voluntary pause never
+  // loses answers already given. Replaces the manual "Save draft" button.
+  const skipFirstAutosave = React.useRef(true);
+  useEffect(() => {
+    if (skipFirstAutosave.current) { skipFirstAutosave.current = false; return; }
+    if (!patientId || !episodeId) return;
+    const t = setTimeout(async () => {
+      try {
+        await conditionAPI.saveCoreQ(patientId, episodeId, { ...f, _currentSection: activeSection });
+        setLastSavedAt(Date.now());
+      } catch (e) { /* silent — retries on next change */ }
+    }, 1500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [f, activeSection]);
 
   const sections = [
     'Chief complaint',
@@ -383,7 +443,7 @@ const CoreQuestionnaire = ({ patientId, episodeId, condition, patientGender, onC
                   </Field>
                   {f.hysterectomyDatePrecision === 'full' && (
                     <Field label="Date of surgery">
-                      <Input value={f.hysterectomyDate} onChange={set('hysterectomyDate')} type="date" max={new Date().toISOString().split('T')[0]} />
+                      <Input value={f.hysterectomyDate} onChange={set('hysterectomyDate')} type="date" max={new Date().toISOString().split('T')[0]} min={patientDob || undefined} />
                     </Field>
                   )}
                   {f.hysterectomyDatePrecision === 'month_year' && (
@@ -392,13 +452,13 @@ const CoreQuestionnaire = ({ patientId, episodeId, condition, patientGender, onC
                         <Select value={f.hysterectomyMonth} onChange={set('hysterectomyMonth')} options={['1','2','3','4','5','6','7','8','9','10','11','12'].map((m,i) => [m, ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][i]])} />
                       </Field>
                       <Field label="Year">
-                        <Input value={f.hysterectomyYear} onChange={set('hysterectomyYear')} type="number" min="1950" max={new Date().getFullYear()} placeholder="e.g. 2019" />
+                        <YearInput value={f.hysterectomyYear} onChange={set('hysterectomyYear')} dob={patientDob} placeholder="e.g. 2019" />
                       </Field>
                     </div>
                   )}
                   {f.hysterectomyDatePrecision === 'year_only' && (
                     <Field label="Year">
-                      <Input value={f.hysterectomyYear} onChange={set('hysterectomyYear')} type="number" min="1950" max={new Date().getFullYear()} placeholder="e.g. 2019" />
+                      <YearInput value={f.hysterectomyYear} onChange={set('hysterectomyYear')} dob={patientDob} placeholder="e.g. 2019" />
                     </Field>
                   )}
                   <Field label="Reason for hysterectomy">
@@ -606,7 +666,7 @@ const CoreQuestionnaire = ({ patientId, episodeId, condition, patientGender, onC
                       </Field>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
                         <Field label="Since when (date, if known)">
-                          <Input value={f.menstrualSinceDate} onChange={set('menstrualSinceDate')} type="date" max={new Date().toISOString().split('T')[0]} />
+                          <Input value={f.menstrualSinceDate} onChange={set('menstrualSinceDate')} type="date" max={new Date().toISOString().split('T')[0]} min={patientDob || undefined} />
                         </Field>
                         <Field label="Years">
                           <Input value={f.menstrualYears} onChange={set('menstrualYears')} type="number" min="0" />
@@ -635,7 +695,33 @@ const CoreQuestionnaire = ({ patientId, episodeId, condition, patientGender, onC
               )}
               {showLMP && (
                 <Field label="Last menstrual period (LMP)">
-                  <Input value={f.lastMenstrualPeriod} onChange={set('lastMenstrualPeriod')} type="date" max={new Date().toISOString().split('T')[0]} />
+                  {f.lmpUnknown ? (
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <Input type="number" min="0" max="52" value={f.lmpApproxWeeks}
+                          onChange={v => {
+                            const weeks = parseInt(v) || 0;
+                            const approx = new Date();
+                            approx.setDate(approx.getDate() - weeks * 7);
+                            setF(p => ({ ...p, lmpApproxWeeks: v, lastMenstrualPeriod: weeks > 0 ? approx.toISOString().split('T')[0] : '' }));
+                          }}
+                          placeholder="e.g. 6" style={{ width: 90 }} />
+                        <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>weeks ago (approximately)</span>
+                      </div>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-tertiary)', marginTop: 8, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={false} onChange={() => setF(p => ({ ...p, lmpUnknown: false, lmpApproxWeeks: '', lastMenstrualPeriod: '' }))} />
+                        I actually know the exact date
+                      </label>
+                    </div>
+                  ) : (
+                    <div>
+                      <Input value={f.lastMenstrualPeriod} onChange={set('lastMenstrualPeriod')} type="date" max={new Date().toISOString().split('T')[0]} min={patientDob || undefined} />
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-tertiary)', marginTop: 8, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={false} onChange={() => setF(p => ({ ...p, lmpUnknown: true, lastMenstrualPeriod: '' }))} />
+                        Can't remember exactly
+                      </label>
+                    </div>
+                  )}
                 </Field>
               )}
               {f.isPregnant && f.eddDate && (
@@ -666,7 +752,7 @@ const CoreQuestionnaire = ({ patientId, episodeId, condition, patientGender, onC
                 <Input value={f.prevTshValue} onChange={set('prevTshValue')} type="number" min="0" step="0.01" />
               </Field>
               <Field label="Date of test">
-                <Input value={f.prevTshDate} onChange={set('prevTshDate')} type="date" max={new Date().toISOString().split('T')[0]} />
+                <Input value={f.prevTshDate} onChange={set('prevTshDate')} type="date" max={new Date().toISOString().split('T')[0]} min={patientDob || undefined} />
               </Field>
             </div>
           )}
@@ -674,7 +760,7 @@ const CoreQuestionnaire = ({ patientId, episodeId, condition, patientGender, onC
           <BoolRow label="Thyroid ultrasound (USG)" value={f.prevUsgDone} onChange={set('prevUsgDone')} />
           {f.prevUsgDone && (
             <Field label="Date of USG" style={{ paddingLeft: 12 }}>
-              <Input value={f.prevUsgDate} onChange={set('prevUsgDate')} type="date" max={new Date().toISOString().split('T')[0]} />
+              <Input value={f.prevUsgDate} onChange={set('prevUsgDate')} type="date" max={new Date().toISOString().split('T')[0]} min={patientDob || undefined} />
             </Field>
           )}
 
@@ -690,7 +776,7 @@ const CoreQuestionnaire = ({ patientId, episodeId, condition, patientGender, onC
             <p style={{ fontSize: 13, color: 'var(--teal-700)', marginBottom: 12 }}>
               ✅ You have completed Part 1 of the questionnaire. Click "Save & continue" to proceed to the condition-specific questions.
             </p>
-            <button className="btn btn-primary btn-lg" onClick={() => handleSave(true)} disabled={saving} style={{ width: '100%', justifyContent: 'center' }}>
+            <button className="btn btn-primary btn-lg" onClick={() => handleSave(true)} disabled={saving || yearInvalid} style={{ width: '100%', justifyContent: 'center' }}>
               {saving ? <Spinner size={18} color="#fff" /> : 'Save & continue to condition-specific questions →'}
             </button>
           </div>
@@ -700,14 +786,12 @@ const CoreQuestionnaire = ({ patientId, episodeId, condition, patientGender, onC
       {/* ── Section navigation footer ── */}
       <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
         <button className="btn btn-secondary" onClick={() => activeSection === 0 ? onBack() : setActiveSection(s => s - 1)}>
-          ← {activeSection === 0 ? 'Back to condition selection' : 'Previous section'}
+          ← {activeSection === 0 ? 'Back' : 'Previous section'}
         </button>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-ghost" onClick={() => handleSave(false)} disabled={saving}>
-            {saving ? <Spinner size={16} /> : '💾 Save draft'}
-          </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          {lastSavedAt && <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>✓ Saved</span>}
           {activeSection < sections.length - 1 && (
-            <button className="btn btn-primary" onClick={() => setActiveSection(s => s + 1)}>
+            <button className="btn btn-primary" onClick={() => setActiveSection(s => s + 1)} disabled={yearInvalid}>
               Next section →
             </button>
           )}

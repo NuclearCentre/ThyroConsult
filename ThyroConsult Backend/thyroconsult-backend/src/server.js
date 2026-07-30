@@ -1,5 +1,7 @@
 require('dotenv').config();
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
 const compression = require('compression');
 const morgan = require('morgan');
 const { testConnection } = require('./config/database');
@@ -9,6 +11,22 @@ const {
 } = require('./middleware/security');
 const routes = require('./routes/index');
 const { startNotificationScheduler } = require('./services/notificationScheduler');
+
+// ─── Ensure upload directories exist ────────────────────────
+// multer's diskStorage.destination (middleware/security.js) and the
+// document-move logic in patientController.js/authController.js all
+// write into these folders but never create them — if they don't
+// already exist on disk, every upload silently fails with ENOENT. This
+// is easy to miss locally since a dev might create ./uploads by hand
+// once and forget it's not part of the actual deploy/setup process.
+const uploadRoot = process.env.UPLOAD_PATH || './uploads';
+for (const sub of ['temp', 'documents', 'photos']) {
+  const dir = path.join(uploadRoot, sub);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+    console.log(`Created missing upload directory: ${dir}`);
+  }
+}
 
 const app = express();
 const PORT = process.env.PORT || 5000;

@@ -2,7 +2,7 @@
 // Single API file — complete replacement always
 // Change REACT_APP_API_URL in .env to switch provider
 
-const BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:7000/api';
+const BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
 
 // ─── Token management ─────────────────────────────────────────────────────
 
@@ -30,7 +30,25 @@ async function apiFetch(path, options = {}) {
     ...options.headers,
   };
 
-  let response = await fetch(`${BASE_URL}${path}`, { ...options, headers });
+  // Hard timeout on every request. Without this, a hung connection (wrong
+  // port, server not responding, network dropout) left the calling
+  // component's loading state spinning forever — the fetch promise simply
+  // never settled, so no .catch()/.finally() ever fired.
+  const TIMEOUT_MS = 20000;
+  const fetchWithTimeout = (url, opts) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    return fetch(url, { ...opts, signal: controller.signal }).finally(() => clearTimeout(timer));
+  };
+
+  let response;
+  try {
+    response = await fetchWithTimeout(`${BASE_URL}${path}`, { ...options, headers });
+  } catch (e) {
+    const err = new Error(e.name === 'AbortError' ? 'Request timed out. Please check your connection and try again.' : 'Network error. Please check your connection and try again.');
+    err.response = { status: 0, data: { error: err.message } };
+    throw err;
+  }
 
   // Auto-refresh on 401 — but only for requests that were actually
   // authenticated (i.e. we sent a token). A 401 on an unauthenticated call
@@ -42,7 +60,7 @@ async function apiFetch(path, options = {}) {
   if (response.status === 401 && token) {
     const refreshToken = localStorage.getItem('thyro_refresh_token');
     if (refreshToken) {
-      const refreshRes = await fetch(`${BASE_URL}/auth/refresh`, {
+      const refreshRes = await fetchWithTimeout(`${BASE_URL}/auth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refreshToken }),
@@ -51,7 +69,7 @@ async function apiFetch(path, options = {}) {
         const { accessToken, refreshToken: newRefresh } = await refreshRes.json();
         setTokens(accessToken, newRefresh);
         headers.Authorization = `Bearer ${accessToken}`;
-        response = await fetch(`${BASE_URL}${path}`, { ...options, headers });
+        response = await fetchWithTimeout(`${BASE_URL}${path}`, { ...options, headers });
       } else {
         clearTokens();
         window.location.href = '/login';
@@ -91,7 +109,16 @@ async function getBlob(path, params) {
   const token = getToken();
   const headers = {};
   if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetch(`${BASE_URL}${path}${toQueryString(params)}`, { headers });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20000);
+  let response;
+  try {
+    response = await fetch(`${BASE_URL}${path}${toQueryString(params)}`, { headers, signal: controller.signal });
+  } catch (e) {
+    throw new Error(e.name === 'AbortError' ? 'Request timed out. Please try again.' : 'Network error. Please try again.');
+  } finally {
+    clearTimeout(timer);
+  }
   if (!response.ok) throw new Error('Request failed');
   return response.blob();
 }

@@ -10,7 +10,7 @@
 // Tc-prefixed UI primitives to avoid naming conflicts.
 // ============================================================
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { conditionAPI } from "../api/index";
 
 // ─── Tc-prefixed UI primitives ────────────────────────────────────────────────
@@ -34,6 +34,24 @@ const TcInput = ({ value, onChange, type = "text", placeholder, min, max, style 
     style={{ width: "100%", padding: "10px 12px", border: "1.5px solid #d0d7e8", borderRadius: 8, fontSize: 14, outline: "none", boxSizing: "border-box", ...style }}
   />
 );
+
+// Year-of-event input that can't be before the patient's own birth year.
+const TcYearInput = ({ value, onChange, dob, placeholder, style }) => {
+  const dobYear = dob ? new Date(dob).getFullYear() : null;
+  const thisYear = new Date().getFullYear();
+  const invalid = dobYear && value && parseInt(value) < dobYear;
+  return (
+    <div>
+      <TcInput type="number" value={value} onChange={onChange} placeholder={placeholder}
+        min={dobYear || 1950} max={thisYear} style={style} />
+      {invalid && (
+        <div style={{ fontSize: 11, color: "#c0392b", marginTop: 4 }}>
+          Can't be before your birth year ({dobYear})
+        </div>
+      )}
+    </div>
+  );
+};
 
 const TcSelect = ({ value, onChange, options, placeholder }) => (
   <select
@@ -82,12 +100,12 @@ const TcYesNo = ({ value, onChange }) => (
   <TcRadioGroup value={value} onChange={onChange} inline options={[{ value: "no", label: "No" }, { value: "yes", label: "Yes" }]} />
 );
 
-const TcDurationPicker = ({ label = "Since when?", sinceDate, onSinceDate, years, onYears, months, onMonths }) => (
+const TcDurationPicker = ({ label = "Since when?", sinceDate, onSinceDate, years, onYears, months, onMonths, minDate }) => (
   <TcField label={label}>
     <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
       <div style={{ flex: "1 1 180px" }}>
         <label style={{ fontSize: 12, color: "#555", display: "block", marginBottom: 4 }}>Date (if known)</label>
-        <TcInput type="date" value={sinceDate} onChange={onSinceDate} max={new Date().toISOString().split("T")[0]} />
+        <TcInput type="date" value={sinceDate} onChange={onSinceDate} max={new Date().toISOString().split("T")[0]} min={minDate || undefined} />
       </div>
       <div style={{ display: "flex", gap: 8, flex: "1 1 160px", alignItems: "flex-end" }}>
         <div style={{ flex: 1 }}>
@@ -118,15 +136,9 @@ const TcMedBlock = ({ med, index, onChange, onRemove }) => (
   </div>
 );
 
-const TcOutputBox = ({ text }) => {
-  if (!text) return null;
-  return (
-    <div style={{ margin: "18px 0 0", padding: "12px 16px", background: "#f0faf4", border: "1px solid #a8d5b5", borderRadius: 8, borderLeft: "4px solid #27ae60" }}>
-      <span style={{ fontSize: 12, fontWeight: 700, color: "#27ae60", textTransform: "uppercase", letterSpacing: 0.5 }}>Physician summary</span>
-      <p style={{ margin: "4px 0 0", fontSize: 14, color: "#1a4a2e", fontStyle: "italic" }}>{text}</p>
-    </div>
-  );
-};
+// No longer rendered on the patient-facing screen (per explicit request).
+// Underlying answers still save normally regardless of this.
+const TcOutputBox = () => null;
 
 const TcSectionCard = ({ title, children }) => (
   <div style={{ marginTop: 20, padding: "16px 20px", border: "1.5px solid #d0d7e8", borderRadius: 10, background: "#fff" }}>
@@ -186,6 +198,8 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
   const [currentPage, setCurrentPage] = useState(0);
   const [saving, setSaving]       = useState(false);
   const [saveMsg, setSaveMsg]     = useState("");
+  const [savedPageId, setSavedPageId] = useState(null);
+  const [resumedFrom, setResumedFrom] = useState(false);
 
   const set = useCallback((key, value) => setData(prev => ({ ...prev, [key]: value })), []);
   const get = useCallback((key, fallback = "") => (data[key] !== undefined ? data[key] : fallback), [data]);
@@ -255,31 +269,76 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
   const pageId     = allPages[currentPage] || "A3";
   const progress   = Math.round(((currentPage + 1) / totalPages) * 100);
 
+  // Blocks proceeding past a screen whose year-of-event field is before
+  // the patient's own birth year.
+  const dobYear = patientDob ? new Date(patientDob).getFullYear() : null;
+  const yearFieldByPage = { B1: "hysterectomy_year", C1: "thyroid_dx_year", C2: "thyroid_tx_year", E1: "ca_dx_year" };
+  const currentYearField = yearFieldByPage[pageId];
+  const yearInvalid = dobYear && currentYearField && get(currentYearField) && parseInt(get(currentYearField)) < dobYear;
+
+  // Resume exactly where the patient left off, once, after allPages has
+  // recomputed with the branching-relevant answers restored.
+  useEffect(() => {
+    if (!resumedFrom && savedPageId) {
+      const idx = allPages.indexOf(savedPageId);
+      if (idx > 0) setCurrentPage(idx);
+      setResumedFrom(true);
+    }
+  }, [savedPageId, resumedFrom, allPages]);
+
   // ── Load draft on mount ───────────────────────────────────────────────────
   useEffect(() => {
     if (patientId && episodeId) {
       conditionAPI.getTcQ(patientId, episodeId)
-        .then(d => { if (d && Object.keys(d).length) setData(d); })
+        .then(d => {
+          if (d && Object.keys(d).length) {
+            setData(d);
+            if (d.current_page) setSavedPageId(d.current_page);
+          }
+        })
         .catch(() => {});
     }
   }, [patientId, episodeId]);
 
-  // ── Save draft ────────────────────────────────────────────────────────────
-  const saveDraft = useCallback(async () => {
+  // ── Autosave ───────────────────────────────────────────────────────────────
+  // Replaces the previous approach of saving (always as a draft) only
+  // when the patient clicked Next. Now saves automatically ~1.5s after
+  // the patient stops interacting, and separately on page change, so a
+  // network outage or a voluntary pause never loses answers.
+  const skipFirstAutosave = useRef(true);
+  useEffect(() => {
+    if (skipFirstAutosave.current) { skipFirstAutosave.current = false; return; }
+    if (!patientId || !episodeId) return;
+    const t = setTimeout(async () => {
+      try {
+        await conditionAPI.saveTcQ(patientId, episodeId, { ...data, _draft: true, _currentPage: pageId });
+        setSaveMsg("✓ Saved");
+      } catch { /* silent — retries on next change */ }
+    }, 1500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, currentPage]);
+
+  // ── Final submit ─────────────────────────────────────────────────────────
+  // NOTE: previously the last "Next" click reused saveDraft(), which
+  // always sent _draft:true — the questionnaire could never actually be
+  // marked complete (questionnaire_completed_at never got set, so this
+  // episode would never reach the doctor's queue). Separated out here.
+  const submitFinal = useCallback(async () => {
     if (!patientId || !episodeId) return;
     setSaving(true);
     try {
-      await conditionAPI.saveTcQ(patientId, episodeId, { ...data, _draft: true });
-      setSaveMsg("Draft saved");
-      setTimeout(() => setSaveMsg(""), 2000);
-    } catch { setSaveMsg("Save failed"); }
+      await conditionAPI.saveTcQ(patientId, episodeId, { ...data, _draft: false });
+      onComplete && onComplete(data);
+    } catch { setSaveMsg("Submission failed. Please try again."); }
     finally { setSaving(false); }
-  }, [data, patientId, episodeId]);
+  }, [data, patientId, episodeId, onComplete]);
 
   const next = useCallback(() => {
+    if (yearInvalid) return;
     if (currentPage < totalPages - 1) setCurrentPage(p => p + 1);
-    else { saveDraft(); onComplete && onComplete(data); }
-  }, [currentPage, totalPages, saveDraft, onComplete, data]);
+    else submitFinal();
+  }, [currentPage, totalPages, submitFinal, yearInvalid]);
 
   const prev = useCallback(() => {
     if (currentPage > 0) setCurrentPage(p => p - 1);
@@ -319,12 +378,7 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
           {get("occupation") === "other" && (
             <TcField label="Please specify"><TcInput value={get("occupation_other")} onChange={v => set("occupation_other", v)} placeholder="Your occupation" /></TcField>
           )}
-          {["teacher","singer","actor","lawyer","call_centre","sales"].includes(get("occupation")) && (
-            <div style={{ background: "#fff8e6", border: "1px solid #f5a623", borderRadius: 8, padding: 12, fontSize: 13, color: "#7d5200", marginTop: 12 }}>
-              Voice-dependent profession — physician will be alerted to assess voice symptoms carefully.
-            </div>
-          )}
-          <TcOutputBox text={get("occupation") ? `Occupation: ${get("occupation") === "other" ? get("occupation_other") : get("occupation").replace(/_/g, " ")}${["teacher","singer","actor","lawyer","call_centre","sales"].includes(get("occupation")) ? " [Voice-dependent — FLAG]" : ""}` : ""} />
+          <TcOutputBox text={get("occupation") ? `Occupation: ${get("occupation") === "other" ? get("occupation_other") : get("occupation").replace(/_/g, " ")}` : ""} />
         </div>
       );
 
@@ -410,7 +464,7 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
             <TcField label="Please specify"><TcInput value={get("ca_thyroid_type_other")} onChange={v => set("ca_thyroid_type_other", v)} placeholder="Cancer type" /></TcField>
           )}
           <TcField label="Year of diagnosis">
-            <TcInput type="number" value={get("ca_dx_year")} onChange={v => set("ca_dx_year", v)} min={1950} max={new Date().getFullYear()} placeholder="e.g. 2021" />
+            <TcYearInput value={get("ca_dx_year")} onChange={v => set("ca_dx_year", v)} dob={patientDob} placeholder="e.g. 2021" />
           </TcField>
           <TcOutputBox text={get("ca_thyroid_type") && get("ca_dx_year") ? `K/c/o ${get("ca_thyroid_type") === "other" ? get("ca_thyroid_type_other") : get("ca_thyroid_type").toUpperCase()} diagnosed in ${get("ca_dx_year")}.` : ""} />
         </div>
@@ -690,16 +744,16 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
                 ]} />
               </TcField>
               {get("hysterectomy_date_precision", "full") === "full" && (
-                <TcField label="Date of surgery"><TcInput type="date" value={get("hysterectomy_date")} onChange={v => set("hysterectomy_date", v)} max={new Date().toISOString().split("T")[0]} /></TcField>
+                <TcField label="Date of surgery"><TcInput type="date" value={get("hysterectomy_date")} onChange={v => set("hysterectomy_date", v)} max={new Date().toISOString().split("T")[0]} min={patientDob || undefined} /></TcField>
               )}
               {get("hysterectomy_date_precision") === "month_year" && (
                 <div style={{ display: "flex", gap: 10 }}>
                   <TcField label="Month"><TcSelect value={get("hysterectomy_month")} onChange={v => set("hysterectomy_month", v)} placeholder="Month" options={["1","2","3","4","5","6","7","8","9","10","11","12"].map((m,i) => ({ value: m, label: ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][i] }))} /></TcField>
-                  <TcField label="Year"><TcInput type="number" value={get("hysterectomy_year")} onChange={v => set("hysterectomy_year", v)} min={1950} max={new Date().getFullYear()} placeholder="e.g. 2019" /></TcField>
+                  <TcField label="Year"><TcYearInput value={get("hysterectomy_year")} onChange={v => set("hysterectomy_year", v)} dob={patientDob} placeholder="e.g. 2019" /></TcField>
                 </div>
               )}
               {get("hysterectomy_date_precision") === "year_only" && (
-                <TcField label="Year"><TcInput type="number" value={get("hysterectomy_year")} onChange={v => set("hysterectomy_year", v)} min={1950} max={new Date().getFullYear()} placeholder="e.g. 2019" /></TcField>
+                <TcField label="Year"><TcYearInput value={get("hysterectomy_year")} onChange={v => set("hysterectomy_year", v)} dob={patientDob} placeholder="e.g. 2019" /></TcField>
               )}
               <TcField label="Reason">
                 <TcRadioGroup value={get("hysterectomy_reason")} onChange={v => set("hysterectomy_reason", v)} options={[
@@ -748,7 +802,7 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
                   { value: "absent", label: "Absent" }, { value: "prolonged", label: "Prolonged" },
                 ]} />
               </TcField>
-              <TcDurationPicker label="Since when?" sinceDate={get("menstrual_since_date")} onSinceDate={v => set("menstrual_since_date", v)} years={get("menstrual_years")} onYears={v => set("menstrual_years", v)} months={get("menstrual_months")} onMonths={v => set("menstrual_months", v)} />
+              <TcDurationPicker minDate={patientDob} label="Since when?" sinceDate={get("menstrual_since_date")} onSinceDate={v => set("menstrual_since_date", v)} years={get("menstrual_years")} onYears={v => set("menstrual_years", v)} months={get("menstrual_months")} onMonths={v => set("menstrual_months", v)} />
             </TcSectionCard>
           )}
           <TcOutputBox text={get("menstrual_change_status") === "yes" && get("menstrual_pattern") ? `${get("menstrual_pattern")} ${get("menstrual_flow", []).join(", ")} flow since last ${durationText(get("menstrual_years"), get("menstrual_months"), get("menstrual_since_date"))}.` : ""} />
@@ -803,7 +857,7 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
                   { value: "thyroid_cancer", label: "Thyroid cancer" }, { value: "other", label: "Other" },
                 ]} />
               </TcField>
-              <TcField label="Year of diagnosis"><TcInput type="number" value={get("thyroid_dx_year")} onChange={v => set("thyroid_dx_year", v)} min={1950} max={new Date().getFullYear()} placeholder="e.g. 2018" /></TcField>
+              <TcField label="Year of diagnosis"><TcYearInput value={get("thyroid_dx_year")} onChange={v => set("thyroid_dx_year", v)} dob={patientDob} placeholder="e.g. 2018" /></TcField>
             </TcSectionCard>
           )}
           <TcOutputBox text={get("thyroid_dx_status") === "yes" && get("thyroid_dx_type") ? `K/c/o ${get("thyroid_dx_type").replace(/_/g, " ")} since ${get("thyroid_dx_year") || "?"}.` : ""} />
@@ -821,7 +875,7 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
                   { value: "surgery", label: "Surgery" }, { value: "rai", label: "RAI (Radioiodine)" }, { value: "both", label: "Both" },
                 ]} />
               </TcField>
-              <TcField label="Year"><TcInput type="number" value={get("thyroid_tx_year")} onChange={v => set("thyroid_tx_year", v)} min={1950} max={new Date().getFullYear()} placeholder="e.g. 2020" /></TcField>
+              <TcField label="Year"><TcYearInput value={get("thyroid_tx_year")} onChange={v => set("thyroid_tx_year", v)} dob={patientDob} placeholder="e.g. 2020" /></TcField>
             </TcSectionCard>
           )}
           <TcOutputBox text={get("thyroid_tx_status") === "yes" && get("thyroid_tx_type") ? `H/o ${get("thyroid_tx_type")} for thyroid in ${get("thyroid_tx_year") || "?"}.` : ""} />
@@ -965,7 +1019,7 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
             <TcSectionCard title="Weight change details">
               <TcField label="Direction"><TcRadioGroup value={get("weight_direction")} onChange={v => set("weight_direction", v)} inline options={[{ value: "gained", label: "Weight gained" }, { value: "lost", label: "Weight lost" }]} /></TcField>
               <TcField label="How much (kg)?"><TcInput type="number" value={get("weight_kg")} onChange={v => set("weight_kg", v)} min={0} placeholder="e.g. 5" /></TcField>
-              <TcDurationPicker label="Since when?" sinceDate={get("weight_since_date")} onSinceDate={v => set("weight_since_date", v)} years={get("weight_years")} onYears={v => set("weight_years", v)} months={get("weight_months")} onMonths={v => set("weight_months", v)} />
+              <TcDurationPicker minDate={patientDob} label="Since when?" sinceDate={get("weight_since_date")} onSinceDate={v => set("weight_since_date", v)} years={get("weight_years")} onYears={v => set("weight_years", v)} months={get("weight_months")} onMonths={v => set("weight_months", v)} />
             </TcSectionCard>
           )}
           <TcOutputBox text={get("weight_change_status") === "yes" && get("weight_direction") ? `Weight ${get("weight_direction")}${get("weight_kg") ? " of " + get("weight_kg") + " kg" : ""} over last ${durationText(get("weight_years"), get("weight_months"), get("weight_since_date"))}.` : ""} />
@@ -986,7 +1040,7 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
           {get("bowel_change_status") === "yes" && (
             <TcSectionCard title="Bowel change details">
               <TcField label="Type"><TcRadioGroup value={get("bowel_type")} onChange={v => set("bowel_type", v)} options={[{ value: "constipation", label: "Constipation" }, { value: "diarrhoea", label: "Diarrhoea" }, { value: "alternating", label: "Alternating" }, { value: "reduced_frequency", label: "Reduced frequency" }]} /></TcField>
-              <TcDurationPicker label="Since when?" sinceDate={get("bowel_since_date")} onSinceDate={v => set("bowel_since_date", v)} years={get("bowel_years")} onYears={v => set("bowel_years", v)} months={get("bowel_months")} onMonths={v => set("bowel_months", v)} />
+              <TcDurationPicker minDate={patientDob} label="Since when?" sinceDate={get("bowel_since_date")} onSinceDate={v => set("bowel_since_date", v)} years={get("bowel_years")} onYears={v => set("bowel_years", v)} months={get("bowel_months")} onMonths={v => set("bowel_months", v)} />
             </TcSectionCard>
           )}
           <TcOutputBox text={get("bowel_change_status") === "yes" && get("bowel_type") ? `${get("bowel_type").charAt(0).toUpperCase() + get("bowel_type").slice(1)} since last ${durationText(get("bowel_years"), get("bowel_months"), get("bowel_since_date"))}.` : ""} />
@@ -1003,7 +1057,7 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
           {get("leg_oedema_status") === "yes" && (
             <TcSectionCard title="Pedal oedema details">
               <TcField label="Type"><TcRadioGroup value={get("leg_oedema_type")} onChange={v => set("leg_oedema_type", v)} inline options={[{ value: "pitting", label: "Pitting" }, { value: "non_pitting", label: "Non-pitting" }, { value: "unsure", label: "Unsure" }]} /></TcField>
-              <TcDurationPicker label="Since when?" sinceDate={get("leg_oedema_since_date")} onSinceDate={v => set("leg_oedema_since_date", v)} years={get("leg_oedema_years")} onYears={v => set("leg_oedema_years", v)} months={get("leg_oedema_months")} onMonths={v => set("leg_oedema_months", v)} />
+              <TcDurationPicker minDate={patientDob} label="Since when?" sinceDate={get("leg_oedema_since_date")} onSinceDate={v => set("leg_oedema_since_date", v)} years={get("leg_oedema_years")} onYears={v => set("leg_oedema_years", v)} months={get("leg_oedema_months")} onMonths={v => set("leg_oedema_months", v)} />
             </TcSectionCard>
           )}
           <TcOutputBox text={get("leg_oedema_status") === "yes" ? `Pedal oedema since last ${durationText(get("leg_oedema_years"), get("leg_oedema_months"), get("leg_oedema_since_date"))}.` : ""} />
@@ -1018,7 +1072,7 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
           {get("hoarseness_status") === "yes" && (
             <TcSectionCard title="Voice change details">
               <TcField label="Pattern"><TcRadioGroup value={get("hoarseness_pattern")} onChange={v => set("hoarseness_pattern", v)} inline options={[{ value: "constant", label: "Constant" }, { value: "intermittent", label: "Intermittent" }]} /></TcField>
-              <TcDurationPicker label="Since when?" sinceDate={get("hoarseness_since_date")} onSinceDate={v => set("hoarseness_since_date", v)} years={get("hoarseness_years")} onYears={v => set("hoarseness_years", v)} months={get("hoarseness_months")} onMonths={v => set("hoarseness_months", v)} />
+              <TcDurationPicker minDate={patientDob} label="Since when?" sinceDate={get("hoarseness_since_date")} onSinceDate={v => set("hoarseness_since_date", v)} years={get("hoarseness_years")} onYears={v => set("hoarseness_years", v)} months={get("hoarseness_months")} onMonths={v => set("hoarseness_months", v)} />
             </TcSectionCard>
           )}
           <TcOutputBox text={get("hoarseness_status") === "yes" ? `${get("hoarseness_pattern") || ""}  hoarseness of voice since last ${durationText(get("hoarseness_years"), get("hoarseness_months"), get("hoarseness_since_date"))}.` : ""} />
@@ -1032,7 +1086,7 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
           {get("muscle_weakness_status") === "yes" && (
             <TcSectionCard title="Muscle weakness details">
               <TcField label="Location"><TcRadioGroup value={get("muscle_weakness_location")} onChange={v => set("muscle_weakness_location", v)} options={[{ value: "proximal", label: "Proximal (upper arms / thighs)" }, { value: "generalised", label: "Generalised" }]} /></TcField>
-              <TcDurationPicker label="Since when?" sinceDate={get("muscle_weakness_since_date")} onSinceDate={v => set("muscle_weakness_since_date", v)} years={get("muscle_weakness_years")} onYears={v => set("muscle_weakness_years", v)} months={get("muscle_weakness_months")} onMonths={v => set("muscle_weakness_months", v)} />
+              <TcDurationPicker minDate={patientDob} label="Since when?" sinceDate={get("muscle_weakness_since_date")} onSinceDate={v => set("muscle_weakness_since_date", v)} years={get("muscle_weakness_years")} onYears={v => set("muscle_weakness_years", v)} months={get("muscle_weakness_months")} onMonths={v => set("muscle_weakness_months", v)} />
             </TcSectionCard>
           )}
           <TcOutputBox text={get("muscle_weakness_status") === "yes" ? `Weakness in ${get("muscle_weakness_location") || ""} muscles since last ${durationText(get("muscle_weakness_years"), get("muscle_weakness_months"), get("muscle_weakness_since_date"))}.` : ""} />
@@ -1046,7 +1100,7 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
           <TcYesNoUnsure value={get("depression_status")} onChange={v => set("depression_status", v)} />
           {get("depression_status") === "yes" && (
             <TcSectionCard title="Depression details">
-              <TcDurationPicker label="Since when?" sinceDate={get("depression_since_date")} onSinceDate={v => set("depression_since_date", v)} years={get("depression_years")} onYears={v => set("depression_years", v)} months={get("depression_months")} onMonths={v => set("depression_months", v)} />
+              <TcDurationPicker minDate={patientDob} label="Since when?" sinceDate={get("depression_since_date")} onSinceDate={v => set("depression_since_date", v)} years={get("depression_years")} onYears={v => set("depression_years", v)} months={get("depression_months")} onMonths={v => set("depression_months", v)} />
               <TcField label="Have you seen a doctor for this?"><TcYesNo value={get("depression_treated")} onChange={v => set("depression_treated", v)} /></TcField>
               <TcField label="Formally diagnosed with depression by a doctor?"><TcYesNo value={get("depression_diagnosed")} onChange={v => set("depression_diagnosed", v)} /></TcField>
             </TcSectionCard>
@@ -1062,7 +1116,7 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
           {get("bradycardia_status") === "yes" && (
             <TcSectionCard title="Bradycardia details">
               <TcField label="Approximate resting pulse rate (bpm — optional)"><TcInput type="number" value={get("pulse_rate_bpm")} onChange={v => set("pulse_rate_bpm", v)} min={20} max={200} placeholder="e.g. 52" /></TcField>
-              <TcDurationPicker label="Since when?" sinceDate={get("bradycardia_since_date")} onSinceDate={v => set("bradycardia_since_date", v)} years={get("bradycardia_years")} onYears={v => set("bradycardia_years", v)} months={get("bradycardia_months")} onMonths={v => set("bradycardia_months", v)} />
+              <TcDurationPicker minDate={patientDob} label="Since when?" sinceDate={get("bradycardia_since_date")} onSinceDate={v => set("bradycardia_since_date", v)} years={get("bradycardia_years")} onYears={v => set("bradycardia_years", v)} months={get("bradycardia_months")} onMonths={v => set("bradycardia_months", v)} />
             </TcSectionCard>
           )}
           <TcOutputBox text={get("bradycardia_status") === "yes" ? `Bradycardia${get("pulse_rate_bpm") ? " (pulse " + get("pulse_rate_bpm") + " bpm)" : ""} since last ${durationText(get("bradycardia_years"), get("bradycardia_months"), get("bradycardia_since_date"))}.` : ""} />
@@ -1075,7 +1129,7 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
           {get("postural_giddiness_status") === "yes" && (
             <TcSectionCard title="Postural giddiness details">
               <TcField label="Frequency"><TcRadioGroup value={get("postural_giddiness_freq")} onChange={v => set("postural_giddiness_freq", v)} options={[{ value: "rarely", label: "Rarely" }, { value: "sometimes", label: "Sometimes" }, { value: "often", label: "Often" }, { value: "every_time", label: "Every time I stand" }]} /></TcField>
-              <TcDurationPicker label="Since when?" sinceDate={get("postural_giddiness_since_date")} onSinceDate={v => set("postural_giddiness_since_date", v)} years={get("postural_giddiness_years")} onYears={v => set("postural_giddiness_years", v)} months={get("postural_giddiness_months")} onMonths={v => set("postural_giddiness_months", v)} />
+              <TcDurationPicker minDate={patientDob} label="Since when?" sinceDate={get("postural_giddiness_since_date")} onSinceDate={v => set("postural_giddiness_since_date", v)} years={get("postural_giddiness_years")} onYears={v => set("postural_giddiness_years", v)} months={get("postural_giddiness_months")} onMonths={v => set("postural_giddiness_months", v)} />
             </TcSectionCard>
           )}
           <TcOutputBox text={get("postural_giddiness_status") === "yes" ? `Postural giddiness since last ${durationText(get("postural_giddiness_years"), get("postural_giddiness_months"), get("postural_giddiness_since_date"))}.` : ""} />
@@ -1105,7 +1159,7 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
           {get("hearing_status") === "yes" && (
             <TcSectionCard title="Hearing details">
               <TcField label="Type"><TcRadioGroup value={get("hearing_type")} onChange={v => set("hearing_type", v)} options={[{ value: "reduced_hearing", label: "Reduced hearing" }, { value: "tinnitus", label: "Tinnitus (ringing)" }, { value: "both", label: "Both" }]} /></TcField>
-              <TcDurationPicker label="Since when?" sinceDate={get("hearing_since_date")} onSinceDate={v => set("hearing_since_date", v)} years={get("hearing_years")} onYears={v => set("hearing_years", v)} months={get("hearing_months")} onMonths={v => set("hearing_months", v)} />
+              <TcDurationPicker minDate={patientDob} label="Since when?" sinceDate={get("hearing_since_date")} onSinceDate={v => set("hearing_since_date", v)} years={get("hearing_years")} onYears={v => set("hearing_years", v)} months={get("hearing_months")} onMonths={v => set("hearing_months", v)} />
             </TcSectionCard>
           )}
           <TcOutputBox text={get("hearing_status") === "yes" && get("hearing_type") ? `${get("hearing_type").replace(/_/g, " ")} since last ${durationText(get("hearing_years"), get("hearing_months"), get("hearing_since_date"))}.` : ""} />
@@ -1128,7 +1182,7 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
                 <TcCheckGroup values={get("carpal_tunnel_symptoms", [])} onChange={v => set("carpal_tunnel_symptoms", v)} options={[{ value: "pain", label: "Pain" }, { value: "numbness", label: "Numbness" }, { value: "tingling", label: "Tingling" }]} />
               </TcField>
               <TcField label="Which hand?"><TcRadioGroup value={get("carpal_tunnel_side")} onChange={v => set("carpal_tunnel_side", v)} inline options={[{ value: "right", label: "Right" }, { value: "left", label: "Left" }, { value: "both", label: "Both" }]} /></TcField>
-              <TcDurationPicker label="Since when?" sinceDate={get("carpal_tunnel_since_date")} onSinceDate={v => set("carpal_tunnel_since_date", v)} years={get("carpal_tunnel_years")} onYears={v => set("carpal_tunnel_years", v)} months={get("carpal_tunnel_months")} onMonths={v => set("carpal_tunnel_months", v)} />
+              <TcDurationPicker minDate={patientDob} label="Since when?" sinceDate={get("carpal_tunnel_since_date")} onSinceDate={v => set("carpal_tunnel_since_date", v)} years={get("carpal_tunnel_years")} onYears={v => set("carpal_tunnel_years", v)} months={get("carpal_tunnel_months")} onMonths={v => set("carpal_tunnel_months", v)} />
             </TcSectionCard>
           )}
           <TcOutputBox text={get("carpal_tunnel_status") === "yes" ? `${get("carpal_tunnel_symptoms", []).join(" and ")} in ${get("carpal_tunnel_side") || ""} wrist since last ${durationText(get("carpal_tunnel_years"), get("carpal_tunnel_months"), get("carpal_tunnel_since_date"))}.` : ""} />
@@ -1229,7 +1283,7 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
           {get("pcos_status") === "yes" && (
             <TcSectionCard title="PCOS / PMOS details">
               <TcField label="Which diagnosis?"><TcRadioGroup value={get("pcos_label")} onChange={v => set("pcos_label", v)} inline options={[{ value: "pcos", label: "PCOS" }, { value: "pmos", label: "PMOS" }]} /></TcField>
-              <TcDurationPicker label="Since when?" sinceDate={get("pcos_since_date")} onSinceDate={v => set("pcos_since_date", v)} years={get("pcos_years")} onYears={v => set("pcos_years", v)} months={get("pcos_months")} onMonths={v => set("pcos_months", v)} />
+              <TcDurationPicker minDate={patientDob} label="Since when?" sinceDate={get("pcos_since_date")} onSinceDate={v => set("pcos_since_date", v)} years={get("pcos_years")} onYears={v => set("pcos_years", v)} months={get("pcos_months")} onMonths={v => set("pcos_months", v)} />
               <TcField label="Are you taking any medicines for this?"><TcYesNoUnsure value={get("pcos_on_med")} onChange={v => set("pcos_on_med", v)} /></TcField>
               {get("pcos_on_med") === "yes" && (
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
@@ -1383,7 +1437,7 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
                 <TcRadioGroup value={get(`${key}_severity`)} onChange={v => set(`${key}_severity`, v)} inline options={severityOptions.map(s => ({ value: s.toLowerCase(), label: s }))} />
               </TcField>
             )}
-            <TcDurationPicker label="Since when?" sinceDate={get(`${key}_since_date`)} onSinceDate={v => set(`${key}_since_date`, v)} years={get(`${key}_years`)} onYears={v => set(`${key}_years`, v)} months={get(`${key}_months`)} onMonths={v => set(`${key}_months`, v)} />
+            <TcDurationPicker minDate={patientDob} label="Since when?" sinceDate={get(`${key}_since_date`)} onSinceDate={v => set(`${key}_since_date`, v)} years={get(`${key}_years`)} onYears={v => set(`${key}_years`, v)} months={get(`${key}_months`)} onMonths={v => set(`${key}_months`, v)} />
           </TcSectionCard>
         )}
         <TcOutputBox text={get(`${key}_status`) === "yes" ? outputText : ""} />
@@ -1401,7 +1455,7 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
             <TcField label="Type (select all that apply)">
               <TcCheckGroup values={get(`${key}_types`, [])} onChange={v => set(`${key}_types`, v)} options={typeOptions.map(t => ({ value: t.toLowerCase().replace(/\s+/g, "_"), label: t }))} />
             </TcField>
-            <TcDurationPicker label="Since when?" sinceDate={get(`${key}_since_date`)} onSinceDate={v => set(`${key}_since_date`, v)} years={get(`${key}_years`)} onYears={v => set(`${key}_years`, v)} months={get(`${key}_months`)} onMonths={v => set(`${key}_months`, v)} />
+            <TcDurationPicker minDate={patientDob} label="Since when?" sinceDate={get(`${key}_since_date`)} onSinceDate={v => set(`${key}_since_date`, v)} years={get(`${key}_years`)} onYears={v => set(`${key}_years`, v)} months={get(`${key}_months`)} onMonths={v => set(`${key}_months`, v)} />
           </TcSectionCard>
         )}
         <TcOutputBox text={get(`${key}_status`) === "yes" && get(`${key}_types`, []).length ? `${get(`${key}_types`, []).map(t => t.replace(/_/g, " ")).join(", ")} since last ${durationText(get(`${key}_years`), get(`${key}_months`), get(`${key}_since_date`))}.` : ""} />
@@ -1416,7 +1470,7 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
         <TcYesNoUnsure value={get(`${key}_status`)} onChange={v => set(`${key}_status`, v)} />
         {get(`${key}_status`) === "yes" && (
           <TcSectionCard title="Details">
-            <TcDurationPicker label="Since when?" sinceDate={get(`${key}_since_date`)} onSinceDate={v => set(`${key}_since_date`, v)} years={get(`${key}_years`)} onYears={v => set(`${key}_years`, v)} months={get(`${key}_months`)} onMonths={v => set(`${key}_months`, v)} />
+            <TcDurationPicker minDate={patientDob} label="Since when?" sinceDate={get(`${key}_since_date`)} onSinceDate={v => set(`${key}_since_date`, v)} years={get(`${key}_years`)} onYears={v => set(`${key}_years`, v)} months={get(`${key}_months`)} onMonths={v => set(`${key}_months`, v)} />
             <TcField label="On medication?"><TcYesNoUnsure value={get(`${key}_on_med`)} onChange={v => set(`${key}_on_med`, v)} /></TcField>
             {get(`${key}_on_med`) === "yes" && (
               <div>
@@ -1446,7 +1500,7 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
       {/* Progress bar */}
       <div style={{ position: "sticky", top: 0, background: "#fff", paddingTop: 16, paddingBottom: 12, zIndex: 10, borderBottom: "1px solid #f0f0f0" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-          <span style={{ fontSize: 12, color: "#888" }}>CA Thyroid — Page {currentPage + 1} of {totalPages}</span>
+          <span style={{ fontSize: 12, color: "#888" }}>CA Thyroid</span>
           <span style={{ fontSize: 12, fontWeight: 600, color: "#d35400" }}>{progress}%</span>
         </div>
         <div style={{ height: 6, background: "#f0f0f0", borderRadius: 3 }}>
@@ -1474,16 +1528,9 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
         </button>
 
         <button
-          onClick={saveDraft}
-          disabled={saving}
-          style={{ padding: "8px 16px", border: "1.5px solid #d35400", borderRadius: 8, background: "transparent", color: "#d35400", cursor: "pointer", fontSize: 13 }}
-        >
-          {saving ? "Saving..." : "Save draft"}
-        </button>
-
-        <button
           onClick={next}
-          style={{ padding: "10px 28px", border: "none", borderRadius: 8, background: "#d35400", color: "#fff", cursor: "pointer", fontSize: 14, fontWeight: 600 }}
+          disabled={yearInvalid}
+          style={{ padding: "10px 28px", border: "none", borderRadius: 8, background: yearInvalid ? "#ccc" : "#d35400", color: "#fff", cursor: yearInvalid ? "not-allowed" : "pointer", fontSize: 14, fontWeight: 600 }}
         >
           {currentPage === totalPages - 1 ? "Submit ✓" : "Next →"}
         </button>

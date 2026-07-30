@@ -5,7 +5,7 @@
 // Matches HypoQuestionnaire architecture exactly.
 // ============================================================
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { conditionAPI } from "../api/index";
 
 // ─── Primitive UI helpers (Hyper-prefixed to avoid conflicts) ────────────────
@@ -29,6 +29,26 @@ const HyperInput = ({ value, onChange, type = "text", placeholder, min, max, sty
     style={{ width: "100%", padding: "10px 12px", border: "1.5px solid #d0d7e8", borderRadius: 8, fontSize: 14, outline: "none", boxSizing: "border-box", ...style }}
   />
 );
+
+// Year-of-event input that can't be before the patient's own birth year.
+// A plain min attribute doesn't stop a typed value from being submitted,
+// so this validates live and shows an inline error.
+const HyperYearInput = ({ value, onChange, dob, placeholder, style }) => {
+  const dobYear = dob ? new Date(dob).getFullYear() : null;
+  const thisYear = new Date().getFullYear();
+  const invalid = dobYear && value && parseInt(value) < dobYear;
+  return (
+    <div>
+      <HyperInput type="number" value={value} onChange={onChange} placeholder={placeholder}
+        min={dobYear || 1950} max={thisYear} style={style} />
+      {invalid && (
+        <div style={{ fontSize: 11, color: "#c0392b", marginTop: 4 }}>
+          Can't be before your birth year ({dobYear})
+        </div>
+      )}
+    </div>
+  );
+};
 
 const HyperSelect = ({ value, onChange, options, placeholder }) => (
   <select
@@ -73,12 +93,113 @@ const HyperYesNoUnsure = ({ value, onChange }) => (
   <HyperRadioGroup value={value} onChange={onChange} inline options={[{ value: "no", label: "No" }, { value: "unsure", label: "Unsure" }, { value: "yes", label: "Yes" }]} />
 );
 
-const HyperDurationPicker = ({ label = "Since when?", sinceDate, onSinceDate, years, onYears, months, onMonths }) => (
+const HyperYearGrid = ({ selectedYear, onSelect, onClose }) => {
+  const currentYear = new Date().getFullYear();
+  const [blockStart, setBlockStart] = useState(
+    Math.floor(((selectedYear || currentYear) - 1) / 12) * 12 + 1
+  );
+  const years = Array.from({ length: 12 }, (_, i) => blockStart + i);
+  return (
+    <div style={{ position: "absolute", zIndex: 20, marginTop: 4, background: "#fff", border: "1.5px solid #d0d7e8", borderRadius: 8, padding: 10, boxShadow: "0 4px 16px rgba(0,0,0,0.15)", width: 200 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <button type="button" onClick={() => setBlockStart(b => b - 12)} style={{ border: "none", background: "none", cursor: "pointer", fontSize: 15, padding: "2px 8px" }}>‹</button>
+        <span style={{ fontSize: 12, fontWeight: 500, color: "#555" }}>{blockStart}–{blockStart + 11}</span>
+        <button type="button" onClick={() => setBlockStart(b => b + 12)} disabled={blockStart + 12 > currentYear}
+          style={{ border: "none", background: "none", cursor: blockStart + 12 > currentYear ? "default" : "pointer", fontSize: 15, padding: "2px 8px", opacity: blockStart + 12 > currentYear ? 0.3 : 1 }}>›</button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
+        {years.map(y => (
+          <button type="button" key={y} disabled={y > currentYear}
+            onClick={() => { onSelect(y); onClose(); }}
+            style={{
+              padding: "8px 0", fontSize: 12, borderRadius: 6, cursor: y > currentYear ? "default" : "pointer",
+              border: y === selectedYear ? "1.5px solid #3a7bd5" : "1px solid #d0d7e8",
+              background: y === selectedYear ? "#eaf1fc" : "#fff",
+              color: y > currentYear ? "#ccc" : (y === selectedYear ? "#3a7bd5" : "#333"),
+            }}>
+            {y}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const HYPER_MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+const HyperDobField = ({ dob, ageYears, ageMonths, onChange }) => {
+  const [showYearGrid, setShowYearGrid] = useState(false);
+  const parsed = dob ? new Date(dob + "T00:00:00") : null;
+  const day = parsed ? parsed.getDate() : "";
+  const month = parsed ? parsed.getMonth() : "";
+  const year = parsed ? parsed.getFullYear() : null;
+
+  const setDatePart = (d, m, y) => {
+    if (d && m !== "" && y) {
+      const mm = String(m + 1).padStart(2, "0");
+      const dd = String(d).padStart(2, "0");
+      const newDob = `${y}-${mm}-${dd}`;
+      const now = new Date();
+      const bd = new Date(newDob);
+      let yy = now.getFullYear() - bd.getFullYear();
+      let mo = now.getMonth() - bd.getMonth();
+      if (mo < 0) { yy--; mo += 12; }
+      onChange({ dob: newDob, ageYears: String(yy), ageMonths: String(mo) });
+    }
+  };
+
+  const setAgePart = (field, val) => {
+    const newAgeYears = field === "years" ? val : ageYears;
+    const newAgeMonths = field === "months" ? val : ageMonths;
+    const totalMonths = (parseInt(newAgeYears) || 0) * 12 + (parseInt(newAgeMonths) || 0);
+    const approxDob = new Date();
+    approxDob.setMonth(approxDob.getMonth() - totalMonths);
+    onChange({
+      dob: totalMonths > 0 ? approxDob.toISOString().split("T")[0] : "",
+      ageYears: newAgeYears, ageMonths: newAgeMonths,
+    });
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <select value={day} onChange={e => setDatePart(parseInt(e.target.value), month === "" ? 0 : month, year || new Date().getFullYear())}
+          style={{ padding: "8px 6px", fontSize: 13, borderRadius: 6, border: "1.5px solid #d0d7e8" }}>
+          <option value="">Day</option>
+          {Array.from({ length: 31 }, (_, i) => i + 1).map(d => <option key={d} value={d}>{d}</option>)}
+        </select>
+        <select value={month} onChange={e => setDatePart(day || 1, parseInt(e.target.value), year || new Date().getFullYear())}
+          style={{ padding: "8px 6px", fontSize: 13, borderRadius: 6, border: "1.5px solid #d0d7e8" }}>
+          <option value="">Month</option>
+          {HYPER_MONTHS.map((m, i) => <option key={m} value={i}>{m}</option>)}
+        </select>
+        <div style={{ position: "relative" }}>
+          <button type="button" onClick={() => setShowYearGrid(s => !s)}
+            style={{ padding: "8px 12px", fontSize: 13, borderRadius: 6, border: "1.5px solid #d0d7e8", background: "#fff", cursor: "pointer", minWidth: 70 }}>
+            {year || "Year"}
+          </button>
+          {showYearGrid && (
+            <HyperYearGrid selectedYear={year} onSelect={y => setDatePart(day || 1, month === "" ? 0 : month, y)} onClose={() => setShowYearGrid(false)} />
+          )}
+        </div>
+      </div>
+      <div style={{ fontSize: 12, color: "#888", margin: "10px 0 6px" }}>— or, if you don't know the exact date —</div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <input type="number" min="0" max="120" value={ageYears} onChange={e => setAgePart("years", e.target.value)}
+          placeholder="Years" style={{ width: 70, padding: "8px 10px", fontSize: 13, borderRadius: 6, border: "1.5px solid #d0d7e8" }} />
+        <input type="number" min="0" max="11" value={ageMonths} onChange={e => setAgePart("months", e.target.value)}
+          placeholder="Months" style={{ width: 80, padding: "8px 10px", fontSize: 13, borderRadius: 6, border: "1.5px solid #d0d7e8" }} />
+      </div>
+    </div>
+  );
+};
+
+const HyperDurationPicker = ({ label = "Since when?", sinceDate, onSinceDate, years, onYears, months, onMonths, minDate }) => (
   <HyperField label={label}>
     <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
       <div style={{ flex: "1 1 180px" }}>
         <label style={{ fontSize: 12, color: "#555", display: "block", marginBottom: 4 }}>Date (if known)</label>
-        <HyperInput type="date" value={sinceDate} onChange={onSinceDate} max={new Date().toISOString().split("T")[0]} />
+        <HyperInput type="date" value={sinceDate} onChange={onSinceDate} max={new Date().toISOString().split("T")[0]} min={minDate || undefined} />
       </div>
       <div style={{ display: "flex", gap: 8, flex: "1 1 160px", alignItems: "flex-end" }}>
         <div style={{ flex: 1 }}>
@@ -119,15 +240,9 @@ const HyperMedBlock = ({ med, index, onChange, onRemove, showSince = true, doseL
   </div>
 );
 
-const HyperOutputBox = ({ text }) => {
-  if (!text) return null;
-  return (
-    <div style={{ margin: "18px 0 0", padding: "12px 16px", background: "#f0faf4", border: "1px solid #a8d5b5", borderRadius: 8, borderLeft: "4px solid #27ae60" }}>
-      <span style={{ fontSize: 12, fontWeight: 700, color: "#27ae60", textTransform: "uppercase", letterSpacing: 0.5 }}>Physician summary</span>
-      <p style={{ margin: "4px 0 0", fontSize: 14, color: "#1a4a2e", fontStyle: "italic" }}>{text}</p>
-    </div>
-  );
-};
+// No longer rendered on the patient-facing screen (per explicit request).
+// Underlying answers still save normally regardless of this.
+const HyperOutputBox = () => null;
 
 const HyperSectionCard = ({ title, children }) => (
   <div style={{ marginTop: 20, padding: "16px 20px", border: "1.5px solid #d0d7e8", borderRadius: 10, background: "#fff" }}>
@@ -177,6 +292,8 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
   const [currentPage, setCurrentPage] = useState(0);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
+  const [savedPageId, setSavedPageId] = useState(null);
+  const [resumedFrom, setResumedFrom] = useState(false);
 
   const set = useCallback((key, value) => setData(prev => ({ ...prev, [key]: value })), []);
   const get = useCallback((key, fallback = "") => (data[key] !== undefined ? data[key] : fallback), [data]);
@@ -214,32 +331,66 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
   const pageId = allPages[currentPage];
   const progress = Math.round((currentPage / (allPages.length - 1)) * 100);
 
-  const next = () => setCurrentPage(p => Math.min(p + 1, allPages.length - 1));
+  // Blocks proceeding past a screen whose year-of-event field is before
+  // the patient's own birth year.
+  const dobYear = get("dob") ? new Date(get("dob")).getFullYear() : null;
+  const yearFieldByPage = { B1: "hysterectomy_year", B2: "menopause_year", C1: "thyroid_dx_year", C2a: "thyroid_surgery_year" };
+  const currentYearField = yearFieldByPage[pageId];
+  const dobMissing = pageId === "A1" && !get("dob") && !get("age_years");
+  const yearInvalid = dobMissing || (dobYear && currentYearField && get(currentYearField) && parseInt(get(currentYearField)) < dobYear);
+
+  const next = () => { if (!yearInvalid) setCurrentPage(p => Math.min(p + 1, allPages.length - 1)); };
   const prev = () => setCurrentPage(p => Math.max(p - 1, 0));
 
-  const saveDraft = async () => {
-    setSaving(true);
-    try {
-      await conditionAPI.saveHyperQ(patientId, episodeId, { ...data, draft: true });
-      setSaveMsg("Draft saved ✓");
-      setTimeout(() => setSaveMsg(""), 2000);
-    } catch (e) { setSaveMsg("Save failed"); }
-    setSaving(false);
-  };
+  // Resume exactly where the patient left off, once, after allPages has
+  // been recomputed with the branching-relevant answers restored.
+  useEffect(() => {
+    if (!resumedFrom && savedPageId) {
+      const idx = allPages.indexOf(savedPageId);
+      if (idx > 0) setCurrentPage(idx);
+      setResumedFrom(true);
+    }
+  }, [savedPageId, resumedFrom, allPages]);
 
   const submitFinal = async () => {
     setSaving(true);
     try {
-      await conditionAPI.saveHyperQ(patientId, episodeId, { ...data, draft: false });
+      await conditionAPI.saveHyperQ(patientId, episodeId, { ...data, _draft: false });
       onComplete && onComplete();
     } catch (e) { setSaveMsg("Submission failed. Please try again."); }
     setSaving(false);
   };
 
+  // ── Autosave ─────────────────────────────────────────────────────────────
+  // Replaces the old manual "Save draft" button. NOTE: this used to send
+  // { draft: true/false } — the backend destructures _draft (underscore),
+  // so that flag was never actually being read; markQuestionnaireComplete
+  // would have run on every save regardless. Fixed here to send _draft.
+  const skipFirstAutosave = useRef(true);
+  useEffect(() => {
+    if (skipFirstAutosave.current) { skipFirstAutosave.current = false; return; }
+    if (!patientId || !episodeId) return;
+    const t = setTimeout(async () => {
+      try {
+        await conditionAPI.saveHyperQ(patientId, episodeId, { ...data, _draft: true, _currentPage: pageId });
+        setSaveMsg("✓ Saved");
+      } catch (e) { /* silent — retries on next change */ }
+    }, 1500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, currentPage]);
+
   // Load existing draft on mount
+  // NOTE: backend returns the row flat, not wrapped in { data } — reading
+  // r.data here meant previously-saved answers were never restored.
   useEffect(() => {
     conditionAPI.getHyperQ(patientId, episodeId)
-      .then(r => { if (r.data && Object.keys(r.data).length > 0) setData(prev => ({ ...prev, ...r.data })); })
+      .then(r => {
+        if (r && Object.keys(r).length > 0) {
+          setData(prev => ({ ...prev, ...r }));
+          if (r.current_page) setSavedPageId(r.current_page);
+        }
+      })
       .catch(() => {});
   }, [patientId, episodeId]);
 
@@ -262,7 +413,10 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
         <div>
           <h3>What is your date of birth?</h3>
           <HyperField>
-            <HyperInput type="date" value={get("dob")} onChange={v => set("dob", v)} max={new Date().toISOString().split("T")[0]} />
+            <HyperDobField
+              dob={get("dob")} ageYears={get("age_years")} ageMonths={get("age_months")}
+              onChange={({ dob, ageYears, ageMonths }) => { set("dob", dob); set("age_years", ageYears); set("age_months", ageMonths); }}
+            />
           </HyperField>
           {get("dob") && (() => {
             const d = new Date(get("dob")); const now = new Date();
@@ -302,7 +456,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
               <HyperField label="When was the surgery done?">
                 <div style={{ display: "flex", gap: 10 }}>
                   <HyperSelect value={get("hysterectomy_month")} onChange={v => set("hysterectomy_month", v)} placeholder="Month" options={["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].map((m,i) => ({ value: String(i+1).padStart(2,"0"), label: m }))} />
-                  <HyperInput type="number" value={get("hysterectomy_year")} onChange={v => set("hysterectomy_year", v)} placeholder="Year" min={1950} max={new Date().getFullYear()} style={{ width: 120 }} />
+                  <HyperYearInput value={get("hysterectomy_year")} onChange={v => set("hysterectomy_year", v)} dob={get("dob")} placeholder="Year" style={{ width: 120 }} />
                 </div>
               </HyperField>
               <HyperField label="Reason for hysterectomy">
@@ -322,7 +476,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
           {get("menopause_status") === "post" && (
             <HyperSectionCard title="Menopause details">
               <HyperField label="When did menopause occur? (Year)">
-                <HyperInput type="number" value={get("menopause_year")} onChange={v => set("menopause_year", v)} placeholder="e.g. 2019" min={1960} max={new Date().getFullYear()} />
+                <HyperYearInput value={get("menopause_year")} onChange={v => set("menopause_year", v)} dob={get("dob")} placeholder="e.g. 2019" />
               </HyperField>
             </HyperSectionCard>
           )}
@@ -342,7 +496,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
               <HyperField label="Flow (multi-select)">
                 <HyperCheckGroup values={get("menstrual_flow", [])} onChange={v => set("menstrual_flow", v)} options={[{ value: "heavy", label: "Heavy" }, { value: "scanty", label: "Scanty" }, { value: "absent", label: "Absent" }, { value: "prolonged", label: "Prolonged" }]} />
               </HyperField>
-              <HyperDurationPicker sinceDate={get("menstrual_since_date")} onSinceDate={v => set("menstrual_since_date", v)} years={get("menstrual_years")} onYears={v => set("menstrual_years", v)} months={get("menstrual_months")} onMonths={v => set("menstrual_months", v)} />
+              <HyperDurationPicker minDate={get("dob")} sinceDate={get("menstrual_since_date")} onSinceDate={v => set("menstrual_since_date", v)} years={get("menstrual_years")} onYears={v => set("menstrual_years", v)} months={get("menstrual_months")} onMonths={v => set("menstrual_months", v)} />
             </HyperSectionCard>
           )}
           <HyperOutputBox text={get("menstrual_status") === "yes" ? `${get("menstrual_pattern") || ""} ${(get("menstrual_flow", []).join(" and ")) || ""} flow since last ${durationText(get("menstrual_years"), get("menstrual_months"), get("menstrual_since_date"))}` : ""} />
@@ -393,7 +547,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
                 <HyperSelect value={get("thyroid_dx_type")} onChange={v => set("thyroid_dx_type", v)} placeholder="Select condition" options={[{ value: "hypothyroidism", label: "Hypothyroidism" }, { value: "hyperthyroidism", label: "Hyperthyroidism" }, { value: "graves_disease", label: "Graves' disease" }, { value: "toxic_mng", label: "Toxic MNG" }, { value: "aftn", label: "AFTN (Single toxic nodule)" }, { value: "goitre", label: "Goitre" }, { value: "thyroid_nodule", label: "Thyroid nodule" }, { value: "thyroid_cancer", label: "Thyroid cancer" }, { value: "other", label: "Other" }]} />
               </HyperField>
               <HyperField label="Year of diagnosis">
-                <HyperInput type="number" value={get("thyroid_dx_year")} onChange={v => set("thyroid_dx_year", v)} placeholder="e.g. 2018" min={1950} max={new Date().getFullYear()} />
+                <HyperYearInput value={get("thyroid_dx_year")} onChange={v => set("thyroid_dx_year", v)} dob={get("dob")} placeholder="e.g. 2018" />
               </HyperField>
             </HyperSectionCard>
           )}
@@ -418,7 +572,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
               <HyperField label="Date of surgery">
                 <div style={{ display: "flex", gap: 10 }}>
                   <HyperSelect value={get("thyroid_surgery_month")} onChange={v => set("thyroid_surgery_month", v)} placeholder="Month" options={["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].map((m,i) => ({ value: String(i+1).padStart(2,"0"), label: m }))} />
-                  <HyperInput type="number" value={get("thyroid_surgery_year")} onChange={v => set("thyroid_surgery_year", v)} placeholder="Year" min={1950} max={new Date().getFullYear()} style={{ width: 120 }} />
+                  <HyperYearInput value={get("thyroid_surgery_year")} onChange={v => set("thyroid_surgery_year", v)} dob={get("dob")} placeholder="Year" style={{ width: 120 }} />
                 </div>
               </HyperField>
             </HyperSectionCard>
@@ -503,7 +657,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
               <HyperField label="Compliance">
                 <HyperRadioGroup value={get("med_compliance")} onChange={v => set("med_compliance", v)} options={[{ value: "regular", label: "Regular" }, { value: "irregular", label: "Irregular" }, { value: "skips_sometimes", label: "Skips sometimes" }]} inline />
               </HyperField>
-              <HyperDurationPicker label="Taking since" sinceDate={get("med_since_date")} onSinceDate={v => set("med_since_date", v)} years={get("med_since_years")} onYears={v => set("med_since_years", v)} months={get("med_since_months_val")} onMonths={v => set("med_since_months_val", v)} />
+              <HyperDurationPicker minDate={get("dob")} label="Taking since" sinceDate={get("med_since_date")} onSinceDate={v => set("med_since_date", v)} years={get("med_since_years")} onYears={v => set("med_since_years", v)} months={get("med_since_months_val")} onMonths={v => set("med_since_months_val", v)} />
             </HyperSectionCard>
           )}
           <HyperOutputBox text={(() => {
@@ -670,7 +824,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
               <HyperField label="Cause">
                 <HyperRadioGroup value={get("hyper_cause_type")} onChange={v => set("hyper_cause_type", v)} options={[{ value: "graves_disease", label: "Graves' disease" }, { value: "toxic_mng", label: "Toxic multinodular goitre (Toxic MNG)" }, { value: "aftn", label: "Single toxic nodule (AFTN)" }, { value: "subacute_thyroiditis", label: "Subacute thyroiditis" }, { value: "postpartum_thyroiditis", label: "Post-partum thyroiditis" }, { value: "drug_induced", label: "Drug-induced (e.g. amiodarone, lithium)" }, { value: "other", label: "Other" }]} />
               </HyperField>
-              <HyperDurationPicker label="Diagnosed / known since" sinceDate={get("hyper_cause_since_date")} onSinceDate={v => set("hyper_cause_since_date", v)} years={get("hyper_cause_since_years")} onYears={v => set("hyper_cause_since_years", v)} months={get("hyper_cause_since_months_val")} onMonths={v => set("hyper_cause_since_months_val", v)} />
+              <HyperDurationPicker minDate={get("dob")} label="Diagnosed / known since" sinceDate={get("hyper_cause_since_date")} onSinceDate={v => set("hyper_cause_since_date", v)} years={get("hyper_cause_since_years")} onYears={v => set("hyper_cause_since_years", v)} months={get("hyper_cause_since_months_val")} onMonths={v => set("hyper_cause_since_months_val", v)} />
             </HyperSectionCard>
           )}
           <HyperOutputBox text={get("hyper_cause_known") === "yes" && get("hyper_cause_type") ? `${(get("hyper_cause_type") || "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())} since ${durationText(get("hyper_cause_since_years"), get("hyper_cause_since_months_val"), get("hyper_cause_since_date"))}` : ""} />
@@ -694,7 +848,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
                   <HyperField label="Eye findings (multi-select)">
                     <HyperCheckGroup values={get("ophthal_findings", [])} onChange={v => set("ophthal_findings", v)} options={[{ value: "proptosis", label: "Bulging eyes (proptosis)" }, { value: "puffy_eyelids", label: "Puffy eyelids" }, { value: "double_vision", label: "Double vision" }, { value: "eye_pain", label: "Eye pain" }, { value: "reduced_vision", label: "Reduced vision" }, { value: "redness", label: "Redness of eyes" }]} />
                   </HyperField>
-                  <HyperDurationPicker sinceDate={get("ophthal_since_date")} onSinceDate={v => set("ophthal_since_date", v)} years={get("ophthal_since_years")} onYears={v => set("ophthal_since_years", v)} months={get("ophthal_since_months_val")} onMonths={v => set("ophthal_since_months_val", v)} />
+                  <HyperDurationPicker minDate={get("dob")} sinceDate={get("ophthal_since_date")} onSinceDate={v => set("ophthal_since_date", v)} years={get("ophthal_since_years")} onYears={v => set("ophthal_since_years", v)} months={get("ophthal_since_months_val")} onMonths={v => set("ophthal_since_months_val", v)} />
                   <HyperField label="Assessed by an ophthalmologist?">
                     <HyperRadioGroup value={get("ophthal_assessed")} onChange={v => set("ophthal_assessed", v)} options={[{ value: "yes", label: "Yes" }, { value: "no", label: "No" }]} inline />
                   </HyperField>
@@ -705,7 +859,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
               </HyperField>
               {get("dermopathy_status") === "yes" && (
                 <div style={{ paddingLeft: 16, borderLeft: "3px solid #3a7bd5", marginTop: 8 }}>
-                  <HyperDurationPicker label="Duration" years={get("dermopathy_years")} onYears={v => set("dermopathy_years", v)} months={get("dermopathy_months")} onMonths={v => set("dermopathy_months", v)} />
+                  <HyperDurationPicker minDate={get("dob")} label="Duration" years={get("dermopathy_years")} onYears={v => set("dermopathy_years", v)} months={get("dermopathy_months")} onMonths={v => set("dermopathy_months", v)} />
                 </div>
               )}
               <HyperField label="Graves' acropathy (finger clubbing / bone changes)?">
@@ -754,7 +908,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
               <HyperField label="Size">
                 <HyperRadioGroup value={get("goitre_size_label")} onChange={v => set("goitre_size_label", v)} options={[{ value: "small", label: "Small" }, { value: "medium", label: "Medium" }, { value: "large", label: "Large" }, { value: "unsure", label: "Unsure" }]} inline />
               </HyperField>
-              <HyperDurationPicker sinceDate={get("goitre_since_date")} onSinceDate={v => set("goitre_since_date", v)} years={get("goitre_since_years")} onYears={v => set("goitre_since_years", v)} months={get("goitre_since_months_val")} onMonths={v => set("goitre_since_months_val", v)} />
+              <HyperDurationPicker minDate={get("dob")} sinceDate={get("goitre_since_date")} onSinceDate={v => set("goitre_since_date", v)} years={get("goitre_since_years")} onYears={v => set("goitre_since_years", v)} months={get("goitre_since_months_val")} onMonths={v => set("goitre_since_months_val", v)} />
               <HyperField label="Is the goitre causing any pressure symptoms?">
                 <HyperYesNoUnsure value={get("goitre_pressure_status")} onChange={v => set("goitre_pressure_status", v)} />
               </HyperField>
@@ -791,7 +945,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
 
       case "F1": return renderSymptomPage("F1","Do you experience unusual tiredness or fatigue?","fatigue",
         <>
-          <HyperDurationPicker sinceDate={get("sym_fatigue_since_date")} onSinceDate={v => set("sym_fatigue_since_date", v)} years={get("sym_fatigue_years")} onYears={v => set("sym_fatigue_years", v)} months={get("sym_fatigue_months")} onMonths={v => set("sym_fatigue_months", v)} />
+          <HyperDurationPicker minDate={get("dob")} sinceDate={get("sym_fatigue_since_date")} onSinceDate={v => set("sym_fatigue_since_date", v)} years={get("sym_fatigue_years")} onYears={v => set("sym_fatigue_years", v)} months={get("sym_fatigue_months")} onMonths={v => set("sym_fatigue_months", v)} />
           <HyperField label="Severity"><HyperRadioGroup value={get("sym_fatigue_severity")} onChange={v => set("sym_fatigue_severity", v)} options={[{ value: "mild", label: "Mild" }, { value: "moderate", label: "Moderate" }, { value: "severe", label: "Severe" }]} inline /></HyperField>
         </>,
         get("sym_fatigue_severity") ? `${get("sym_fatigue_severity")} tiredness since last ${durationText(get("sym_fatigue_years"), get("sym_fatigue_months"), get("sym_fatigue_since_date"))}` : ""
@@ -801,7 +955,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
         <>
           <HyperField label="Direction"><HyperRadioGroup value={get("sym_weight_direction")} onChange={v => set("sym_weight_direction", v)} options={[{ value: "gained", label: "Weight gained" }, { value: "lost", label: "Weight lost" }]} inline /></HyperField>
           <HyperField label="How much (kg)"><HyperInput type="number" value={get("sym_weight_kg")} onChange={v => set("sym_weight_kg", v)} min={0} max={200} placeholder="e.g. 8" /></HyperField>
-          <HyperDurationPicker sinceDate={get("sym_weight_since_date")} onSinceDate={v => set("sym_weight_since_date", v)} years={get("sym_weight_years")} onYears={v => set("sym_weight_years", v)} months={get("sym_weight_months")} onMonths={v => set("sym_weight_months", v)} />
+          <HyperDurationPicker minDate={get("dob")} sinceDate={get("sym_weight_since_date")} onSinceDate={v => set("sym_weight_since_date", v)} years={get("sym_weight_years")} onYears={v => set("sym_weight_years", v)} months={get("sym_weight_months")} onMonths={v => set("sym_weight_months", v)} />
         </>,
         get("sym_weight_direction") && get("sym_weight_kg") ? `Weight ${get("sym_weight_direction") === "lost" ? "loss" : "gain"} of ${get("sym_weight_kg")} kg over last ${durationText(get("sym_weight_years"), get("sym_weight_months"), get("sym_weight_since_date"))}` : ""
       );
@@ -816,7 +970,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
 
       case "F4": return renderSymptomPage("F4","Do you feel unusually hot or have difficulty tolerating heat?","heat",
         <>
-          <HyperDurationPicker sinceDate={get("sym_heat_since_date")} onSinceDate={v => set("sym_heat_since_date", v)} years={get("sym_heat_years")} onYears={v => set("sym_heat_years", v)} months={get("sym_heat_months")} onMonths={v => set("sym_heat_months", v)} />
+          <HyperDurationPicker minDate={get("dob")} sinceDate={get("sym_heat_since_date")} onSinceDate={v => set("sym_heat_since_date", v)} years={get("sym_heat_years")} onYears={v => set("sym_heat_years", v)} months={get("sym_heat_months")} onMonths={v => set("sym_heat_months", v)} />
           <HyperField label="Does it affect daily activities?"><HyperRadioGroup value={get("sym_heat_impact")} onChange={v => set("sym_heat_impact", v)} options={[{ value: "yes", label: "Yes" }, { value: "no", label: "No" }]} inline /></HyperField>
         </>,
         `Heat intolerance since last ${durationText(get("sym_heat_years"), get("sym_heat_months"), get("sym_heat_since_date"))}`
@@ -825,7 +979,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
       case "F5": return renderSymptomPage("F5","Do you sweat more than usual or have episodes of excessive sweating?","sweating",
         <>
           <HyperField label="Pattern"><HyperRadioGroup value={get("sym_sweating_pattern")} onChange={v => set("sym_sweating_pattern", v)} options={[{ value: "generalised", label: "Generalised" }, { value: "night", label: "Mostly at night (night sweats)" }, { value: "both", label: "Both" }]} /></HyperField>
-          <HyperDurationPicker sinceDate={get("sym_sweating_since_date")} onSinceDate={v => set("sym_sweating_since_date", v)} years={get("sym_sweating_years")} onYears={v => set("sym_sweating_years", v)} months={get("sym_sweating_months")} onMonths={v => set("sym_sweating_months", v)} />
+          <HyperDurationPicker minDate={get("dob")} sinceDate={get("sym_sweating_since_date")} onSinceDate={v => set("sym_sweating_since_date", v)} years={get("sym_sweating_years")} onYears={v => set("sym_sweating_years", v)} months={get("sym_sweating_months")} onMonths={v => set("sym_sweating_months", v)} />
         </>,
         `Excessive sweating — ${get("sym_sweating_pattern") || ""} — since last ${durationText(get("sym_sweating_years"), get("sym_sweating_months"), get("sym_sweating_since_date"))}`
       );
@@ -833,7 +987,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
       case "F6": return renderSymptomPage("F6","Have you noticed any changes in your bowel habits?","bowel",
         <>
           <HyperField label="Type"><HyperRadioGroup value={get("sym_bowel_type")} onChange={v => set("sym_bowel_type", v)} options={[{ value: "constipation", label: "Constipation" }, { value: "diarrhoea", label: "Diarrhoea" }, { value: "increased_frequency", label: "Increased frequency (loose stools)" }, { value: "alternating", label: "Alternating" }]} /></HyperField>
-          <HyperDurationPicker sinceDate={get("sym_bowel_since_date")} onSinceDate={v => set("sym_bowel_since_date", v)} years={get("sym_bowel_years")} onYears={v => set("sym_bowel_years", v)} months={get("sym_bowel_months")} onMonths={v => set("sym_bowel_months", v)} />
+          <HyperDurationPicker minDate={get("dob")} sinceDate={get("sym_bowel_since_date")} onSinceDate={v => set("sym_bowel_since_date", v)} years={get("sym_bowel_years")} onYears={v => set("sym_bowel_years", v)} months={get("sym_bowel_months")} onMonths={v => set("sym_bowel_months", v)} />
         </>,
         `${get("sym_bowel_type") ? get("sym_bowel_type").replace(/_/g, " ") : ""} since last ${durationText(get("sym_bowel_years"), get("sym_bowel_months"), get("sym_bowel_since_date"))}`
       );
@@ -841,28 +995,28 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
       case "F7": return renderSymptomPage("F7","Have you noticed any changes in your skin?","skin",
         <>
           <HyperField label="Type (multi-select)"><HyperCheckGroup values={get("sym_skin_types", [])} onChange={v => set("sym_skin_types", v)} options={[{ value: "warm_moist", label: "Warm and moist skin" }, { value: "smoothness", label: "Smoothness" }, { value: "increased_sweating", label: "Increased sweating" }, { value: "flushing", label: "Flushing" }, { value: "itching", label: "Itching" }, { value: "pretibial_thickening", label: "Pretibial thickening or redness" }]} /></HyperField>
-          <HyperDurationPicker sinceDate={get("sym_skin_since_date")} onSinceDate={v => set("sym_skin_since_date", v)} years={get("sym_skin_years")} onYears={v => set("sym_skin_years", v)} months={get("sym_skin_months")} onMonths={v => set("sym_skin_months", v)} />
+          <HyperDurationPicker minDate={get("dob")} sinceDate={get("sym_skin_since_date")} onSinceDate={v => set("sym_skin_since_date", v)} years={get("sym_skin_years")} onYears={v => set("sym_skin_years", v)} months={get("sym_skin_months")} onMonths={v => set("sym_skin_months", v)} />
         </>,
         `${(get("sym_skin_types", []) || []).join(", ").replace(/_/g, " ")} since last ${durationText(get("sym_skin_years"), get("sym_skin_months"), get("sym_skin_since_date"))}`
       );
 
       case "F8a": return renderSymptomPage("F8a","Do you have puffiness or swelling around your eyes? (periorbital oedema / Graves' eye changes)","periorbital",
         <>
-          <HyperDurationPicker sinceDate={get("sym_periorbital_since_date")} onSinceDate={v => set("sym_periorbital_since_date", v)} years={get("sym_periorbital_years")} onYears={v => set("sym_periorbital_years", v)} months={get("sym_periorbital_months")} onMonths={v => set("sym_periorbital_months", v)} />
+          <HyperDurationPicker minDate={get("dob")} sinceDate={get("sym_periorbital_since_date")} onSinceDate={v => set("sym_periorbital_since_date", v)} years={get("sym_periorbital_years")} onYears={v => set("sym_periorbital_years", v)} months={get("sym_periorbital_months")} onMonths={v => set("sym_periorbital_months", v)} />
           <HyperField label="Additional features (multi-select)"><HyperCheckGroup values={get("sym_periorbital_features", [])} onChange={v => set("sym_periorbital_features", v)} options={[{ value: "bulging", label: "Bulging" }, { value: "redness", label: "Redness" }, { value: "dryness", label: "Dryness" }, { value: "double_vision", label: "Double vision" }, { value: "reduced_vision", label: "Reduced vision" }]} /></HyperField>
         </>,
         `Peri-orbital puffiness${(get("sym_periorbital_features", []) || []).length > 0 ? " with " + (get("sym_periorbital_features", []) || []).join(", ") : ""} since last ${durationText(get("sym_periorbital_years"), get("sym_periorbital_months"), get("sym_periorbital_since_date"))}`
       );
 
       case "F8b": return renderSymptomPage("F8b","Do you have puffiness or swelling of the face?","facial",
-        <HyperDurationPicker sinceDate={get("sym_facial_since_date")} onSinceDate={v => set("sym_facial_since_date", v)} years={get("sym_facial_years")} onYears={v => set("sym_facial_years", v)} months={get("sym_facial_months")} onMonths={v => set("sym_facial_months", v)} />,
+        <HyperDurationPicker minDate={get("dob")} sinceDate={get("sym_facial_since_date")} onSinceDate={v => set("sym_facial_since_date", v)} years={get("sym_facial_years")} onYears={v => set("sym_facial_years", v)} months={get("sym_facial_months")} onMonths={v => set("sym_facial_months", v)} />,
         `Facial puffiness since last ${durationText(get("sym_facial_years"), get("sym_facial_months"), get("sym_facial_since_date"))}`
       );
 
       case "F9": return renderSymptomPage("F9","Do you have swelling of the legs or feet? (pedal oedema)","pedal",
         <>
           <HyperField label="Type"><HyperRadioGroup value={get("sym_pedal_type")} onChange={v => set("sym_pedal_type", v)} options={[{ value: "pitting", label: "Pitting" }, { value: "non_pitting", label: "Non-pitting" }, { value: "unsure", label: "Unsure" }]} inline /></HyperField>
-          <HyperDurationPicker sinceDate={get("sym_pedal_since_date")} onSinceDate={v => set("sym_pedal_since_date", v)} years={get("sym_pedal_years")} onYears={v => set("sym_pedal_years", v)} months={get("sym_pedal_months")} onMonths={v => set("sym_pedal_months", v)} />
+          <HyperDurationPicker minDate={get("dob")} sinceDate={get("sym_pedal_since_date")} onSinceDate={v => set("sym_pedal_since_date", v)} years={get("sym_pedal_years")} onYears={v => set("sym_pedal_years", v)} months={get("sym_pedal_months")} onMonths={v => set("sym_pedal_months", v)} />
         </>,
         `Pedal oedema — ${get("sym_pedal_type") || ""} — since last ${durationText(get("sym_pedal_years"), get("sym_pedal_months"), get("sym_pedal_since_date"))}`
       );
@@ -878,7 +1032,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
       case "F12": return renderSymptomPage("F12","Have you noticed any hoarseness or change in your voice?","hoarseness",
         <>
           <HyperField label="Pattern"><HyperRadioGroup value={get("sym_hoarseness_pattern")} onChange={v => set("sym_hoarseness_pattern", v)} options={[{ value: "constant", label: "Constant" }, { value: "intermittent", label: "Intermittent" }]} inline /></HyperField>
-          <HyperDurationPicker sinceDate={get("sym_hoarseness_since_date")} onSinceDate={v => set("sym_hoarseness_since_date", v)} years={get("sym_hoarseness_years")} onYears={v => set("sym_hoarseness_years", v)} months={get("sym_hoarseness_months")} onMonths={v => set("sym_hoarseness_months", v)} />
+          <HyperDurationPicker minDate={get("dob")} sinceDate={get("sym_hoarseness_since_date")} onSinceDate={v => set("sym_hoarseness_since_date", v)} years={get("sym_hoarseness_years")} onYears={v => set("sym_hoarseness_years", v)} months={get("sym_hoarseness_months")} onMonths={v => set("sym_hoarseness_months", v)} />
         </>,
         `${get("sym_hoarseness_pattern") || ""} hoarseness of voice since last ${durationText(get("sym_hoarseness_years"), get("sym_hoarseness_months"), get("sym_hoarseness_since_date"))}`
       );
@@ -886,13 +1040,13 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
       case "F13": return renderSymptomPage("F13","Do you experience muscle weakness or difficulty climbing stairs / rising from a chair?","myopathy",
         <>
           <HyperField label="Location"><HyperRadioGroup value={get("sym_myopathy_location")} onChange={v => set("sym_myopathy_location", v)} options={[{ value: "proximal", label: "Proximal (upper arms / thighs)" }, { value: "generalised", label: "Generalised" }]} /></HyperField>
-          <HyperDurationPicker sinceDate={get("sym_myopathy_since_date")} onSinceDate={v => set("sym_myopathy_since_date", v)} years={get("sym_myopathy_years")} onYears={v => set("sym_myopathy_years", v)} months={get("sym_myopathy_months")} onMonths={v => set("sym_myopathy_months", v)} />
+          <HyperDurationPicker minDate={get("dob")} sinceDate={get("sym_myopathy_since_date")} onSinceDate={v => set("sym_myopathy_since_date", v)} years={get("sym_myopathy_years")} onYears={v => set("sym_myopathy_years", v)} months={get("sym_myopathy_months")} onMonths={v => set("sym_myopathy_months", v)} />
         </>,
         `${get("sym_myopathy_location") === "proximal" ? "Proximal muscle weakness — both thighs" : "Generalised muscle weakness"} since last ${durationText(get("sym_myopathy_years"), get("sym_myopathy_months"), get("sym_myopathy_since_date"))}`
       );
 
       case "F14": return renderSymptomPage("F14","Do you experience muscle cramps or aches?","cramp",
-        <HyperDurationPicker sinceDate={get("sym_cramp_since_date")} onSinceDate={v => set("sym_cramp_since_date", v)} years={get("sym_cramp_years")} onYears={v => set("sym_cramp_years", v)} months={get("sym_cramp_months")} onMonths={v => set("sym_cramp_months", v)} />,
+        <HyperDurationPicker minDate={get("dob")} sinceDate={get("sym_cramp_since_date")} onSinceDate={v => set("sym_cramp_since_date", v)} years={get("sym_cramp_years")} onYears={v => set("sym_cramp_years", v)} months={get("sym_cramp_months")} onMonths={v => set("sym_cramp_months", v)} />,
         `Muscle cramps since last ${durationText(get("sym_cramp_years"), get("sym_cramp_months"), get("sym_cramp_since_date"))}`
       );
 
@@ -900,7 +1054,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
         <>
           <HyperField label="Type"><HyperRadioGroup value={get("sym_tremor_type_val")} onChange={v => set("sym_tremor_type_val", v)} options={[{ value: "fine_hands", label: "Fine tremor of hands" }, { value: "coarse_hands", label: "Coarse tremor of hands" }, { value: "generalised", label: "Generalised shakiness" }]} /></HyperField>
           <HyperField label="Triggers (multi-select)"><HyperCheckGroup values={get("sym_tremor_triggers", [])} onChange={v => set("sym_tremor_triggers", v)} options={[{ value: "at_rest", label: "At rest" }, { value: "with_activity", label: "With activity" }, { value: "holding_objects", label: "When holding objects" }, { value: "constant", label: "Constant" }]} /></HyperField>
-          <HyperDurationPicker sinceDate={get("sym_tremor_since_date")} onSinceDate={v => set("sym_tremor_since_date", v)} years={get("sym_tremor_years")} onYears={v => set("sym_tremor_years", v)} months={get("sym_tremor_months")} onMonths={v => set("sym_tremor_months", v)} />
+          <HyperDurationPicker minDate={get("dob")} sinceDate={get("sym_tremor_since_date")} onSinceDate={v => set("sym_tremor_since_date", v)} years={get("sym_tremor_years")} onYears={v => set("sym_tremor_years", v)} months={get("sym_tremor_months")} onMonths={v => set("sym_tremor_months", v)} />
         </>,
         `${get("sym_tremor_type_val") ? get("sym_tremor_type_val").replace(/_/g, " ") : ""} — ${(get("sym_tremor_triggers", []) || []).join(", ").replace(/_/g, " ")} — since last ${durationText(get("sym_tremor_years"), get("sym_tremor_months"), get("sym_tremor_since_date"))}`
       );
@@ -909,20 +1063,20 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
         <>
           <HyperField label="Have you seen a doctor for this?"><HyperRadioGroup value={get("sym_anxiety_seen_doctor")} onChange={v => set("sym_anxiety_seen_doctor", v)} options={[{ value: "yes", label: "Yes" }, { value: "no", label: "No" }]} inline /></HyperField>
           <HyperField label="Formally diagnosed with anxiety by a doctor?"><HyperRadioGroup value={get("sym_anxiety_diagnosed")} onChange={v => set("sym_anxiety_diagnosed", v)} options={[{ value: "yes", label: "Yes" }, { value: "no", label: "No" }]} inline /></HyperField>
-          <HyperDurationPicker sinceDate={get("sym_anxiety_since_date")} onSinceDate={v => set("sym_anxiety_since_date", v)} years={get("sym_anxiety_years")} onYears={v => set("sym_anxiety_years", v)} months={get("sym_anxiety_months")} onMonths={v => set("sym_anxiety_months", v)} />
+          <HyperDurationPicker minDate={get("dob")} sinceDate={get("sym_anxiety_since_date")} onSinceDate={v => set("sym_anxiety_since_date", v)} years={get("sym_anxiety_years")} onYears={v => set("sym_anxiety_years", v)} months={get("sym_anxiety_months")} onMonths={v => set("sym_anxiety_months", v)} />
         </>,
         `Anxiety / nervousness since last ${durationText(get("sym_anxiety_years"), get("sym_anxiety_months"), get("sym_anxiety_since_date"))}.${get("sym_anxiety_diagnosed") === "yes" ? " Formally diagnosed." : ""}`
       );
 
       case "F17": return renderSymptomPage("F17","Have you been feeling irritable, restless, or emotionally labile?","irritability",
-        <HyperDurationPicker sinceDate={get("sym_irritability_since_date")} onSinceDate={v => set("sym_irritability_since_date", v)} years={get("sym_irritability_years")} onYears={v => set("sym_irritability_years", v)} months={get("sym_irritability_months")} onMonths={v => set("sym_irritability_months", v)} />,
+        <HyperDurationPicker minDate={get("dob")} sinceDate={get("sym_irritability_since_date")} onSinceDate={v => set("sym_irritability_since_date", v)} years={get("sym_irritability_years")} onYears={v => set("sym_irritability_years", v)} months={get("sym_irritability_months")} onMonths={v => set("sym_irritability_months", v)} />,
         `Irritability and emotional lability since last ${durationText(get("sym_irritability_years"), get("sym_irritability_months"), get("sym_irritability_since_date"))}`
       );
 
       case "F18": return renderSymptomPage("F18","Do you have difficulty falling asleep or staying asleep? (insomnia)","insomnia",
         <>
           <HyperField label="Type (multi-select)"><HyperCheckGroup values={get("sym_insomnia_types", [])} onChange={v => set("sym_insomnia_types", v)} options={[{ value: "difficulty_falling", label: "Difficulty falling asleep" }, { value: "waking_frequently", label: "Waking up frequently" }, { value: "early_morning_waking", label: "Early morning waking" }]} /></HyperField>
-          <HyperDurationPicker sinceDate={get("sym_insomnia_since_date")} onSinceDate={v => set("sym_insomnia_since_date", v)} years={get("sym_insomnia_years")} onYears={v => set("sym_insomnia_years", v)} months={get("sym_insomnia_months")} onMonths={v => set("sym_insomnia_months", v)} />
+          <HyperDurationPicker minDate={get("dob")} sinceDate={get("sym_insomnia_since_date")} onSinceDate={v => set("sym_insomnia_since_date", v)} years={get("sym_insomnia_years")} onYears={v => set("sym_insomnia_years", v)} months={get("sym_insomnia_months")} onMonths={v => set("sym_insomnia_months", v)} />
         </>,
         `${(get("sym_insomnia_types", []) || []).join(", ").replace(/_/g, " ")} since last ${durationText(get("sym_insomnia_years"), get("sym_insomnia_months"), get("sym_insomnia_since_date"))}`
       );
@@ -931,7 +1085,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
         <>
           <HyperField label="Pattern"><HyperRadioGroup value={get("sym_palp_pattern")} onChange={v => set("sym_palp_pattern", v)} options={[{ value: "constant", label: "Constant" }, { value: "intermittent", label: "Intermittent" }, { value: "exertion", label: "On exertion only" }]} inline /></HyperField>
           <HyperField label="Approximate heart rate if known (bpm — optional)"><HyperInput type="number" value={get("sym_palp_rate_bpm")} onChange={v => set("sym_palp_rate_bpm", v)} min={40} max={300} placeholder="e.g. 110" /></HyperField>
-          <HyperDurationPicker sinceDate={get("sym_palp_since_date")} onSinceDate={v => set("sym_palp_since_date", v)} years={get("sym_palp_years")} onYears={v => set("sym_palp_years", v)} months={get("sym_palp_months")} onMonths={v => set("sym_palp_months", v)} />
+          <HyperDurationPicker minDate={get("dob")} sinceDate={get("sym_palp_since_date")} onSinceDate={v => set("sym_palp_since_date", v)} years={get("sym_palp_years")} onYears={v => set("sym_palp_years", v)} months={get("sym_palp_months")} onMonths={v => set("sym_palp_months", v)} />
           <HyperField label="Associated symptoms (multi-select)"><HyperCheckGroup values={get("sym_palp_assoc", [])} onChange={v => set("sym_palp_assoc", v)} options={[{ value: "chest_pain", label: "Chest pain" }, { value: "breathlessness", label: "Shortness of breath" }, { value: "light_headedness", label: "Light-headedness" }, { value: "blackout", label: "Blackout" }]} /></HyperField>
         </>,
         `Palpitations — ${get("sym_palp_pattern") || ""} — since last ${durationText(get("sym_palp_years"), get("sym_palp_months"), get("sym_palp_since_date"))}.${(get("sym_palp_assoc", []) || []).length > 0 ? " Associated: " + (get("sym_palp_assoc", []) || []).join(", ").replace(/_/g, " ") + "." : ""}`
@@ -940,7 +1094,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
       case "F20": return renderSymptomPage("F20","Have you been told that you have an irregular heartbeat or atrial fibrillation (AF)?","af",
         <>
           <HyperField label="Confirmed by ECG / Holter?"><HyperRadioGroup value={get("sym_af_confirmed")} onChange={v => set("sym_af_confirmed", v)} options={[{ value: "yes", label: "Yes" }, { value: "no", label: "No" }, { value: "not_known", label: "Not known" }]} inline /></HyperField>
-          <HyperDurationPicker sinceDate={get("sym_af_since_date")} onSinceDate={v => set("sym_af_since_date", v)} years={get("sym_af_years")} onYears={v => set("sym_af_years", v)} months={get("sym_af_months")} onMonths={v => set("sym_af_months", v)} />
+          <HyperDurationPicker minDate={get("dob")} sinceDate={get("sym_af_since_date")} onSinceDate={v => set("sym_af_since_date", v)} years={get("sym_af_years")} onYears={v => set("sym_af_years", v)} months={get("sym_af_months")} onMonths={v => set("sym_af_months", v)} />
           <HyperField label="On medication for this?"><HyperYesNoUnsure value={get("sym_af_on_med")} onChange={v => set("sym_af_on_med", v)} /></HyperField>
           {get("sym_af_on_med") === "yes" && (
             <div style={{ paddingLeft: 16, borderLeft: "3px solid #3a7bd5", marginTop: 8 }}>
@@ -957,7 +1111,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
       case "F21": return renderSymptomPage("F21","Do you feel dizzy or light-headed when you stand up quickly? (postural giddiness)","giddiness",
         <>
           <HyperField label="Frequency"><HyperRadioGroup value={get("sym_giddiness_freq")} onChange={v => set("sym_giddiness_freq", v)} options={[{ value: "rarely", label: "Rarely" }, { value: "sometimes", label: "Sometimes" }, { value: "often", label: "Often" }, { value: "every_time", label: "Every time I stand" }]} inline /></HyperField>
-          <HyperDurationPicker sinceDate={get("sym_giddiness_since_date")} onSinceDate={v => set("sym_giddiness_since_date", v)} years={get("sym_giddiness_years")} onYears={v => set("sym_giddiness_years", v)} months={get("sym_giddiness_months")} onMonths={v => set("sym_giddiness_months", v)} />
+          <HyperDurationPicker minDate={get("dob")} sinceDate={get("sym_giddiness_since_date")} onSinceDate={v => set("sym_giddiness_since_date", v)} years={get("sym_giddiness_years")} onYears={v => set("sym_giddiness_years", v)} months={get("sym_giddiness_months")} onMonths={v => set("sym_giddiness_months", v)} />
         </>,
         `Postural giddiness since last ${durationText(get("sym_giddiness_years"), get("sym_giddiness_months"), get("sym_giddiness_since_date"))}`
       );
@@ -975,14 +1129,14 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
       case "F23": return renderSymptomPage("F23","Have you experienced any shortness of breath — at rest or on exertion?","dyspnoea",
         <>
           <HyperField label="Onset"><HyperRadioGroup value={get("sym_dyspnoea_onset")} onChange={v => set("sym_dyspnoea_onset", v)} options={[{ value: "rest", label: "At rest" }, { value: "exertion", label: "On exertion" }, { value: "orthopnoea", label: "Lying flat (Orthopnoea)" }]} /></HyperField>
-          <HyperDurationPicker sinceDate={get("sym_dyspnoea_since_date")} onSinceDate={v => set("sym_dyspnoea_since_date", v)} years={get("sym_dyspnoea_years")} onYears={v => set("sym_dyspnoea_years", v)} months={get("sym_dyspnoea_months")} onMonths={v => set("sym_dyspnoea_months", v)} />
+          <HyperDurationPicker minDate={get("dob")} sinceDate={get("sym_dyspnoea_since_date")} onSinceDate={v => set("sym_dyspnoea_since_date", v)} years={get("sym_dyspnoea_years")} onYears={v => set("sym_dyspnoea_years", v)} months={get("sym_dyspnoea_months")} onMonths={v => set("sym_dyspnoea_months", v)} />
         </>,
         `Shortness of breath ${get("sym_dyspnoea_onset") ? (get("sym_dyspnoea_onset") === "rest" ? "at rest" : get("sym_dyspnoea_onset") === "exertion" ? "on exertion" : "on lying flat (Orthopnoea)") : ""} since last ${durationText(get("sym_dyspnoea_years"), get("sym_dyspnoea_months"), get("sym_dyspnoea_since_date"))}`
       );
 
       case "F24": return renderSymptomPage("F24","Do you experience difficulty concentrating?","concentration",
         <>
-          <HyperDurationPicker sinceDate={get("sym_concentration_since_date")} onSinceDate={v => set("sym_concentration_since_date", v)} years={get("sym_concentration_years")} onYears={v => set("sym_concentration_years", v)} months={get("sym_concentration_months")} onMonths={v => set("sym_concentration_months", v)} />
+          <HyperDurationPicker minDate={get("dob")} sinceDate={get("sym_concentration_since_date")} onSinceDate={v => set("sym_concentration_since_date", v)} years={get("sym_concentration_years")} onYears={v => set("sym_concentration_years", v)} months={get("sym_concentration_months")} onMonths={v => set("sym_concentration_months", v)} />
           <HyperField label="Does it affect your work or daily life?"><HyperRadioGroup value={get("sym_concentration_impact")} onChange={v => set("sym_concentration_impact", v)} options={[{ value: "yes", label: "Yes" }, { value: "no", label: "No" }]} inline /></HyperField>
         </>,
         `Difficulty concentrating since last ${durationText(get("sym_concentration_years"), get("sym_concentration_months"), get("sym_concentration_since_date"))}.${get("sym_concentration_impact") === "yes" ? " Affects daily life." : ""}`
@@ -990,7 +1144,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
 
       case "F25": return renderSymptomPage("F25","Do you have problems with memory?","memory",
         <>
-          <HyperDurationPicker sinceDate={get("sym_memory_since_date")} onSinceDate={v => set("sym_memory_since_date", v)} years={get("sym_memory_years")} onYears={v => set("sym_memory_years", v)} months={get("sym_memory_months")} onMonths={v => set("sym_memory_months", v)} />
+          <HyperDurationPicker minDate={get("dob")} sinceDate={get("sym_memory_since_date")} onSinceDate={v => set("sym_memory_since_date", v)} years={get("sym_memory_years")} onYears={v => set("sym_memory_years", v)} months={get("sym_memory_months")} onMonths={v => set("sym_memory_months", v)} />
           <HyperField label="Does it affect your work or daily life?"><HyperRadioGroup value={get("sym_memory_impact")} onChange={v => set("sym_memory_impact", v)} options={[{ value: "yes", label: "Yes" }, { value: "no", label: "No" }]} inline /></HyperField>
         </>,
         `Memory problems since last ${durationText(get("sym_memory_years"), get("sym_memory_months"), get("sym_memory_since_date"))}.${get("sym_memory_impact") === "yes" ? " Affects daily life." : get("sym_memory_impact") === "no" ? " Does not affect daily life." : ""}`
@@ -1049,7 +1203,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
               <HyperField label="Frequency">
                 <HyperRadioGroup value={get("beta_blocker_freq")} onChange={v => set("beta_blocker_freq", v)} options={[{ value: "once", label: "Once daily" }, { value: "twice", label: "Twice daily" }, { value: "three_times", label: "Three times daily" }, { value: "as_needed", label: "As needed" }]} inline />
               </HyperField>
-              <HyperDurationPicker label="Since when?" sinceDate={get("beta_blocker_since_date")} onSinceDate={v => set("beta_blocker_since_date", v)} years={get("beta_blocker_since_years")} onYears={v => set("beta_blocker_since_years", v)} months={get("beta_blocker_since_months_val")} onMonths={v => set("beta_blocker_since_months_val", v)} />
+              <HyperDurationPicker minDate={get("dob")} label="Since when?" sinceDate={get("beta_blocker_since_date")} onSinceDate={v => set("beta_blocker_since_date", v)} years={get("beta_blocker_since_years")} onYears={v => set("beta_blocker_since_years", v)} months={get("beta_blocker_since_months_val")} onMonths={v => set("beta_blocker_since_months_val", v)} />
             </HyperSectionCard>
           )}
           <HyperOutputBox text={get("beta_blocker_status") === "yes" && get("beta_blocker_name") ? `Tab. ${get("beta_blocker_name")} ${get("beta_blocker_dose") || "?"} mg — ${get("beta_blocker_freq") ? get("beta_blocker_freq").replace(/_/g, " ").replace("once", "once daily").replace("twice", "twice daily").replace("three times", "three times daily") : ""}.${durationText(get("beta_blocker_since_years"), get("beta_blocker_since_months_val"), get("beta_blocker_since_date")) ? " Since " + durationText(get("beta_blocker_since_years"), get("beta_blocker_since_months_val"), get("beta_blocker_since_date")) + "." : ""}` : ""} />
@@ -1293,7 +1447,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
                       </label>
                       {entry && (
                         <div style={{ paddingLeft: 24, marginTop: 6, marginBottom: 6 }}>
-                          <HyperDurationPicker label={`Since when? (${opt.label})`} sinceDate={entry.since_date} onSinceDate={v => updateEntry(opt.value, "since_date", v)} years={entry.years} onYears={v => updateEntry(opt.value, "years", v)} months={entry.months} onMonths={v => updateEntry(opt.value, "months", v)} />
+                          <HyperDurationPicker minDate={get("dob")} label={`Since when? (${opt.label})`} sinceDate={entry.since_date} onSinceDate={v => updateEntry(opt.value, "since_date", v)} years={entry.years} onYears={v => updateEntry(opt.value, "years", v)} months={entry.months} onMonths={v => updateEntry(opt.value, "months", v)} />
                         </div>
                       )}
                     </div>
@@ -1331,7 +1485,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
       <div style={{ position: "sticky", top: 0, background: "#fff", zIndex: 10, padding: "12px 0 8px", borderBottom: "1px solid #e8edf5" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
           <span style={{ fontWeight: 700, fontSize: 14, color: "#3a7bd5" }}>Hyperthyroidism Questionnaire</span>
-          <span style={{ fontSize: 13, color: "#888" }}>Page {currentPage + 1} of {allPages.length} ({progress}%)</span>
+          <span style={{ fontSize: 13, color: "#888" }}>{progress}% complete</span>
         </div>
         <div style={{ height: 6, background: "#e8edf5", borderRadius: 3 }}>
           <div style={{ height: 6, background: "linear-gradient(90deg, #3a7bd5, #27ae60)", borderRadius: 3, width: `${progress}%`, transition: "width 0.3s" }} />
@@ -1361,10 +1515,8 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
           <button onClick={currentPage === 0 ? onBack : prev} disabled={currentPage === 0 && !onBack} style={{ padding: "10px 24px", background: (currentPage === 0 && !onBack) ? "#f0f4fb" : "#fff", border: "1.5px solid #d0d7e8", borderRadius: 8, cursor: (currentPage === 0 && !onBack) ? "default" : "pointer", color: (currentPage === 0 && !onBack) ? "#bbb" : "#444", fontSize: 14 }}>
             ← Back
           </button>
-          <button onClick={saveDraft} disabled={saving} style={{ padding: "10px 20px", background: "#f0f4fb", border: "1.5px solid #3a7bd5", borderRadius: 8, cursor: "pointer", color: "#3a7bd5", fontSize: 13 }}>
-            {saving ? "Saving..." : "Save draft"} {saveMsg ? "✓" : ""}
-          </button>
-          <button onClick={next} disabled={currentPage >= allPages.length - 1} style={{ padding: "10px 24px", background: "#3a7bd5", border: "none", borderRadius: 8, cursor: "pointer", color: "#fff", fontSize: 14, fontWeight: 600 }}>
+          {saveMsg === "✓ Saved" && <span style={{ fontSize: 12, color: "#888" }}>✓ Saved</span>}
+          <button onClick={next} disabled={currentPage >= allPages.length - 1 || yearInvalid} style={{ padding: "10px 24px", background: "#3a7bd5", border: "none", borderRadius: 8, cursor: "pointer", color: "#fff", fontSize: 14, fontWeight: 600 }}>
             Next →
           </button>
         </div>

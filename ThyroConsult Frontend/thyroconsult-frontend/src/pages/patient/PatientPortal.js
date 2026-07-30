@@ -6,7 +6,15 @@ import { PatientSidebar } from '../../components/common/Sidebar';
 import { Badge, StatusBadge, EmptyState, Spinner, SectionHeader, SecureBadge } from '../../components/common/index';
 import { useAuth } from '../../context/AuthContext';
 import ConditionSelection from '../../components/ConditionSelection';
-import { HypoQuestionnaire, HyperQuestionnaire, TcQuestionnaire } from '../../components/ConditionQuestionnaires';
+import { HypoQuestionnaire, HyperQuestionnaire } from '../../components/ConditionQuestionnaires';
+// TcQuestionnaire must come from its own file — ConditionQuestionnaires.js
+// still exports an older, much smaller TcQuestionnaire stub (~270 lines)
+// that RegisterPage.js stopped using a while back; this file was still
+// pulling that stub in, so adding a Thyroid Cancer condition from the
+// patient dashboard (as opposed to during initial registration) got a
+// materially incomplete questionnaire.
+import TcQuestionnaire from '../../components/TcQuestionnaire';
+import NoduleQuestionnaire from '../../components/NoduleQuestionnaire';
 import PatientTimeline from '../../components/PatientTimeline';
 import OpinionViewer from '../../components/OpinionViewer';
 
@@ -33,38 +41,33 @@ const AddConditionFlow = ({ patient, onClose, onDone }) => {
   const ConditionQComponent =
     condition === 'hypothyroidism'  ? HypoQuestionnaire  :
     condition === 'hyperthyroidism' ? HyperQuestionnaire :
-    condition === 'thyroid_cancer'  ? TcQuestionnaire    : null;
+    condition === 'thyroid_cancer'  ? TcQuestionnaire    :
+    condition === 'nodule'          ? NoduleQuestionnaire : null;
+
+  // NoduleQuestionnaire can call onComplete({ switchToHypo: true }) or
+  // ({ switchToHyper: true }) instead of finishing normally, based on the
+  // patient's TSH answer — same pattern RegisterPage.js already handles
+  // for the initial registration flow. This modal (used for adding a
+  // condition after registration) previously didn't import
+  // NoduleQuestionnaire at all, so this path was unreachable here.
+  const handleConditionQComplete = (result) => {
+    if (result?.switchToHypo)  { setCondition('hypothyroidism');  return; }
+    if (result?.switchToHyper) { setCondition('hyperthyroidism'); return; }
+    setSub(SUB.DONE);
+    onDone();
+  };
 
   return (
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.45)', zIndex:1000, display:'flex', alignItems:'flex-start', justifyContent:'center', overflowY:'auto', padding:'40px 16px' }}>
       <div style={{ background:'var(--surface)', borderRadius:16, width:'100%', maxWidth:760, boxShadow:'0 8px 40px rgba(0,0,0,0.18)', minHeight:400 }}>
-        {/* Header */}
-        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'20px 28px', borderBottom:'1px solid var(--border)' }}>
-          <div>
-            <div style={{ fontFamily:'var(--font-display)', fontSize:17, fontWeight:600 }}>
-              {sub === SUB.SELECT      && '📋 Select your condition'}
-              {sub === SUB.CONDITION_Q && `🔬 ${CONDITION_LABELS[condition] || ''} specific questions`}
-              {sub === SUB.DONE       && '✅ Questionnaire complete'}
-            </div>
-            <div style={{ fontSize:12, color:'var(--text-tertiary)', marginTop:3 }}>Online opinion — adding new condition</div>
-          </div>
+        {/* Header — just a close button; the questionnaire itself already
+            shows its own progress bar, so a repeated title/step-tracker
+            here was redundant on every single question screen. */}
+        <div style={{ display:'flex', justifyContent:'flex-end', padding:'12px 16px' }}>
           <button onClick={onClose} style={{ background:'none', border:'none', fontSize:22, cursor:'pointer', color:'var(--text-tertiary)', lineHeight:1 }}>×</button>
         </div>
-        {/* Progress tabs */}
-        <div style={{ display:'flex', borderBottom:'1px solid var(--border)' }}>
-          {[{key:SUB.SELECT,label:'1. Condition'},{key:SUB.CONDITION_Q,label:'2. Questionnaire'}].map(({key,label}) => {
-            const order = [SUB.SELECT, SUB.CONDITION_Q, SUB.DONE];
-            const active = sub === key;
-            const done   = order.indexOf(sub) > order.indexOf(key);
-            return (
-              <div key={key} style={{ flex:1, textAlign:'center', padding:'10px 0', fontSize:11, fontWeight:active?600:400, color:done?'var(--teal-600)':active?'var(--text-primary)':'var(--text-tertiary)', borderBottom:active?'2px solid var(--teal-500)':'2px solid transparent' }}>
-                {done?'✓ ':''}{label}
-              </div>
-            );
-          })}
-        </div>
         {/* Content */}
-        <div style={{ padding:'24px 28px' }}>
+        <div style={{ padding:'0 28px 24px' }}>
           {sub === SUB.SELECT && (
             <ConditionSelection
               patientId={patient?.id}
@@ -78,7 +81,7 @@ const AddConditionFlow = ({ patient, onClose, onDone }) => {
               episodeId={episodeId}
               patientGender={patient?.gender}
               patientDob={patient?.dob}
-              onComplete={() => { setSub(SUB.DONE); onDone(); }}
+              onComplete={handleConditionQComplete}
             />
           )}
           {sub === SUB.DONE && (
@@ -212,7 +215,7 @@ const PatientLayout = ({ children, patient }) => (
 );
 
 // ─── Dashboard overview ────────────────────────────────────
-const Dashboard = ({ patient, consultations, invoices, onAddCondition }) => {
+const Dashboard = ({ patient, opinions, invoices, onAddCondition }) => {
   const [bloodValues, setBloodValues] = useState([]);
   useEffect(() => {
     if (patient) {
@@ -221,7 +224,7 @@ const Dashboard = ({ patient, consultations, invoices, onAddCondition }) => {
     }
   }, [patient]);
 
-  const nextAppt = consultations.find(c => c.status === 'scheduled');
+  const nextAppt = opinions.find(c => c.status === 'scheduled');
   const lastTSH = bloodValues[bloodValues.length - 1];
 
   return (
@@ -234,8 +237,8 @@ const Dashboard = ({ patient, consultations, invoices, onAddCondition }) => {
 
       <div className="stat-grid">
         <div className="stat-card">
-          <div className="stat-label">Total consultations</div>
-          <div className="stat-value">{consultations.length}</div>
+          <div className="stat-label">Total opinions</div>
+          <div className="stat-value">{opinions.length}</div>
           <div className="stat-sub">Since registration</div>
         </div>
         <div className="stat-card">
@@ -272,10 +275,10 @@ const Dashboard = ({ patient, consultations, invoices, onAddCondition }) => {
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
         <div className="card">
-          <div className="card-title">Recent consultations</div>
-          {consultations.slice(0,4).length === 0
-            ? <EmptyState icon="📋" title="No consultations yet" subtitle="Your consultation history will appear here" />
-            : consultations.slice(0,4).map(c => (
+          <div className="card-title">Recent opinions</div>
+          {opinions.slice(0,4).length === 0
+            ? <EmptyState icon="📋" title="No opinions yet" subtitle="Your opinion history will appear here" />
+            : opinions.slice(0,4).map(c => (
               <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 13, fontWeight: 500 }}>{c.doctorName}</div>
@@ -417,9 +420,9 @@ const Invoices = ({ patient, invoices }) => {
 
   return (
     <>
-      <SectionHeader title="Invoices" subtitle="Auto-generated after each consultation" action={<span className="badge badge-blue">Download anytime</span>} />
+      <SectionHeader title="Invoices" subtitle="Auto-generated after each opinion" action={<span className="badge badge-blue">Download anytime</span>} />
       <div className="card">
-        {invoices.length === 0 ? <EmptyState icon="🧾" title="No invoices yet" subtitle="Invoices appear here after each paid consultation" /> : (
+        {invoices.length === 0 ? <EmptyState icon="🧾" title="No invoices yet" subtitle="Invoices appear here after each paid opinion" /> : (
           <table className="data-table">
             <thead>
               <tr>
@@ -485,7 +488,7 @@ const ConditionsMiniList = ({ patientId }) => {
 const PatientPortal = () => {
   const { user } = useAuth();
   const [patient, setPatient] = useState(null);
-  const [consultations, setConsultations] = useState([]);
+  const [opinions, setOpinions] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddCondition, setShowAddCondition] = useState(false);
@@ -498,7 +501,7 @@ const PatientPortal = () => {
       patientAPI.getInvoices(),
     ]).then(([p, c, i]) => {
       setPatient(p);
-      setConsultations(c.opinions || []);
+      setOpinions(c.opinions || []);
       setInvoices(i.invoices || []);
     }).catch(() => {}).finally(() => setLoading(false));
   }, [user]);
@@ -515,17 +518,17 @@ const PatientPortal = () => {
         />
       )}
       <Routes>
-        <Route path="dashboard" element={<Dashboard patient={patient} consultations={consultations} invoices={invoices} onAddCondition={() => setShowAddCondition(true)} />} />
+        <Route path="dashboard" element={<Dashboard patient={patient} opinions={opinions} invoices={invoices} onAddCondition={() => setShowAddCondition(true)} />} />
         <Route path="conditions" element={<MyConditions patient={patient} onAddCondition={() => setShowAddCondition(true)} />} />
-        <Route path="consultations" element={
+        <Route path="opinions" element={
           <>
-            <SectionHeader title="Consultation history" />
+            <SectionHeader title="Opinion history" />
             <div className="card">
-              {consultations.length === 0 ? <EmptyState icon="📋" title="No consultations" subtitle="Your consultation history will appear here" /> : (
+              {opinions.length === 0 ? <EmptyState icon="📋" title="No opinions yet" subtitle="Your opinion history will appear here" /> : (
                 <table className="data-table">
                   <thead><tr><th>Date</th><th>Doctor</th><th>Type</th><th>Status</th><th>Diagnosis</th></tr></thead>
                   <tbody>
-                    {consultations.map(c => (
+                    {opinions.map(c => (
                       <tr key={c.id}>
                         <td>{c.completedAt ? new Date(c.completedAt).toLocaleDateString('en-IN') : '—'}</td>
                         <td>{c.doctorName}</td>
