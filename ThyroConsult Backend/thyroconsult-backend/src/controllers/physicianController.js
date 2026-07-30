@@ -12,6 +12,27 @@
 const { pool }    = require('../config/database');
 const { notify }  = require('../services/notificationService');
 const templates   = require('../services/notificationTemplates');
+const { decryptPHI } = require('../utils/encryption');
+const { calculateAge } = require('../utils/calculateAge');
+
+// patients.first_name/last_name/dob/mobile/email/whatsapp are application-layer
+// AES-256-GCM encrypted (see utils/encryption.js) — they can never be
+// concatenated, pattern-matched, or passed to date functions in SQL. Every
+// query below now selects the raw encrypted columns and this helper decrypts
+// them (and computes age) in JS before the data is used or returned.
+function decryptPatientFields(row) {
+  return {
+    ...row,
+    patient_name: row.first_name != null && row.last_name != null
+      ? `${decryptPHI(row.first_name)} ${decryptPHI(row.last_name)}`
+      : row.patient_name,
+    dob:          row.dob ? decryptPHI(row.dob) : null,
+    patient_age:  row.dob ? calculateAge(decryptPHI(row.dob)) : null,
+    mobile:       row.mobile ? decryptPHI(row.mobile) : row.mobile,
+    email:        row.email ? decryptPHI(row.email) : row.email,
+    whatsapp:     row.whatsapp ? decryptPHI(row.whatsapp) : row.whatsapp,
+  };
+}
 
 const CONDITION_LABELS = {
   hypo:   'Hypothyroidism',
@@ -31,13 +52,13 @@ async function getPendingWork(req, res) {
   try {
     const doctorId = req.user.id;
 
-    const { rows } = await pool.query(
+    const { rows: rawRows } = await pool.query(
       `SELECT
          pce.id                            AS episode_id,
          pce.patient_id,
          pce.condition                     AS condition_type,
          pce.status,
-         pce.submitted_at,
+         pce.questionnaire_completed_at    AS submitted_at,
          pce.has_missing_reports,
          pce.has_advised_investigations,
          pce.investigation_review_pending,
@@ -45,9 +66,9 @@ async function getPendingWork(req, res) {
          pce.followup_review_pending,
          pce.followup_payment_done,
          pce.patient_notified_at,
-         p.first_name || ' ' || p.last_name AS patient_name,
-         p.date_of_birth,
-         EXTRACT(YEAR FROM AGE(p.date_of_birth))::int AS patient_age,
+         p.first_name,
+         p.last_name,
+         p.dob,
          p.gender,
          (SELECT COUNT(*) FROM follow_up_visits fv
           WHERE fv.episode_id = pce.id AND fv.status = 'submitted')
@@ -63,9 +84,11 @@ async function getPendingWork(req, res) {
            OR pce.followup_review_pending = TRUE
            OR pce.has_missing_reports = TRUE
          )
-       ORDER BY pce.patient_notified_at DESC NULLS LAST, pce.submitted_at DESC`,
+       ORDER BY pce.patient_notified_at DESC NULLS LAST, pce.questionnaire_completed_at DESC`,
       [doctorId]
     );
+
+    const rows = rawRows.map(decryptPatientFields);
 
     // Group into queues
     const investigationQueue = rows.filter(r => r.investigation_review_pending);
@@ -95,26 +118,28 @@ async function getEpisodeSummary(req, res) {
     const doctorId = req.user.id;
 
     // Confirm doctor has access to this episode
-    const { rows: epRows } = await pool.query(
-      `SELECT pce.*, p.first_name || ' ' || p.last_name AS patient_name,
-              p.date_of_birth, p.gender, p.mobile,
-              EXTRACT(YEAR FROM AGE(p.date_of_birth))::int AS patient_age
+    const { rows: epRowsRaw } = await pool.query(
+      `SELECT pce.*, p.first_name, p.last_name,
+              p.dob, p.gender, p.mobile
        FROM patient_condition_episodes pce
        JOIN patients p ON p.id = pce.patient_id
        WHERE pce.id = $1 AND pce.primary_doctor_id = $2`,
       [episodeId, doctorId]
     );
 
-    if (!epRows[0]) return res.status(404).json({ error: 'Episode not found or access denied' });
-    const episode = epRows[0];
+    if (!epRowsRaw[0]) return res.status(404).json({ error: 'Episode not found or access denied' });
+    const episode = decryptPatientFields(epRowsRaw[0]);
 
     // Get the questionnaire data
+    // NOTE: patient_condition_episodes.condition stores the full-word enum
+    // values ('hypothyroidism' etc) — not the short codes this map used to
+    // use, which meant questionnaire was always null.
     const condType = episode.condition;
     const qTable = {
-      hypo:   'hypo_questionnaire',
-      hyper:  'hyper_questionnaire',
-      tc:     'tc_questionnaire',
-      nodule: 'nodule_questionnaire',
+      hypothyroidism:  'hypo_questionnaire',
+      hyperthyroidism: 'hyper_questionnaire',
+      thyroid_cancer:  'tc_questionnaire',
+      nodule:          'nodule_questionnaire',
     }[condType];
 
     let questionnaire = null;
@@ -201,8 +226,8 @@ async function adviseInvestigations(req, res) {
 
     // Notify patient that investigations have been advised
     try {
-      const { rows: ptRows } = await pool.query(
-        `SELECT p.first_name || ' ' || p.last_name AS name,
+      const { rows: ptRowsRaw } = await pool.query(
+        `SELECT p.first_name, p.last_name,
                 p.email, p.mobile, p.whatsapp,
                 pce.condition
          FROM patients p
@@ -210,14 +235,15 @@ async function adviseInvestigations(req, res) {
          WHERE pce.id = $1`,
         [episodeId]
       );
-      if (ptRows[0]) {
+      if (ptRowsRaw[0]) {
+        const patient = decryptPatientFields(ptRowsRaw[0]);
         const tpl = templates.investigationsAdvised({
-          patientName:        ptRows[0].name,
-          conditionLabel:     ptRows[0].condition,
+          patientName:        patient.patient_name,
+          conditionLabel:     patient.condition,
           investigationNames: inserted.map(i => i.test_name),
           episodeId,
         });
-        await notify(ptRows[0], tpl);
+        await notify(patient, tpl);
       }
     } catch (notifErr) {
       console.error('adviseInvestigations notification error:', notifErr.message);
@@ -401,16 +427,15 @@ async function getFollowUpVisit(req, res) {
     const { episodeId, visitId } = req.params;
     const doctorId = req.user.id;
 
-    const { rows: epRows } = await pool.query(
-      `SELECT pce.*, p.first_name || ' ' || p.last_name AS patient_name,
-              p.date_of_birth, p.gender,
-              EXTRACT(YEAR FROM AGE(p.date_of_birth))::int AS patient_age
+    const { rows: epRowsRaw } = await pool.query(
+      `SELECT pce.*, p.first_name, p.last_name, p.dob, p.gender
        FROM patient_condition_episodes pce
        JOIN patients p ON p.id = pce.patient_id
        WHERE pce.id = $1 AND pce.primary_doctor_id = $2`,
       [episodeId, doctorId]
     );
-    if (!epRows[0]) return res.status(404).json({ error: 'Episode not found or access denied' });
+    if (!epRowsRaw[0]) return res.status(404).json({ error: 'Episode not found or access denied' });
+    const episode = decryptPatientFields(epRowsRaw[0]);
 
     const { rows: fvRows } = await pool.query(
       `SELECT * FROM follow_up_visits WHERE id = $1 AND episode_id = $2`,
@@ -419,7 +444,7 @@ async function getFollowUpVisit(req, res) {
     if (!fvRows[0]) return res.status(404).json({ error: 'Follow-up visit not found' });
 
     res.json({
-      episode: epRows[0],
+      episode,
       visit:   fvRows[0],
     });
   } catch (err) {
@@ -537,8 +562,8 @@ async function reviewFollowUpVisit(req, res) {
 
     // Notify patient that review is complete
     try {
-      const { rows: ptRows } = await pool.query(
-        `SELECT p.first_name || ' ' || p.last_name AS name,
+      const { rows: ptRowsRaw } = await pool.query(
+        `SELECT p.first_name, p.last_name,
                 p.email, p.mobile, p.whatsapp,
                 pce.condition
          FROM patients p
@@ -546,15 +571,16 @@ async function reviewFollowUpVisit(req, res) {
          WHERE pce.id = $1`,
         [episodeId]
       );
-      if (ptRows[0]) {
+      if (ptRowsRaw[0]) {
+        const patient = decryptPatientFields(ptRowsRaw[0]);
         const tpl = templates.followUpReviewedByDoctor({
-          patientName:     ptRows[0].name,
-          conditionLabel:  ptRows[0].condition,
+          patientName:     patient.patient_name,
+          conditionLabel:  patient.condition,
           medicationAction,
           followUpDate:    followUpDate || null,
           assessmentNotes: assessmentNotes || null,
         });
-        await notify(ptRows[0], tpl);
+        await notify(patient, tpl);
       }
     } catch (notifErr) {
       console.error('reviewFollowUpVisit notification error:', notifErr.message);

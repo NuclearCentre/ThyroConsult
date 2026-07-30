@@ -5,25 +5,33 @@ const db = require('../config/database');
 const { generateAdviseLetter }  = require('../services/adviseLetterService');
 const { notificationService }   = require('../services/notificationService');
 const { notificationTemplates } = require('../services/notificationTemplates');
+const { decryptPHI } = require('../utils/encryption');
+const { calculateAge } = require('../utils/calculateAge');
 
 // ─── Helper: fetch all data needed to build the PDF ───────────────────────
 
 async function fetchLetterData(episodeId, doctorId) {
   // Opinion
+  // NOTE: patients.first_name/last_name/dob/mobile/email and
+  // doctors.first_name/last_name are application-layer AES-256-GCM
+  // encrypted (see utils/encryption.js) — decrypt below, never concatenate
+  // or otherwise use them raw in SQL. patients has no age/sex/phone
+  // columns (real columns: dob/gender/mobile); doctors has no
+  // "qualification" column (real column: qualifications, plural).
   const opResult = await db.query(
     `SELECT o.*,
             d.first_name  AS doc_first,
             d.last_name   AS doc_last,
-            d.qualification,
+            d.qualifications AS qualification,
             d.registration_number,
             p.first_name  AS pat_first,
             p.last_name   AS pat_last,
-            p.age, p.sex,
-            p.phone       AS pat_phone,
+            p.dob, p.gender,
+            p.mobile      AS pat_phone,
             p.email       AS pat_email,
             pg.first_name AS guard_first,
             pg.last_name  AS guard_last,
-            pce.condition_type,
+            pce.condition AS condition_type,
             pce.id        AS episode_id,
             pce.patient_id
      FROM opinions o
@@ -42,17 +50,27 @@ async function fetchLetterData(episodeId, doctorId) {
   // Verify doctor owns this episode
   if (doctorId && row.doctor_id !== doctorId) return null;
 
+  const patFirst   = decryptPHI(row.pat_first);
+  const patLast    = decryptPHI(row.pat_last);
+  const patPhone   = row.pat_phone ? decryptPHI(row.pat_phone) : null;
+  const patEmail   = row.pat_email ? decryptPHI(row.pat_email) : null;
+  const patDob     = row.dob ? decryptPHI(row.dob) : null;
+  const guardFirst = row.guard_first ? decryptPHI(row.guard_first) : null;
+  const guardLast  = row.guard_last  ? decryptPHI(row.guard_last)  : null;
+  const docFirst   = decryptPHI(row.doc_first);
+  const docLast    = decryptPHI(row.doc_last);
+
   return {
     patient: {
-      name:         `${row.pat_first} ${row.pat_last}`,
-      age:          row.age,
-      sex:          row.sex,
-      phone:        row.pat_phone,
-      email:        row.pat_email,
-      guardianName: row.guard_first ? `${row.guard_first} ${row.guard_last}` : null,
+      name:         `${patFirst} ${patLast}`,
+      age:          calculateAge(patDob),
+      sex:          row.gender,
+      phone:        patPhone,
+      email:        patEmail,
+      guardianName: guardFirst ? `${guardFirst} ${guardLast}` : null,
     },
     doctor: {
-      name:               `${row.doc_first} ${row.doc_last}`,
+      name:               `${docFirst} ${docLast}`,
       qualification:      row.qualification,
       registrationNumber: row.registration_number,
     },
@@ -70,9 +88,9 @@ async function fetchLetterData(episodeId, doctorId) {
       episodeId:     row.episode_id,
     },
     patientContact: {
-      name:  `${row.pat_first} ${row.pat_last}`,
-      phone: row.pat_phone,
-      email: row.pat_email,
+      name:  `${patFirst} ${patLast}`,
+      phone: patPhone,
+      email: patEmail,
     },
     patientId: row.patient_id,
   };
@@ -154,7 +172,8 @@ exports.doctorDownloadLetter = async (req, res) => {
     }
 
     const row      = result.rows[0];
-    const filename = `AdviseLetter_${row.first_name}_${row.last_name}_${
+    const safeName = `${decryptPHI(row.first_name)}_${decryptPHI(row.last_name)}`.replace(/[^a-zA-Z0-9_-]/g, '');
+    const filename = `AdviseLetter_${safeName}_${
       new Date(row.advise_letter_generated_at).toISOString().slice(0, 10)
     }.pdf`;
 
@@ -198,7 +217,8 @@ exports.patientDownloadLetter = async (req, res) => {
     }
 
     const row      = result.rows[0];
-    const filename = `ThyroConsult_AdviseLetter_${row.first_name}_${row.last_name}_${
+    const safeName = `${decryptPHI(row.first_name)}_${decryptPHI(row.last_name)}`.replace(/[^a-zA-Z0-9_-]/g, '');
+    const filename = `ThyroConsult_AdviseLetter_${safeName}_${
       new Date(row.advise_letter_generated_at).toISOString().slice(0, 10)
     }.pdf`;
 

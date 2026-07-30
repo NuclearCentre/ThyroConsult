@@ -174,6 +174,15 @@ const sanitise = (req, res, next) => {
         .replace(/javascript:/gi, '')
         .trim();
     }
+    // NOTE: arrays are typeof 'object' in JS — without this check they fell
+    // into the object branch below, which builds a plain {} keyed by index
+    // ('0','1',...) instead of an array. Every array field in every
+    // request body (investigations, symptom checklists, medication lists,
+    // any JSONB array column) was silently corrupted from [a,b] to
+    // {0:a,1:b} on the way in.
+    if (Array.isArray(val)) {
+      return val.map(sanitiseValue);
+    }
     if (typeof val === 'object' && val !== null) {
       const cleaned = {};
       for (const key of Object.keys(val)) {
@@ -191,7 +200,7 @@ const sanitise = (req, res, next) => {
 const handleUploadError = (err, req, res, next) => {
   if (err instanceof multer.MulterError) {
     if (err.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({ error: 'File too large. Maximum size is 5MB.', code: 'FILE_TOO_LARGE' });
+      return res.status(400).json({ error: `File too large. Maximum size is ${parseInt(process.env.MAX_FILE_SIZE_MB) || 5}MB.`, code: 'FILE_TOO_LARGE' });
     }
     return res.status(400).json({ error: err.message, code: 'UPLOAD_ERROR' });
   }

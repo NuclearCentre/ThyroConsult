@@ -7,10 +7,10 @@
 //   S3 — follow-up visit: always full fee
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { patientAPI } from '../api';
-import MissingReports      from './MissingReports';
-import InvestigationUpload from './InvestigationUpload';
-import FollowUpVisit       from './FollowUpVisit';
+import { patientAPI } from '../../api';
+import MissingReports      from '../../components/MissingReports';
+import InvestigationUpload from '../../components/InvestigationUpload';
+import FollowUpVisit       from '../../components/FollowUpVisit';
 import { loadRazorpayScript } from '../../utils/loadRazorpay';
 
 const CONDITION_LABELS = {

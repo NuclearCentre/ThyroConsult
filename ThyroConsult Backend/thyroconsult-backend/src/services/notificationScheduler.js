@@ -68,7 +68,7 @@ async function runEscalation() {
     // - opinion NOT yet submitted by doctor (alert_stopped = FALSE)
     const result = await db.query(
       `SELECT
-         pce.id, pce.submitted_at,
+         pce.id, pce.questionnaire_completed_at AS submitted_at,
          pce.alert_immediate_sent,
          pce.alert_0_24h_sent,
          pce.alert_24_48h_count,
@@ -85,7 +85,7 @@ async function runEscalation() {
        FROM patient_condition_episodes pce
        JOIN doctors  d ON d.id  = pce.primary_doctor_id
        JOIN patients p ON p.id  = pce.patient_id
-       WHERE pce.submitted_at IS NOT NULL
+       WHERE pce.questionnaire_completed_at IS NOT NULL
          AND pce.alert_stopped  = FALSE
          AND pce.episode_closed_at IS NULL`,
       []

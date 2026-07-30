@@ -5,6 +5,25 @@
 const db = require('../config/database');
 const { notificationService } = require('../services/notificationService');
 const { notificationTemplates } = require('../services/notificationTemplates');
+const { decryptPHI } = require('../utils/encryption');
+const { calculateAge } = require('../utils/calculateAge');
+
+// patients.first_name/last_name/dob/mobile/email/whatsapp are application-layer
+// AES-256-GCM encrypted (see utils/encryption.js) — never usable directly in
+// SQL (concatenation, AGE(), etc). Decrypt raw columns in JS instead.
+function decryptPatientFields(row) {
+  return {
+    ...row,
+    patient_name: row.first_name != null && row.last_name != null
+      ? `${decryptPHI(row.first_name)} ${decryptPHI(row.last_name)}`
+      : row.patient_name,
+    dob:          row.dob ? decryptPHI(row.dob) : row.dob,
+    age:          row.dob ? calculateAge(decryptPHI(row.dob)) : (row.age ?? null),
+    mobile:       row.mobile ? decryptPHI(row.mobile) : row.mobile,
+    email:        row.email ? decryptPHI(row.email) : row.email,
+    whatsapp:     row.whatsapp ? decryptPHI(row.whatsapp) : row.whatsapp,
+  };
+}
 
 // ─── Helper ────────────────────────────────────────────────────────────────
 
@@ -58,33 +77,33 @@ exports.getPhysicianQueue = async (req, res) => {
       `SELECT
          pce.id              AS episode_id,
          pce.patient_id,
-         pce.condition_type,
-         pce.submitted_at,
+         pce.condition       AS condition_type,
+         pce.questionnaire_completed_at AS submitted_at,
          pce.opinion_submitted_at,
          pce.opinion_id,
          pce.episode_closed_at,
          p.first_name,
          p.last_name,
-         p.age,
-         p.sex,
-         EXTRACT(EPOCH FROM (NOW() - pce.submitted_at)) / 3600 AS hours_since_submission,
+         p.dob,
+         p.gender,
+         EXTRACT(EPOCH FROM (NOW() - pce.questionnaire_completed_at)) / 3600 AS hours_since_submission,
          o.status            AS opinion_status
        FROM patient_condition_episodes pce
        JOIN patients p ON p.id = pce.patient_id
        LEFT JOIN opinions o ON o.id = pce.opinion_id
        WHERE pce.primary_doctor_id = $1
-         AND pce.submitted_at IS NOT NULL
+         AND pce.questionnaire_completed_at IS NOT NULL
          AND pce.episode_closed_at IS NULL
-       ORDER BY pce.submitted_at ASC`,
+       ORDER BY pce.questionnaire_completed_at ASC`,
       [doctorId]
     );
 
-    const queue = result.rows.map(row => ({
+    const queue = result.rows.map(decryptPatientFields).map(row => ({
       episodeId:            row.episode_id,
       patientId:            row.patient_id,
-      patientName:          `${row.first_name} ${row.last_name}`,
+      patientName:          row.patient_name,
       age:                  row.age,
-      sex:                  row.sex,
+      sex:                  row.gender,
       conditionType:        row.condition_type,
       submittedAt:          row.submitted_at,
       opinionStatus:        row.opinion_status || 'pending',
@@ -109,11 +128,15 @@ exports.getEpisodeForReview = async (req, res) => {
     const doctorId = req.user.id;
 
     // Episode + patient basics
+    // NOTE: marital_status is not a patients column — it's captured per
+    // condition inside hypo/hyper/tc/nodule/core_questionnaire (migrations
+    // 008-011). It comes back below via questionnaireData once qTable is
+    // resolved, not from this query.
     const epResult = await db.query(
       `SELECT
          pce.*,
-         p.first_name, p.last_name, p.age, p.sex, p.phone, p.email,
-         p.marital_status, p.address_city, p.address_state
+         p.first_name, p.last_name, p.dob, p.gender, p.mobile, p.email,
+         p.address_line1, p.address_line2, p.city, p.state, p.pincode
        FROM patient_condition_episodes pce
        JOIN patients p ON p.id = pce.patient_id
        WHERE pce.id = $1 AND pce.primary_doctor_id = $2`,
@@ -124,17 +147,25 @@ exports.getEpisodeForReview = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Episode not found or not assigned to you' });
     }
 
-    const episode = epResult.rows[0];
+    const episode = decryptPatientFields(epResult.rows[0]);
+    episode.address_line1 = episode.address_line1 ? decryptPHI(episode.address_line1) : null;
+    episode.address_line2 = episode.address_line2 ? decryptPHI(episode.address_line2) : null;
+    episode.city          = episode.city  ? decryptPHI(episode.city)  : null;
+    episode.state         = episode.state ? decryptPHI(episode.state) : null;
 
-    // Questionnaire answers (pick correct table by condition_type)
+    // Questionnaire answers (pick correct table by condition)
+    // NOTE: patient_condition_episodes.condition stores the full-word enum
+    // values ('hypothyroidism' etc) — episode.condition_type didn't exist
+    // (the real column is `condition`), so this lookup always missed and
+    // questionnaireData was always null.
     let questionnaireData = null;
     const conditionTableMap = {
-      hypothyroidism: 'hypo_questionnaire',
+      hypothyroidism:  'hypo_questionnaire',
       hyperthyroidism: 'hyper_questionnaire',
       thyroid_cancer:  'tc_questionnaire',
-      thyroid_nodule:  'tc_questionnaire', // uses same table or separate — adjust if needed
+      nodule:          'nodule_questionnaire',
     };
-    const qTable = conditionTableMap[episode.condition_type];
+    const qTable = conditionTableMap[episode.condition];
     if (qTable) {
       const qResult = await db.query(
         `SELECT * FROM ${qTable} WHERE episode_id = $1`,
@@ -249,7 +280,7 @@ exports.submitOpinion = async (req, res) => {
 
     // Verify episode
     const epCheck = await db.query(
-      `SELECT pce.id, pce.patient_id, p.first_name, p.last_name, p.phone, p.email
+      `SELECT pce.id, pce.patient_id, p.first_name, p.last_name, p.mobile, p.email
        FROM patient_condition_episodes pce
        JOIN patients p ON p.id = pce.patient_id
        WHERE pce.id = $1 AND pce.primary_doctor_id = $2`,
@@ -304,7 +335,8 @@ exports.submitOpinion = async (req, res) => {
     );
 
     // Notify patient — WhatsApp + email
-    const patient = { name: `${ep.first_name} ${ep.last_name}`, phone: ep.phone, email: ep.email };
+    const decryptedPatient = decryptPatientFields(ep);
+    const patient = { ...decryptedPatient, name: decryptedPatient.patient_name };
     const template = notificationTemplates.opinionReady(patient);
     await notificationService.notify(patient, template).catch(e =>
       console.error('Opinion notify patient error:', e)
@@ -398,7 +430,7 @@ exports.getPatientOpinion = async (req, res) => {
     const patientId = req.user.id;
 
     const result = await db.query(
-      `SELECT o.*, d.first_name AS doctor_first, d.last_name AS doctor_last, d.qualification
+      `SELECT o.*, d.first_name AS doctor_first, d.last_name AS doctor_last, d.qualifications AS qualification
        FROM opinions o
        JOIN doctors d ON d.id = o.doctor_id
        WHERE o.episode_id = $1 AND o.patient_id = $2
@@ -415,7 +447,7 @@ exports.getPatientOpinion = async (req, res) => {
       success: true,
       data: {
         opinionId:       op.id,
-        doctorName:      `Dr. ${op.doctor_first} ${op.doctor_last}`,
+        doctorName:      `Dr. ${decryptPHI(op.doctor_first)} ${decryptPHI(op.doctor_last)}`,
         qualification:   op.qualification,
         clinicalSummary: op.clinical_summary,
         impression:      op.impression,
@@ -497,8 +529,8 @@ exports.getEpisodeTimeline = async (req, res) => {
 
     const result = await db.query(
       `SELECT
-         pce.id, pce.condition_type, pce.created_at AS paid_at,
-         pce.submitted_at, pce.opinion_submitted_at,
+         pce.id, pce.condition AS condition_type, pce.created_at AS paid_at,
+         pce.questionnaire_completed_at AS submitted_at, pce.opinion_submitted_at,
          pce.opinion_acknowledged_at, pce.episode_closed_at,
          pce.has_missing_reports, pce.has_advised_investigations,
          o.status AS opinion_status

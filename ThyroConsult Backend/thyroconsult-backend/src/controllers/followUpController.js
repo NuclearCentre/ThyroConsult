@@ -5,6 +5,7 @@
 const { pool }    = require('../config/database');
 const { notify }  = require('../services/notificationService');
 const templates   = require('../services/notificationTemplates');
+const { decryptPHI } = require('../utils/encryption');
 
 // ─────────────────────────────────────────────────────────────
 // SCENARIO 1 — MISSING REPORTS
@@ -19,7 +20,7 @@ async function getMissingReports(req, res) {
 
     // Fetch episode to confirm ownership
     const epResult = await pool.query(
-      `SELECT id, condition_type, has_missing_reports FROM patient_condition_episodes
+      `SELECT id, condition AS condition_type, has_missing_reports FROM patient_condition_episodes
        WHERE id = $1 AND patient_id = $2`,
       [episodeId, patientId]
     );
@@ -27,10 +28,14 @@ async function getMissingReports(req, res) {
 
     // Fetch questionnaire data to find which D fields have values but no report
     // Each condition stores reports in its own table
+    // NOTE: patient_condition_episodes.condition stores the full-word enum
+    // values ('hypothyroidism' etc, from migration 002), not short codes —
+    // this previously compared against 'hypo'/'hyper'/'tc' and always fell
+    // through to nodule_questionnaire.
     const condType = epResult.rows[0].condition_type;
-    const qTable   = condType === 'hypo'   ? 'hypo_questionnaire'
-                   : condType === 'hyper'  ? 'hyper_questionnaire'
-                   : condType === 'tc'     ? 'tc_questionnaire'
+    const qTable   = condType === 'hypothyroidism'  ? 'hypo_questionnaire'
+                   : condType === 'hyperthyroidism' ? 'hyper_questionnaire'
+                   : condType === 'thyroid_cancer'   ? 'tc_questionnaire'
                    : 'nodule_questionnaire';
 
     const qResult = await pool.query(
@@ -95,15 +100,15 @@ async function uploadMissingReport(req, res) {
 
     // Map moduleKey to the correct table + column
     const epResult = await pool.query(
-      `SELECT condition_type FROM patient_condition_episodes WHERE id = $1 AND patient_id = $2`,
+      `SELECT condition AS condition_type FROM patient_condition_episodes WHERE id = $1 AND patient_id = $2`,
       [episodeId, patientId]
     );
     if (!epResult.rows[0]) return res.status(404).json({ error: 'Episode not found' });
 
     const condType = epResult.rows[0].condition_type;
-    const qTable   = condType === 'hypo'   ? 'hypo_questionnaire'
-                   : condType === 'hyper'  ? 'hyper_questionnaire'
-                   : condType === 'tc'     ? 'tc_questionnaire'
+    const qTable   = condType === 'hypothyroidism'  ? 'hypo_questionnaire'
+                   : condType === 'hyperthyroidism' ? 'hyper_questionnaire'
+                   : condType === 'thyroid_cancer'   ? 'tc_questionnaire'
                    : 'nodule_questionnaire';
 
     const reportFieldMap = {
@@ -187,18 +192,29 @@ async function getInvestigations(req, res) {
     );
     if (!epCheck.rows[0]) return res.status(404).json({ error: 'Episode not found' });
 
+    // NOTE: advised_by references doctors(id), not a "users" table (no such
+    // table exists in this schema) — that join previously errored on every
+    // call. doctors.first_name/last_name are also PHI-encrypted, so the
+    // name has to be decrypted in JS, not concatenated in SQL.
     const { rows } = await pool.query(
       `SELECT ai.id, ai.test_name, ai.notes, ai.source,
               ai.report_path, ai.report_uploaded_at, ai.status,
-              u.name AS advised_by_name
+              d.first_name AS advised_by_first, d.last_name AS advised_by_last
        FROM advised_investigations ai
-       LEFT JOIN users u ON u.id = ai.advised_by
+       LEFT JOIN doctors d ON d.id = ai.advised_by
        WHERE ai.episode_id = $1
        ORDER BY ai.source DESC, ai.created_at ASC`,
       [episodeId]
     );
 
-    res.json(rows);
+    const result = rows.map(r => ({
+      ...r,
+      advised_by_name: r.advised_by_first
+        ? `Dr. ${decryptPHI(r.advised_by_first)} ${decryptPHI(r.advised_by_last)}`
+        : null,
+    }));
+
+    res.json(result);
   } catch (err) {
     console.error('getInvestigations error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -282,14 +298,14 @@ async function notifyDoctor(req, res) {
     // Notify physician
     try {
       const { rows: drRows } = await pool.query(
-        `SELECT d.name, d.email, d.mobile, d.whatsapp
+        `SELECT d.first_name, d.last_name, d.email, d.mobile, d.whatsapp
          FROM doctors d
          JOIN patient_condition_episodes pce ON pce.primary_doctor_id = d.id
          WHERE pce.id = $1`,
         [episodeId]
       );
       const { rows: ptRows } = await pool.query(
-        `SELECT p.first_name || ' ' || p.last_name AS name,
+        `SELECT p.first_name, p.last_name,
                 pce.condition
          FROM patients p
          JOIN patient_condition_episodes pce ON pce.patient_id = p.id
@@ -301,13 +317,19 @@ async function notifyDoctor(req, res) {
           `SELECT COUNT(*) AS cnt FROM advised_investigations
            WHERE episode_id = $1 AND status = 'uploaded'`, [episodeId]
         );
+        const doctor = {
+          name:     `Dr. ${decryptPHI(drRows[0].first_name)} ${decryptPHI(drRows[0].last_name)}`,
+          email:    drRows[0].email    ? decryptPHI(drRows[0].email)    : null,
+          mobile:   drRows[0].mobile   ? decryptPHI(drRows[0].mobile)   : null,
+          whatsapp: drRows[0].whatsapp ? decryptPHI(drRows[0].whatsapp) : null,
+        };
         const tpl = templates.patientNotifiedDoctor({
-          doctorName:       drRows[0].name,
-          patientName:      ptRows[0].name,
+          doctorName:       doctor.name,
+          patientName:      `${decryptPHI(ptRows[0].first_name)} ${decryptPHI(ptRows[0].last_name)}`,
           conditionLabel:   ptRows[0].condition,
           uploadedCount:    parseInt(uploadedRows[0].cnt),
         });
-        await notify(drRows[0], tpl);
+        await notify(doctor, tpl);
       }
     } catch (notifErr) {
       console.error('notifyDoctor notification error:', notifErr.message);
@@ -453,23 +475,29 @@ async function submitFollowUp(req, res) {
     try {
       const { rows: epRows } = await pool.query(
         `SELECT pce.condition, pce.primary_doctor_id,
-                p.first_name || ' ' || p.last_name AS patient_name
+                p.first_name, p.last_name
          FROM patient_condition_episodes pce
          JOIN patients p ON p.id = pce.patient_id
          WHERE pce.id = $1`, [episodeId]
       );
       const { rows: drRows } = await pool.query(
-        `SELECT name, email, mobile, whatsapp FROM doctors WHERE id = $1`,
+        `SELECT first_name, last_name, email, mobile, whatsapp FROM doctors WHERE id = $1`,
         [epRows[0]?.primary_doctor_id]
       );
       if (drRows[0] && epRows[0]) {
+        const doctor = {
+          name:     `Dr. ${decryptPHI(drRows[0].first_name)} ${decryptPHI(drRows[0].last_name)}`,
+          email:    drRows[0].email    ? decryptPHI(drRows[0].email)    : null,
+          mobile:   drRows[0].mobile   ? decryptPHI(drRows[0].mobile)   : null,
+          whatsapp: drRows[0].whatsapp ? decryptPHI(drRows[0].whatsapp) : null,
+        };
         const tpl = templates.followUpSubmittedToDoctor({
-          doctorName:     drRows[0].name,
-          patientName:    epRows[0].patient_name,
+          doctorName:     doctor.name,
+          patientName:    `${decryptPHI(epRows[0].first_name)} ${decryptPHI(epRows[0].last_name)}`,
           conditionLabel: epRows[0].condition,
           visitNumber:    rows[0].visit_number,
         });
-        await notify(drRows[0], tpl);
+        await notify(doctor, tpl);
       }
     } catch (notifErr) {
       console.error('submitFollowUp notification error:', notifErr.message);

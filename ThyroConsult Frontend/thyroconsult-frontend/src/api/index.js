@@ -273,12 +273,55 @@ export const adviseLetterAPI = {
 
 export const followUpAPI = {
   getStatus:            (episodeId)       => get(`/followup/status/${episodeId}`),
-  submitMissingReports: (episodeId, data) => post(`/followup/missing-reports/${episodeId}`, data),
-  uploadInvestigations: (episodeId, formData) => apiFetch(
-    `/followup/investigation-upload/${episodeId}`,
-    { method: 'POST', body: formData, headers: { Authorization: `Bearer ${getToken()}` } }
-  ),
-  submitFollowUpVisit:  (episodeId, data) => post(`/followup/visit/${episodeId}`, data),
+
+  // Scenario 1 — missing reports
+  // These didn't exist before — MissingReports.js was calling
+  // patientAPI.getMissingReports/uploadMissingReport, which were never
+  // defined anywhere in this file.
+  getMissingReports:    (episodeId)             => get(`/followup/missing-reports/${episodeId}`),
+  uploadMissingReport:  (episodeId, moduleKey, file) => {
+    const formData = new FormData();
+    formData.append('report', file);
+    return apiFetch(`/followup/missing-reports/${episodeId}/${moduleKey}`, {
+      method: 'POST', body: formData, headers: { Authorization: `Bearer ${getToken()}` },
+    });
+  },
+
+  // Scenario 2 — advised investigations
+  // None of these existed before — InvestigationUpload.js was calling
+  // patientAPI.getInvestigations/addInvestigation/uploadInvestigationReport/
+  // notifyDoctor, none of which were defined anywhere in this file.
+  getInvestigations:    (episodeId)             => get(`/followup/investigations/${episodeId}`),
+  addInvestigation:     (episodeId, data)       => post(`/followup/investigations/${episodeId}`, data),
+  uploadInvestigationReport: (episodeId, invId, file) => {
+    const formData = new FormData();
+    formData.append('report', file);
+    return apiFetch(`/followup/investigations/${episodeId}/${invId}/upload`, {
+      method: 'POST', body: formData, headers: { Authorization: `Bearer ${getToken()}` },
+    });
+  },
+  notifyDoctor:         (episodeId)             => post(`/followup/investigations/${episodeId}/notify-doctor`),
+
+  // Scenario 3 — follow-up visits
+  // None of these existed before either — FollowUpVisit.js was calling
+  // patientAPI.getFollowUpVisits/createFollowUpVisit/saveFollowUpDraft/
+  // uploadFollowUpLab/submitFollowUp, none of which were defined anywhere
+  // in this file.
+  getFollowUpVisits:    (episodeId)             => get(`/followup/visits/${episodeId}`),
+  createFollowUpVisit:  (episodeId)             => post(`/followup/visits/${episodeId}`),
+  saveFollowUpDraft:    (episodeId, visitId, data) => put(`/followup/visits/${episodeId}/${visitId}/draft`, data),
+  uploadFollowUpLab:    (episodeId, visitId, { testKey, value, unit, testDate, file }) => {
+    const formData = new FormData();
+    formData.append('report', file);
+    formData.append('testKey', testKey || '');
+    formData.append('value', value || '');
+    formData.append('unit', unit || '');
+    formData.append('testDate', testDate || '');
+    return apiFetch(`/followup/visits/${episodeId}/${visitId}/upload-lab`, {
+      method: 'POST', body: formData, headers: { Authorization: `Bearer ${getToken()}` },
+    });
+  },
+  submitFollowUp:       (episodeId, visitId)    => post(`/followup/visits/${episodeId}/${visitId}/submit`),
 };
 
 // ─── Doctor (appointments) ────────────────────────────────────────────────

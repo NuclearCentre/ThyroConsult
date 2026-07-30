@@ -174,6 +174,13 @@ const getEpisodes = async (req, res) => {
 
     const episodes = result.rows.map(r => ({
       ...r,
+      // Several frontend components (PatientPortal.js, PhysicianDashboard.js,
+      // FollowUpVisit.js, MissingReports.js) read episode.condition_type and
+      // episode.submitted_at, but patient_condition_episodes' real columns
+      // are `condition` and `questionnaire_completed_at` — alias both here
+      // so every consumer of this endpoint gets consistent field names.
+      condition_type: r.condition,
+      submitted_at: r.questionnaire_completed_at,
       doctorName: r.doc_first ? `Dr. ${d(r.doc_first)} ${d(r.doc_last)}` : null,
       doc_first: undefined,
       doc_last: undefined,

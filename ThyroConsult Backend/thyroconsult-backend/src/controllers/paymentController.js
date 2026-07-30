@@ -34,14 +34,22 @@ const CONDITION_SHORT_CODE = {
 // ─────────────────────────────────────────────────────────────
 
 // Days elapsed since questionnaire was submitted for this episode
+// NOTE: patient_condition_episodes.submitted_at exists as a column (added
+// in migration 007) but is never written to anywhere in the codebase — it
+// is always NULL. The column that actually gets set when the patient
+// finishes the questionnaire is questionnaire_completed_at (set in
+// conditionController.js). Reading submitted_at here silently made
+// getDaysElapsed() always return null, which meant resolvePayment() always
+// fell through to the "full fee" branch for S1 — patients were being
+// charged even inside the 14-day free window.
 async function getDaysElapsed(episodeId) {
   const { rows } = await pool.query(
-    `SELECT submitted_at FROM patient_condition_episodes WHERE id = $1`,
+    `SELECT questionnaire_completed_at FROM patient_condition_episodes WHERE id = $1`,
     [episodeId]
   );
-  if (!rows[0] || !rows[0].submitted_at) return null;
+  if (!rows[0] || !rows[0].questionnaire_completed_at) return null;
   return Math.floor(
-    (Date.now() - new Date(rows[0].submitted_at).getTime()) / 86400000
+    (Date.now() - new Date(rows[0].questionnaire_completed_at).getTime()) / 86400000
   );
 }
 
@@ -104,7 +112,7 @@ async function sendImmediateDoctorAlert(episodeId) {
   try {
     const { rows } = await pool.query(
       `SELECT
-         pce.condition_type,
+         pce.condition AS condition_type,
          pce.alert_immediate_sent,
          p.first_name  AS pat_first,
          p.last_name   AS pat_last,

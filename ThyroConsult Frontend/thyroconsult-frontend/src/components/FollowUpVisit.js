@@ -5,7 +5,7 @@
 // Payment must be confirmed before this screen is accessible (enforced by PatientDashboard).
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { patientAPI } from '../api';
+import { followUpAPI } from '../api';
 
 // Symptom sets per condition (shown in delta checklist)
 const SYMPTOMS = {
@@ -69,7 +69,14 @@ export default function FollowUpVisit({ episode, onBack }) {
   const [submitted,   setSubmitted]   = useState(false);
   const [uploading,   setUploading]   = useState(null);   // lab key currently uploading
 
-  const condType = episode.condition_type;
+  // episode.condition_type holds the full-word enum value ('hypothyroidism'
+  // etc) — SYMPTOMS/LAB_TESTS below are keyed by short codes, so map first
+  // (this previously always missed and silently fell back to nodule's list).
+  const SHORT_CODE = {
+    hypothyroidism: 'hypo', hyperthyroidism: 'hyper',
+    thyroid_cancer: 'tc', nodule: 'nodule',
+  };
+  const condType = SHORT_CODE[episode.condition_type] || episode.condition_type;
   const symptoms = SYMPTOMS[condType] || SYMPTOMS.nodule;
   const labTests = condType === 'hyper'
     ? [...LAB_TESTS, ...HYPER_EXTRA]
@@ -80,7 +87,7 @@ export default function FollowUpVisit({ episode, onBack }) {
     const init = async () => {
       try {
         // Check for existing draft visit
-        const visits = await patientAPI.getFollowUpVisits(patient.id, episode.id);
+        const visits = await followUpAPI.getFollowUpVisits(episode.id);
         const draft  = visits.find(v => v.status === 'draft');
         if (draft) {
           setVisit(draft);
@@ -90,7 +97,7 @@ export default function FollowUpVisit({ episode, onBack }) {
           setCompliance(draft.medication_compliance || '');
         } else {
           // Create new visit
-          const newVisit = await patientAPI.createFollowUpVisit(patient.id, episode.id);
+          const newVisit = await followUpAPI.createFollowUpVisit(episode.id);
           setVisit(newVisit);
         }
       } catch (err) {
@@ -105,7 +112,7 @@ export default function FollowUpVisit({ episode, onBack }) {
     if (!visit) return;
     setSaving(true);
     try {
-      await patientAPI.saveFollowUpDraft(patient.id, episode.id, visit.id, {
+      await followUpAPI.saveFollowUpDraft(episode.id, visit.id, {
         labData,
         symptomDelta:         delta,
         newSymptomsText:      newSymptoms,
@@ -126,7 +133,7 @@ export default function FollowUpVisit({ episode, onBack }) {
     if (!file || !visit) return;
     setUploading(key);
     try {
-      await patientAPI.uploadFollowUpLab(patient.id, episode.id, visit.id, {
+      await followUpAPI.uploadFollowUpLab(episode.id, visit.id, {
         testKey:  key,
         value:    labData[key]?.value || '',
         unit:     labData[key]?.unit  || '',
@@ -153,7 +160,7 @@ export default function FollowUpVisit({ episode, onBack }) {
     setSubmitting(true);
     try {
       await saveDraft();
-      await patientAPI.submitFollowUp(patient.id, episode.id, visit.id);
+      await followUpAPI.submitFollowUp(episode.id, visit.id);
       setSubmitted(true);
     } catch (err) {
       console.error('Submit error:', err);

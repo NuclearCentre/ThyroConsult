@@ -4,7 +4,14 @@
 // Clicking any item opens the upload screen for that specific test.
 
 import React, { useEffect, useState } from 'react';
-import { patientAPI } from '../api';
+import { followUpAPI } from '../api';
+
+const CONDITION_LABELS = {
+  hypothyroidism:  'Hypothyroidism',
+  hyperthyroidism: 'Hyperthyroidism',
+  thyroid_cancer:  'CA Thyroid',
+  nodule:          'Thyroid Nodule',
+};
 
 const MODULE_ICONS = {
   D1: 'ti-activity',
@@ -28,7 +35,7 @@ export default function MissingReports({ episode, onBack }) {
   const [submitDone,  setSubmitDone]  = useState(false);
 
   useEffect(() => {
-    patientAPI.getMissingReports(patient.id, episode.id)
+    followUpAPI.getMissingReports(episode.id)
       .then(data => setMissing(data.missing || []))
       .finally(() => setLoading(false));
   }, [episode.id]);
@@ -37,7 +44,7 @@ export default function MissingReports({ episode, onBack }) {
     if (!file) return;
     setUploading(true);
     try {
-      await patientAPI.uploadMissingReport(patient.id, episode.id, moduleKey, file);
+      await followUpAPI.uploadMissingReport(episode.id, moduleKey, file);
       setUploadDone(prev => ({ ...prev, [moduleKey]: true }));
       setActiveKey(null);
     } catch (err) {
@@ -86,7 +93,7 @@ export default function MissingReports({ episode, onBack }) {
 
       <div style={{ fontSize: 16, fontWeight: 500, marginBottom: 3 }}>Missing reports</div>
       <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 14 }}>
-        {episode.condition_type_label || 'Hypothyroidism'} · First visit, {fmtDate(episode.submitted_at)}
+        {CONDITION_LABELS[episode.condition_type] || episode.condition_type || 'Condition'} · First visit, {fmtDate(episode.submitted_at)}
       </div>
 
       {/* Info banner */}

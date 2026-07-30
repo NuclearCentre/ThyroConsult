@@ -3,7 +3,7 @@
 // and can also add their own investigations manually.
 
 import React, { useEffect, useState } from 'react';
-import { patientAPI } from '../api';
+import { followUpAPI } from '../api';
 
 export default function InvestigationUpload({ episode, onBack }) {
   const [investigations, setInvestigations] = useState([]);
@@ -20,7 +20,7 @@ export default function InvestigationUpload({ episode, onBack }) {
   const load = async () => {
     setLoading(true);
     try {
-      const data = await patientAPI.getInvestigations(patient.id, episode.id);
+      const data = await followUpAPI.getInvestigations(episode.id);
       setInvestigations(data);
     } finally {
       setLoading(false);
@@ -36,7 +36,7 @@ export default function InvestigationUpload({ episode, onBack }) {
     if (!newTestName.trim()) return;
     setSaving(true);
     try {
-      await patientAPI.addInvestigation(patient.id, episode.id, { testName: newTestName.trim(), notes: newNotes.trim() });
+      await followUpAPI.addInvestigation(episode.id, { testName: newTestName.trim(), notes: newNotes.trim() });
       setNewTestName('');
       setNewNotes('');
       setAddingNew(false);
@@ -52,7 +52,7 @@ export default function InvestigationUpload({ episode, onBack }) {
     if (!file) return;
     setUploadingId(invId);
     try {
-      await patientAPI.uploadInvestigationReport(episode.id, invId, file);
+      await followUpAPI.uploadInvestigationReport(episode.id, invId, file);
       await load();
     } catch (err) {
       console.error('Upload error:', err);
@@ -65,7 +65,7 @@ export default function InvestigationUpload({ episode, onBack }) {
   const handleNotifyDoctor = async () => {
     setNotifying(true);
     try {
-      await patientAPI.notifyDoctor(patient.id, episode.id);
+      await followUpAPI.notifyDoctor(episode.id);
       setNotified(true);
     } finally {
       setNotifying(false);

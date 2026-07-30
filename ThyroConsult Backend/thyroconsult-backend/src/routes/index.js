@@ -229,13 +229,57 @@ router.get('/receipt/invoices',
 // GET /followup/status/:episodeId — see paymentController.getGateStatus,
 // registered above under PAYMENTS (that's the function that actually
 // implements this, not anything in followUpController).
-router.post('/followup/missing-reports/:episodeId',
-  verifyToken, requireRole('patient'), followUpController.uploadMissingReport);
-router.post('/followup/investigation-upload/:episodeId',
+// GET /followup/missing-reports/:episodeId — was never routed at all;
+// followUpController.getMissingReports existed but nothing called it, so
+// the patient-side missing-reports list could never be fetched.
+router.get('/followup/missing-reports/:episodeId',
+  verifyToken, requireRole('patient'), followUpController.getMissingReports);
+// NOTE: followUpController.uploadMissingReport reads req.params.moduleKey
+// (see its own doc comment: "POST /api/episodes/:episodeId/missing-reports/:moduleKey")
+// and req.file (set by multer) — this route previously had neither the
+// :moduleKey segment nor any multer middleware, so every call would 400
+// with "Unknown module key: undefined" before even reaching the "No file
+// uploaded" check.
+router.post('/followup/missing-reports/:episodeId/:moduleKey',
   verifyToken, requireRole('patient'),
-  uploadLimiter, uploadDocument.array('files', 5), handleUploadError,
+  uploadLimiter, uploadDocument.single('report'), handleUploadError,
+  followUpController.uploadMissingReport);
+
+// ── Scenario 2: advised investigations ──
+// NONE of these five had a route before this pass except the upload one,
+// and even that one didn't match the controller's params (see below) —
+// InvestigationUpload.js (frontend) could not have worked at all.
+router.get('/followup/investigations/:episodeId',
+  verifyToken, requireRole('patient'), followUpController.getInvestigations);
+router.post('/followup/investigations/:episodeId',
+  verifyToken, requireRole('patient'), followUpController.addInvestigation);
+// followUpController.uploadInvestigationReport reads req.params.invId (see
+// its own doc comment: "POST /api/episodes/:episodeId/investigations/:invId/upload")
+// and a single req.file — the old route here had no :invId segment and used
+// uploadDocument.array(...) (which sets req.files, not req.file), so this
+// always fell through to "No file uploaded".
+router.post('/followup/investigations/:episodeId/:invId/upload',
+  verifyToken, requireRole('patient'),
+  uploadLimiter, uploadDocument.single('report'), handleUploadError,
   followUpController.uploadInvestigationReport);
-router.post('/followup/visit/:episodeId',
+router.post('/followup/investigations/:episodeId/notify-doctor',
+  verifyToken, requireRole('patient'), followUpController.notifyDoctor);
+
+// ── Scenario 3: follow-up visits ──
+// getFollowUpVisits/createFollowUpVisit/saveFollowUpDraft/uploadFollowUpLab
+// had no routes at all before this pass; the old submitFollowUp route was
+// also missing :visitId, which the controller requires.
+router.get('/followup/visits/:episodeId',
+  verifyToken, requireRole('patient'), followUpController.getFollowUpVisits);
+router.post('/followup/visits/:episodeId',
+  verifyToken, requireRole('patient'), followUpController.createFollowUpVisit);
+router.put('/followup/visits/:episodeId/:visitId/draft',
+  verifyToken, requireRole('patient'), followUpController.saveFollowUpDraft);
+router.post('/followup/visits/:episodeId/:visitId/upload-lab',
+  verifyToken, requireRole('patient'),
+  uploadLimiter, uploadDocument.single('report'), handleUploadError,
+  followUpController.uploadFollowUpLab);
+router.post('/followup/visits/:episodeId/:visitId/submit',
   verifyToken, requireRole('patient'), followUpController.submitFollowUp);
 
 // ═══════════════════════════════════════════════════════════════════════════
