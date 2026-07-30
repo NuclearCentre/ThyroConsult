@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { Routes, Route, useNavigate } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer, Legend } from 'recharts';
-import { patientAPI, conditionAPI } from '../../api';
+import { patientAPI, receiptAPI } from '../../api';
 import { PatientSidebar } from '../../components/common/Sidebar';
 import { Badge, StatusBadge, EmptyState, Spinner, SectionHeader, HIPAABadge } from '../../components/common/index';
 import { useAuth } from '../../context/AuthContext';
 import ConditionSelection from '../../components/ConditionSelection';
 import { HypoQuestionnaire, HyperQuestionnaire, TcQuestionnaire } from '../../components/ConditionQuestionnaires';
+import PatientTimeline from '../../components/PatientTimeline';
+import OpinionViewer from '../../components/OpinionViewer';
 
 // ─── Condition constants ───────────────────────────────────
 const CONDITION_LABELS = {
@@ -93,15 +95,45 @@ const AddConditionFlow = ({ patient, onClose, onDone }) => {
   );
 };
 
+// ─── Episode status modal (timeline → opinion) ─────────────
+// PatientTimeline.js and OpinionViewer.js were fully built but never
+// imported/rendered anywhere in the app — patients had no UI path to see
+// their episode status or read their online opinion. This modal is that
+// path, opened from each episode card in "My conditions".
+const EpisodeStatusModal = ({ episodeId, onClose }) => {
+  const [opinionReady, setOpinionReady] = useState(false);
+
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.45)', zIndex:1000, display:'flex', alignItems:'flex-start', justifyContent:'center', overflowY:'auto', padding:'40px 16px' }}>
+      <div style={{ background:'var(--surface)', borderRadius:16, width:'100%', maxWidth:760, boxShadow:'0 8px 40px rgba(0,0,0,0.18)', minHeight:300 }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'20px 28px', borderBottom:'1px solid var(--border)' }}>
+          <div style={{ fontFamily:'var(--font-display)', fontSize:17, fontWeight:600 }}>
+            {opinionReady ? '📄 Your online opinion' : '⏳ Visit status'}
+          </div>
+          <button onClick={onClose} style={{ background:'none', border:'none', fontSize:22, cursor:'pointer', color:'var(--text-tertiary)', lineHeight:1 }}>×</button>
+        </div>
+        <div style={{ padding:'24px 28px' }}>
+          {opinionReady ? (
+            <OpinionViewer episodeId={episodeId} onAcknowledged={() => {}} />
+          ) : (
+            <PatientTimeline episodeId={episodeId} onOpinionReady={() => setOpinionReady(true)} />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── My Conditions page ────────────────────────────────────
 const MyConditions = ({ patient, onAddCondition }) => {
   const [episodes, setEpisodes] = useState([]);
   const [loading, setLoading]   = useState(true);
+  const [statusEpisodeId, setStatusEpisodeId] = useState(null);
 
   useEffect(() => {
     if (!patient?.id) return;
-    conditionAPI.getEpisodes(patient.id)
-      .then(r => setEpisodes(r.data.episodes || []))
+    patientAPI.getEpisodes(patient.id)
+      .then(eps => setEpisodes(eps || []))
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [patient]);
@@ -144,6 +176,15 @@ const MyConditions = ({ patient, onAddCondition }) => {
                       : <span className="badge badge-gray">Condition Q pending</span>}
                   </div>
                   <StatusBadge status={ep.episode_status || ep.status || 'active'} />
+                  {(ep.questionnaire_status === 'completed' || ep.core_q_complete) && (
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      style={{ marginTop: 10, width: '100%' }}
+                      onClick={() => setStatusEpisodeId(ep.id)}
+                    >
+                      View status / opinion
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -151,6 +192,9 @@ const MyConditions = ({ patient, onAddCondition }) => {
           <div style={{ textAlign:'right' }}>
             <button className="btn btn-ghost btn-sm" onClick={onAddCondition}>+ Add another condition</button>
           </div>
+          {statusEpisodeId && (
+            <EpisodeStatusModal episodeId={statusEpisodeId} onClose={() => setStatusEpisodeId(null)} />
+          )}
         </>
       )}
     </>
@@ -172,8 +216,8 @@ const Dashboard = ({ patient, consultations, invoices, onAddCondition }) => {
   const [bloodValues, setBloodValues] = useState([]);
   useEffect(() => {
     if (patient) {
-      patientAPI.getBloodValues(patient.id, { testName: 'tsh' })
-        .then(r => setBloodValues(r.data.values)).catch(() => {});
+      patientAPI.getBloodValues({ testName: 'tsh' })
+        .then(r => setBloodValues(r.values)).catch(() => {});
     }
   }, [patient]);
 
@@ -282,8 +326,8 @@ const ReportTrends = ({ patient }) => {
   useEffect(() => {
     if (!patient) return;
     setLoading(true);
-    patientAPI.getBloodValues(patient.id, { testName: selectedTest })
-      .then(r => setData(r.data.values))
+    patientAPI.getBloodValues({ testName: selectedTest })
+      .then(r => setData(r.values))
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [patient, selectedTest]);
@@ -363,9 +407,12 @@ const ReportTrends = ({ patient }) => {
 // ─── Invoices ──────────────────────────────────────────────
 const Invoices = ({ patient, invoices }) => {
   const downloadInvoice = async (paymentId, invoiceNumber) => {
-    const blob = await patientAPI.downloadInvoice(paymentId);
-    const url = URL.createObjectURL(new Blob([blob.data]));
-    const a = document.createElement('a'); a.href = url; a.download = `${invoiceNumber}.txt`; a.click();
+    // patientAPI.downloadInvoice never existed — the real PDF receipt
+    // download is receiptAPI.downloadOpinionReceipt. getBlob() (used
+    // under the hood) returns the Blob directly, not wrapped in .data.
+    const blob = await receiptAPI.downloadOpinionReceipt(paymentId);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = `${invoiceNumber}.pdf`; a.click();
   };
 
   return (
@@ -376,7 +423,7 @@ const Invoices = ({ patient, invoices }) => {
           <table className="data-table">
             <thead>
               <tr>
-                <th>Invoice no.</th><th>Date</th><th>Doctor</th><th>Type</th><th>Amount</th><th>Status</th><th>Download</th>
+                <th>Invoice no.</th><th>Date</th><th>Doctor</th><th>Amount</th><th>Status</th><th>Download</th>
               </tr>
             </thead>
             <tbody>
@@ -385,7 +432,6 @@ const Invoices = ({ patient, invoices }) => {
                   <td style={{ color: 'var(--teal-600)', fontWeight: 500 }}>{inv.invoiceNumber}</td>
                   <td>{inv.paidAt ? new Date(inv.paidAt).toLocaleDateString('en-IN') : '—'}</td>
                   <td>{inv.doctorName}</td>
-                  <td><span className="badge badge-blue">{inv.consultationType}</span></td>
                   <td style={{ fontWeight: 500 }}>₹{inv.totalAmount?.toLocaleString('en-IN')}</td>
                   <td><StatusBadge status={inv.status} /></td>
                   <td><button className="btn btn-ghost btn-sm" onClick={() => downloadInvoice(inv.id, inv.invoiceNumber)}>⬇ Download</button></td>
@@ -411,8 +457,8 @@ const ConditionsMiniList = ({ patientId }) => {
   const [loading, setLoading]   = useState(true);
   useEffect(() => {
     if (!patientId) return;
-    conditionAPI.getEpisodes(patientId)
-      .then(r => setEpisodes(r.data.episodes || []))
+    patientAPI.getEpisodes(patientId)
+      .then(eps => setEpisodes(eps || []))
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [patientId]);
@@ -447,13 +493,13 @@ const PatientPortal = () => {
   useEffect(() => {
     if (!user?.id) return;
     Promise.all([
-      patientAPI.getProfile(user.id),
-      patientAPI.getConsultations(user.id),
-      patientAPI.getInvoices(user.id),
+      patientAPI.getProfile(),
+      patientAPI.getOpinionHistory(),
+      patientAPI.getInvoices(),
     ]).then(([p, c, i]) => {
-      setPatient(p.data);
-      setConsultations(c.data.consultations || []);
-      setInvoices(i.data.invoices || []);
+      setPatient(p);
+      setConsultations(c.opinions || []);
+      setInvoices(i.invoices || []);
     }).catch(() => {}).finally(() => setLoading(false));
   }, [user]);
 
@@ -532,8 +578,8 @@ const DocumentsPage = ({ patientId }) => {
   const loadDocs = () => {
     if (!patientId) return;
     setLoading(true);
-    patientAPI.getDocuments(patientId, category || undefined)
-      .then(r => setDocs(r.data.documents || []))
+    patientAPI.getDocuments(category || undefined)
+      .then(r => setDocs(r.documents || []))
       .catch(() => {})
       .finally(() => setLoading(false));
   };
@@ -541,8 +587,9 @@ const DocumentsPage = ({ patientId }) => {
   useEffect(loadDocs, [patientId, category]);
 
   const download = async (docId, name) => {
-    const res = await patientAPI.downloadDocument(patientId, docId);
-    const url = URL.createObjectURL(new Blob([res.data]));
+    // getBlob() returns the Blob directly, not wrapped in .data.
+    const blob = await patientAPI.downloadDocument(docId);
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url; a.download = name; a.click();
   };
 

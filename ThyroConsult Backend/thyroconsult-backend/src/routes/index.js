@@ -81,6 +81,32 @@ router.get ('/patient/documents/:episodeId',
   auditPhiAccess('patient_documents'),
   patientController.getDocuments);
 
+// NOTE ON THE ROUTE ABOVE: getDocuments actually filters by patient_id only
+// (no episode concept in its SQL) and reads req.params.id — the :episodeId
+// param above was never read by the controller at all. Left as-is (still
+// broken) since some existing caller may depend on the URL shape; the
+// self-service route below is what PatientPortal.js now uses instead.
+// The following were fully implemented in patientController.js but had NO
+// routes at all — PatientPortal.js's dashboard, report-trends, invoices,
+// and documents pages were calling nonexistent API methods on load and
+// silently failing (Promise.all rejecting, swallowed by .catch(() => {})).
+router.get ('/patient/documents',
+  verifyToken, requireRole('patient'),
+  auditPhiAccess('patient_documents'),
+  patientController.getDocuments);
+router.get ('/patient/documents/download/:docId',
+  verifyToken, requireRole('patient'),
+  auditPhiAccess('patient_documents'),
+  patientController.downloadDocument);
+router.get ('/patient/opinions',
+  verifyToken, requireRole('patient'), patientController.getPatientOpinions);
+router.get ('/patient/invoices',
+  verifyToken, requireRole('patient'), patientController.getInvoices);
+router.get ('/patient/blood-values',
+  verifyToken, requireRole('patient'), patientController.getBloodReportValues);
+router.post('/patient/blood-values',
+  verifyToken, requireRole('patient'), patientController.addBloodReportValue);
+
 router.get ('/patient/episode/:episodeId/timeline',
   verifyToken, requireRole('patient'), opinionController.getEpisodeTimeline);
 

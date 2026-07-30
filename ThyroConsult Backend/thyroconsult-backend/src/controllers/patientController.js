@@ -114,9 +114,10 @@ const updatePatient = async (req, res) => {
 // ─── GET patient photo ─────────────────────────────────────
 const getPatientPhoto = async (req, res) => {
   try {
+    const patientId = req.params.id || req.user.id;
     const result = await query(
       'SELECT photo_path, photo_captured_at FROM patients WHERE id = $1',
-      [req.params.id]
+      [patientId]
     );
     if (!result.rows.length || !result.rows[0].photo_path) {
       return res.status(404).json({ error: 'No photo on record' });
@@ -133,7 +134,7 @@ const getPatientPhoto = async (req, res) => {
 
     logger.audit('PHOTO_VIEWED', {
       userId: req.user.id, userRole: req.user.role,
-      patientId: req.params.id, ip: req.ip, phiAccessed: true,
+      patientId, ip: req.ip, phiAccessed: true,
     });
 
     res.set('Content-Type', 'image/jpeg');
@@ -148,11 +149,12 @@ const getPatientPhoto = async (req, res) => {
 // ─── GET /patients/:id/documents ──────────────────────────
 const getDocuments = async (req, res) => {
   const { category } = req.query;
+  const patientId = req.params.id || req.user.id;
   try {
     let sql = `SELECT id, category, original_name, mime_type, file_size_bytes,
                opinion_id, report_date, uploaded_by_role, created_at
                FROM documents WHERE patient_id = $1 AND is_deleted = FALSE`;
-    const params = [req.params.id];
+    const params = [patientId];
 
     if (category) {
       sql += ` AND category = $2`;
@@ -170,7 +172,7 @@ const getDocuments = async (req, res) => {
 
     logger.audit('DOCUMENTS_LISTED', {
       userId: req.user.id, userRole: req.user.role,
-      patientId: req.params.id, ip: req.ip, phiAccessed: true,
+      patientId, ip: req.ip, phiAccessed: true,
     });
 
     res.json({ documents: docs, total: docs.length });
@@ -184,6 +186,7 @@ const getDocuments = async (req, res) => {
 const uploadDocument = async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   const { category } = req.body;
+  const patientId = req.params.id || req.user.id;
   const validCategories = ['blood_report', 'scan_usg', 'prescription', 'biopsy', 'other'];
   if (!validCategories.includes(category)) {
     return res.status(400).json({ error: 'Invalid document category' });
@@ -194,7 +197,7 @@ const uploadDocument = async (req, res) => {
     const fileHash = hashFile(fileBuffer);
 
     // Move to patient folder
-    const patientDir = path.join(process.env.UPLOAD_PATH || './uploads', 'documents', req.params.id);
+    const patientDir = path.join(process.env.UPLOAD_PATH || './uploads', 'documents', patientId);
     if (!fs.existsSync(patientDir)) fs.mkdirSync(patientDir, { recursive: true });
     const finalPath = path.join(patientDir, path.basename(req.file.path));
     fs.renameSync(req.file.path, finalPath);
@@ -203,7 +206,7 @@ const uploadDocument = async (req, res) => {
       `INSERT INTO documents(patient_id, category, original_name, storage_path, mime_type, file_size_bytes, file_hash, uploaded_by, uploaded_by_role)
        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
       [
-        req.params.id, category,
+        patientId, category,
         encryptPHI(req.file.originalname),
         encryptPHI(finalPath),
         req.file.mimetype,
@@ -216,15 +219,15 @@ const uploadDocument = async (req, res) => {
 
     logger.audit('DOCUMENT_UPLOADED', {
       userId: req.user.id, userRole: req.user.role,
-      patientId: req.params.id, ip: req.ip,
+      patientId, ip: req.ip,
       resource: 'document', resourceId: result.rows[0].id,
       detail: `${category} uploaded`,
     });
 
     // Auto-advance registration step if in step 6
-    const patient = await query('SELECT registration_step FROM patients WHERE id = $1', [req.params.id]);
+    const patient = await query('SELECT registration_step FROM patients WHERE id = $1', [patientId]);
     if (patient.rows[0]?.registration_step === 5) {
-      await query('UPDATE patients SET registration_step = 6 WHERE id = $1', [req.params.id]);
+      await query('UPDATE patients SET registration_step = 6 WHERE id = $1', [patientId]);
     }
 
     res.status(201).json({ message: 'Document uploaded', documentId: result.rows[0].id });
@@ -238,9 +241,10 @@ const uploadDocument = async (req, res) => {
 // ─── GET document download ─────────────────────────────────
 const downloadDocument = async (req, res) => {
   try {
+    const patientId = req.params.id || req.user.id;
     const result = await query(
       'SELECT * FROM documents WHERE id = $1 AND patient_id = $2 AND is_deleted = FALSE',
-      [req.params.docId, req.params.id]
+      [req.params.docId, patientId]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'Document not found' });
 
@@ -254,13 +258,13 @@ const downloadDocument = async (req, res) => {
     const fileBuffer = fs.readFileSync(filePath);
     const currentHash = hashFile(fileBuffer);
     if (currentHash !== doc.file_hash) {
-      logger.error('FILE_INTEGRITY_MISMATCH', { docId: doc.id, patientId: req.params.id });
+      logger.error('FILE_INTEGRITY_MISMATCH', { docId: doc.id, patientId });
       return res.status(500).json({ error: 'File integrity check failed', code: 'INTEGRITY_ERROR' });
     }
 
     logger.audit('DOCUMENT_DOWNLOADED', {
       userId: req.user.id, userRole: req.user.role,
-      patientId: req.params.id, ip: req.ip,
+      patientId, ip: req.ip,
       resource: 'document', resourceId: doc.id,
       phiAccessed: true,
     });
@@ -278,11 +282,12 @@ const downloadDocument = async (req, res) => {
 // ─── GET blood report values (for graphs) ─────────────────
 const getBloodReportValues = async (req, res) => {
   const { testName, from, to } = req.query;
+  const patientId = req.params.id || req.user.id;
   try {
     let sql = `SELECT test_name, value, unit, reference_low, reference_high, is_abnormal, report_date
                FROM blood_report_values
                WHERE patient_id = $1`;
-    const params = [req.params.id];
+    const params = [patientId];
     let idx = 2;
 
     if (testName) { sql += ` AND test_name_lower = $${idx++}`; params.push(testName.toLowerCase()); }
@@ -294,7 +299,7 @@ const getBloodReportValues = async (req, res) => {
 
     logger.audit('REPORT_TRENDS_VIEWED', {
       userId: req.user.id, userRole: req.user.role,
-      patientId: req.params.id, ip: req.ip, phiAccessed: true,
+      patientId, ip: req.ip, phiAccessed: true,
     });
 
     res.json({ values: result.rows, total: result.rows.length });
@@ -307,6 +312,7 @@ const getBloodReportValues = async (req, res) => {
 // ─── POST blood report value (manual entry or parsed) ─────
 const addBloodReportValue = async (req, res) => {
   const { documentId, testName, value, unit, referenceLow, referenceHigh, reportDate, labName } = req.body;
+  const patientId = req.params.id || req.user.id;
   try {
     const isAbnormal = (referenceLow != null && value < referenceLow) ||
                        (referenceHigh != null && value > referenceHigh);
@@ -315,7 +321,7 @@ const addBloodReportValue = async (req, res) => {
       `INSERT INTO blood_report_values
        (document_id, patient_id, test_name, test_name_lower, value, unit, reference_low, reference_high, is_abnormal, report_date)
        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-      [documentId, req.params.id, testName, testName.toLowerCase(), value, unit,
+      [documentId, patientId, testName, testName.toLowerCase(), value, unit,
        referenceLow, referenceHigh, isAbnormal, reportDate]
     );
 
@@ -337,6 +343,7 @@ const addBloodReportValue = async (req, res) => {
 // been purged of "consultation" wording so nothing leaks out via the API.
 const getPatientOpinions = async (req, res) => {
   try {
+    const patientId = req.params.id || req.user.id;
     const result = await query(
       `SELECT c.id, c.opinion_number, c.status,
               c.started_at, c.completed_at, c.duration_minutes,
@@ -346,7 +353,7 @@ const getPatientOpinions = async (req, res) => {
        JOIN doctors d ON c.doctor_id = d.id
        WHERE c.patient_id = $1
        ORDER BY c.created_at DESC`,
-      [req.params.id]
+      [patientId]
     );
 
     const opinions = result.rows.map(r => ({
@@ -365,7 +372,7 @@ const getPatientOpinions = async (req, res) => {
 
     logger.audit('OPINIONS_VIEWED', {
       userId: req.user.id, userRole: req.user.role,
-      patientId: req.params.id, ip: req.ip, phiAccessed: true,
+      patientId, ip: req.ip, phiAccessed: true,
     });
 
     res.json({ opinions, total: opinions.length });
@@ -378,6 +385,7 @@ const getPatientOpinions = async (req, res) => {
 // ─── GET invoices ──────────────────────────────────────────
 const getInvoices = async (req, res) => {
   try {
+    const patientId = req.params.id || req.user.id;
     const result = await query(
       `SELECT p.id, p.invoice_number, p.opinion_fee, p.platform_fee,
               p.total_amount, p.status, p.payment_method, p.paid_at,
@@ -388,7 +396,7 @@ const getInvoices = async (req, res) => {
        LEFT JOIN consultations c ON c.appointment_id = a.id
        WHERE p.patient_id = $1
        ORDER BY p.created_at DESC`,
-      [req.params.id]
+      [patientId]
     );
 
     const invoices = result.rows.map(r => ({

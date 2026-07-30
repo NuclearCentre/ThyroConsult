@@ -142,7 +142,27 @@ export const patientAPI = {
   getConsents:    ()                    => get('/patient/consents'),
   saveConsents:   (consentType, agreed, signatureData) =>
     post('/patient/consents', { consentType, agreed, signatureData }),
-  getDocuments:   (episodeId)           => get(`/patient/documents/${episodeId}`),
+  // Self-service — filters by the logged-in patient's own id, optional
+  // category query. (There's also a separate, still-broken
+  // /patient/documents/:episodeId route another caller may depend on —
+  // left alone, not touched here.)
+  getDocuments:   (category)            => get('/patient/documents', category ? { category } : undefined),
+  downloadDocument: (docId)             => getBlob(`/patient/documents/download/${docId}`),
+  // PatientPortal.js/DoctorPortal.js were calling these under the names
+  // getConsultations/getInvoices/getBloodValues — none of which existed
+  // anywhere in this file. The backend controller functions
+  // (getPatientOpinions/getInvoices/getBloodReportValues) were fully
+  // built but had no routes at all, so these silently failed on every
+  // page load (Promise.all rejecting, swallowed by an empty .catch()).
+  // Named getOpinionHistory here (not getConsultations) per the platform
+  // language rule — "consultation" is banned everywhere on the platform.
+  // The call sites in PatientPortal.js still say "consultation" in UI
+  // text/variable names; that's a separate wording cleanup, flagged
+  // separately, not fixed as part of this pass.
+  getOpinionHistory: ()                 => get('/patient/opinions'),
+  getInvoices:    ()                    => get('/patient/invoices'),
+  getBloodValues: (params)              => get('/patient/blood-values', params),
+  addBloodValue:  (data)                => post('/patient/blood-values', data),
   // Photo upload — multipart, use FormData directly (field name must be 'photo')
   uploadPhoto:    (formData)            => apiFetch('/patient/photo', {
     method: 'POST', body: formData, headers: { Authorization: `Bearer ${getToken()}` },
@@ -245,15 +265,14 @@ export const paymentAPI = {
 // ─── Receipts ─────────────────────────────────────────────────────────────
 
 export const receiptAPI = {
-  // These open PDFs — use window.open with token in URL or fetch as blob
-  // NOTE: this URL has no patientId — receiptController.js's functions
-  // currently read patientId from req.params.id, which won't exist on
-  // this route. They need to read req.user.id instead (fixed this pass,
-  // see receiptController.js).
+  // These return raw PDF bytes, not JSON — apiFetch always calls
+  // response.json() on its response, which throws a SyntaxError on binary
+  // PDF data. getBlob() is the correct fetch wrapper for these; these two
+  // never worked before this fix.
   downloadOpinionReceipt: (paymentId) =>
-    apiFetch(`/receipt/opinion/${paymentId}`, { method: 'GET' }),
+    getBlob(`/receipt/opinion/${paymentId}`),
   downloadFollowUpReceipt: (followupPaymentId) =>
-    apiFetch(`/receipt/followup/${followupPaymentId}`, { method: 'GET' }),
+    getBlob(`/receipt/followup/${followupPaymentId}`),
   getInvoiceList: () => get('/receipt/invoices'),
 };
 
