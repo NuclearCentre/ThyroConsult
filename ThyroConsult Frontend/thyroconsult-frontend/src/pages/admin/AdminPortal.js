@@ -33,7 +33,7 @@ const AdminDashboard = () => {
         <h2 style={{ fontSize:'1.4rem' }}>Platform overview</h2>
         <div style={{ display:'flex', gap:8 }}>
           <span className="badge badge-teal">✓ All systems operational</span>
-          <span className="badge badge-indigo">HIPAA compliant</span>
+          <span className="badge badge-indigo">Secure & Encrypted</span>
         </div>
       </div>
 
@@ -243,7 +243,7 @@ const AuditLog = () => {
 
   return (
     <>
-      <SectionHeader title="HIPAA audit log" subtitle={`${total.toLocaleString()} total events`} action={
+      <SectionHeader title="Data access audit log" subtitle={`${total.toLocaleString()} total events`} action={
         <button className="btn btn-primary btn-sm" onClick={exportLog}>⬇ Export CSV</button>
       } />
       <div className="card">

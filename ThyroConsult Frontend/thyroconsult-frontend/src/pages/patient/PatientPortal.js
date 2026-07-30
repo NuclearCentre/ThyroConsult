@@ -3,7 +3,7 @@ import { Routes, Route, useNavigate } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer, Legend } from 'recharts';
 import { patientAPI, receiptAPI } from '../../api';
 import { PatientSidebar } from '../../components/common/Sidebar';
-import { Badge, StatusBadge, EmptyState, Spinner, SectionHeader, HIPAABadge } from '../../components/common/index';
+import { Badge, StatusBadge, EmptyState, Spinner, SectionHeader, SecureBadge } from '../../components/common/index';
 import { useAuth } from '../../context/AuthContext';
 import ConditionSelection from '../../components/ConditionSelection';
 import { HypoQuestionnaire, HyperQuestionnaire, TcQuestionnaire } from '../../components/ConditionQuestionnaires';
@@ -229,7 +229,7 @@ const Dashboard = ({ patient, consultations, invoices, onAddCondition }) => {
       <SectionHeader
         title={`Good day, ${patient?.firstName || ''}` }
         subtitle={new Date().toLocaleDateString('en-IN', { weekday:'long', year:'numeric', month:'long', day:'numeric' })}
-        action={<HIPAABadge />}
+        action={<SecureBadge />}
       />
 
       <div className="stat-grid">
@@ -544,7 +544,7 @@ const PatientPortal = () => {
         <Route path="invoices" element={<Invoices patient={patient} invoices={invoices} />} />
         <Route path="profile" element={
           <>
-            <SectionHeader title="My profile" action={<HIPAABadge />} />
+            <SectionHeader title="My profile" action={<SecureBadge />} />
             {patient && (
               <div className="card">
                 <div className="form-grid-2">

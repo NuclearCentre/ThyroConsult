@@ -44,6 +44,16 @@ const CONDITIONS = [
     bg: '#fdf0f0',
     border: '#e8a5a5',
   },
+  {
+    id: 'nodule',
+    icon: '🟣',
+    title: 'Thyroid Nodule',
+    subtitle: 'Lump or swelling in the thyroid gland',
+    symptoms: ['Neck lump or swelling', 'Difficulty swallowing', 'Voice changes', 'Rapidly growing nodule', 'Found on scan/ultrasound'],
+    color: '#534AB7',
+    bg: '#EEEDFE',
+    border: '#c7c2f0',
+  },
 ];
 
 const ConditionSelection = ({ patientId, doctorId, onComplete, onBack }) => {
@@ -56,8 +66,16 @@ const ConditionSelection = ({ patientId, doctorId, onComplete, onBack }) => {
     setLoading(true);
     setError('');
     try {
-      const res = await conditionAPI.selectCondition(patientId, selected, doctorId);
-      const { episode } = res.data;
+      // selectCondition takes a single body object — patientId isn't even
+      // needed, the backend derives it from the JWT (req.user.patientId).
+      // This previously called selectCondition(patientId, selected,
+      // doctorId) against a (data) => post(...) signature, so `data`
+      // silently became the raw patientId string and condition/doctorId
+      // were dropped entirely — the backend always rejected it as an
+      // invalid condition.
+      const res = await conditionAPI.selectCondition({ condition: selected, doctorId });
+      // Backend returns { message, episode } flat, not wrapped in .data.
+      const { episode } = res;
       onComplete({ condition: selected, episodeId: episode.id });
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to save condition selection. Please try again.');

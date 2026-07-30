@@ -127,10 +127,10 @@ function generateReceipt(data) {
       doc.save().font('Helvetica').fontSize(10).fillColor('#A7F3D0')
          .text('Thyroid Online Opinion Platform', MARGIN + 54, 44, { lineBreak: false }).restore();
 
-      // HIPAA badge
+      // Secure badge
       fillRect(W - 130, 18, 90, 22, '#0D7A59', 4);
       doc.save().font('Helvetica-Bold').fontSize(7).fillColor(COLOR.white)
-         .text('HIPAA COMPLIANT', W - 130, 25, { width: 90, align: 'center', lineBreak: false }).restore();
+         .text('SECURE & ENCRYPTED', W - 130, 25, { width: 90, align: 'center', lineBreak: false }).restore();
 
       y = 108;
 
@@ -265,7 +265,7 @@ function generateReceipt(data) {
          .text('This is a computer-generated receipt and does not require a physical signature.', MARGIN, y, { width: CONTENT_W, align: 'center', lineBreak: false }).restore();
       y += 12;
       doc.save().font('Helvetica').fontSize(8).fillColor(COLOR.gray400)
-         .text('ThyroConsult  |  HIPAA-Compliant Thyroid Online Opinion Platform', MARGIN, y, { width: CONTENT_W, align: 'center', lineBreak: false }).restore();
+         .text('ThyroConsult  |  Thyroid Online Opinion Platform', MARGIN, y, { width: CONTENT_W, align: 'center', lineBreak: false }).restore();
 
       doc.end();
     } catch (err) {

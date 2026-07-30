@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import Webcam from 'react-webcam';
 import SignaturePad from 'react-signature-canvas';
 import { authAPI, doctorAPI, patientAPI, appointmentAPI } from '../../api';
-import { Logo, HIPAABadge, Alert, Spinner } from '../../components/common/index';
+import { Logo, SecureBadge, Alert, Spinner } from '../../components/common/index';
 import ConditionSelection from '../../components/ConditionSelection';
 import CoreQuestionnaire from '../../components/CoreQuestionnaire';
 import { HypoQuestionnaire, HyperQuestionnaire } from '../../components/ConditionQuestionnaires';
@@ -38,8 +38,8 @@ const SUB_STEP_CORE_Q           = '5.6';
 const SUB_STEP_CONDITION_Q      = '5.7';
 
 const CONSENT_TEXT = {
-  treatment: `I, the undersigned, hereby consent to receive thyroid online opinion services from the licensed physicians at ThyroConsult. I understand that online opinions will be provided via this secure, HIPAA-compliant platform. I acknowledge that I have been fully informed of the nature of the online opinion service, including its risks, benefits, and available alternatives. I understand my case will be documented and that records will be maintained securely in accordance with applicable medical record laws.`,
-  data_privacy: `I consent to the secure collection, storage, and processing of my Protected Health Information (PHI) as described under HIPAA Privacy Rule 45 CFR §164. I understand that my data will be encrypted using AES-256 standards and will only be accessible to my treating physician and authorised platform administrators. My data will not be sold, shared, or used for any purpose other than my medical care without my explicit written consent.`,
+  treatment: `I, the undersigned, hereby consent to receive thyroid online opinion services from the licensed physicians at ThyroConsult. I understand that online opinions will be provided via this secure, encrypted platform. I acknowledge that I have been fully informed of the nature of the online opinion service, including its risks, benefits, and available alternatives. I understand my case will be documented and that records will be maintained securely in accordance with applicable medical record laws.`,
+  data_privacy: `I consent to the secure collection, storage, and processing of my personal and health information in accordance with applicable data protection laws. I understand that my data will be encrypted using AES-256 standards and will only be accessible to my treating physician and authorised platform administrators. My data will not be sold, shared, or used for any purpose other than my medical care without my explicit written consent.`,
   telemedicine: `I understand and accept the limitations of online opinion services including the inability to perform physical examinations. I consent to receive online thyroid opinion via this platform. I acknowledge that in case of a medical emergency, I should contact emergency services immediately. I have been informed about the technology requirements and privacy measures in place.`,
 };
 
@@ -331,7 +331,7 @@ const RegisterPage = () => {
       <div style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)', padding: '14px 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 40 }}>
         <Logo />
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <HIPAABadge />
+          <SecureBadge />
           {savedAt && <span className="autosave">✓ Saved {savedAt}</span>}
         </div>
       </div>
@@ -536,7 +536,6 @@ const RegisterPage = () => {
           <div className="card">
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
               <h3>Electronic consent form</h3>
-              <span style={{ fontSize: 11, background: 'var(--indigo-50)', color: 'var(--indigo-800)', padding: '3px 9px', borderRadius: 20, fontWeight: 500 }}>HIPAA §164.508</span>
             </div>
             {Object.entries(CONSENT_TEXT).map(([type, text]) => {
               const labels = { treatment: 'Treatment consent', data_privacy: 'Data privacy', telemedicine: 'Telemedicine consent' };
@@ -559,7 +558,7 @@ const RegisterPage = () => {
             <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
               <button className="btn btn-secondary btn-sm" onClick={() => sigPadRef.current?.clear()}>Clear signature</button>
             </div>
-            <p style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Timestamp, IP address, and document hash are recorded for HIPAA compliance.</p>
+            <p style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Timestamp, IP address, and document hash are recorded for compliance and audit purposes.</p>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 20 }}>
               <button className="btn btn-secondary" onClick={() => setStep(2)}>← Back</button>
               <button className="btn btn-primary btn-lg" onClick={submitConsents} disabled={loading || !Object.values(consents).every(Boolean)}>

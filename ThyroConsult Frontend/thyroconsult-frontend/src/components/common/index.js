@@ -14,14 +14,14 @@ export const Logo = ({ size = 'md', light = false }) => {
   );
 };
 
-// ─── HIPAA Badge ───────────────────────────────────────────
-export const HIPAABadge = () => (
+// ─── Secure Badge ──────────────────────────────────────────
+export const SecureBadge = () => (
   <span className="hipaa-badge">
     <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
       <path d="M6 1L1.5 3v3c0 2.76 1.98 5.34 4.5 6 2.52-.66 4.5-3.24 4.5-6V3L6 1z" fill="var(--teal-400)" opacity="0.2"/>
       <path d="M4 6l1.5 1.5L8 4" stroke="var(--teal-600)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
     </svg>
-    HIPAA Protected
+    Secure & Encrypted
   </span>
 );
 

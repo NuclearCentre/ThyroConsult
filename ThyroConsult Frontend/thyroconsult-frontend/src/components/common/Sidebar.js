@@ -109,7 +109,7 @@ export const AdminSidebar = () => {
         <NavItem to="/admin/patients" icon="🏥" label="Patient records" />
         <NavItem to="/admin/doctors" icon="👨‍⚕️" label="Doctor management" />
         <NavItem to="/admin/payments" icon="💳" label="Payments & invoices" />
-        <NavItem to="/admin/audit" icon="🔍" label="HIPAA audit log" />
+        <NavItem to="/admin/audit" icon="🔍" label="Data access audit log" />
         <NavItem to="/admin/security" icon="🔒" label="Encryption & security" />
         <NavItem to="/admin/roles" icon="🔑" label="Roles & permissions" />
         <NavItem to="/admin/alerts" icon="🔔" label="Alerts & notifications" />

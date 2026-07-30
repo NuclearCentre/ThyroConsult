@@ -77,9 +77,9 @@ const LoginPage = () => {
           )}
         </div>
 
-        {/* HIPAA notice */}
+        {/* Security notice */}
         <p style={{ textAlign: 'center', fontSize: 12, color: 'var(--text-tertiary)', marginTop: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
-          🔒 HIPAA-compliant · End-to-end encrypted · Your data is protected
+          🔒 End-to-end encrypted · Your data is protected
         </p>
       </div>
     </div>
