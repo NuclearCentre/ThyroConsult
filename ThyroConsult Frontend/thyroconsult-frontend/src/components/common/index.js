@@ -1,4 +1,5 @@
 import React from 'react';
+import ThyroidLoader from './ThyroidLoader';
 
 // ─── Logo ──────────────────────────────────────────────────
 export const Logo = ({ size = 'md', light = false }) => {
@@ -26,8 +27,13 @@ export const SecureBadge = () => (
 );
 
 // ─── Spinner ───────────────────────────────────────────────
-export const Spinner = ({ size = 20, color = 'var(--teal-400)' }) => (
-  <div style={{ width: size, height: size, border: `2px solid var(--border-md)`, borderTopColor: color, borderRadius: '50%', animation: 'spin 0.7s linear infinite', flexShrink: 0 }} />
+// Was a plain CSS-spun ring; now the ThyroConsult thyroid mark with a dark
+// strip tracing its outline. Same `size`/`color` props as before, so every
+// existing <Spinner size={32} /> call site keeps working unchanged — plus
+// a new `active` prop: pass active={false} once the operation completes
+// and the strip stops moving and fades out.
+export const Spinner = ({ size = 20, color = 'var(--teal-400)', active = true }) => (
+  <ThyroidLoader size={size} color={color} active={active} />
 );
 
 // ─── Loading Screen ────────────────────────────────────────

@@ -7,6 +7,56 @@ const { notificationService } = require('../services/notificationService');
 const { notificationTemplates } = require('../services/notificationTemplates');
 const { decryptPHI } = require('../utils/encryption');
 const { calculateAge } = require('../utils/calculateAge');
+const { translateOpinionToPatientLanguage } = require('../services/translationService');
+
+/**
+ * Translate a just-submitted/amended opinion into the patient's
+ * preferred_language and persist the result. Never throws — on failure
+ * the opinion row is left with translation_status='failed' and the
+ * English fields already saved are NOT affected. Per product decision:
+ * the physician's submission is never blocked by this; the patient
+ * portal is responsible for holding off display until status='success'.
+ */
+async function translateOpinionAsync(opinionId, patientId, fields) {
+  try {
+    const patRow = await db.query('SELECT preferred_language FROM patients WHERE id = $1', [patientId]);
+    const lang = patRow.rows[0]?.preferred_language || 'en';
+
+    if (lang === 'en') {
+      await db.query(
+        `UPDATE opinions SET translation_status = 'not_required', translated_lang = 'en' WHERE id = $1`,
+        [opinionId]
+      );
+      return;
+    }
+
+    await db.query(
+      `UPDATE opinions SET translation_status = 'pending', translation_attempted_at = NOW() WHERE id = $1`,
+      [opinionId]
+    );
+
+    const translated = await translateOpinionToPatientLanguage(fields, lang);
+
+    await db.query(
+      `UPDATE opinions SET
+         clinical_summary_translated = $1,
+         impression_translated       = $2,
+         advice_translated           = $3,
+         remarks_translated          = $4,
+         translated_lang              = $5,
+         translation_status           = 'success',
+         translation_completed_at     = NOW()
+       WHERE id = $6`,
+      [translated.clinicalSummary, translated.impression, translated.advice, translated.remarks, lang, opinionId]
+    );
+  } catch (err) {
+    console.error('translateOpinionAsync error:', err);
+    await db.query(
+      `UPDATE opinions SET translation_status = 'failed' WHERE id = $1`,
+      [opinionId]
+    ).catch((e) => console.error('translateOpinionAsync: failed to mark status failed', e));
+  }
+}
 
 // patients.first_name/last_name/dob/mobile/email/whatsapp are application-layer
 // AES-256-GCM encrypted (see utils/encryption.js) — never usable directly in
@@ -136,7 +186,8 @@ exports.getEpisodeForReview = async (req, res) => {
       `SELECT
          pce.*,
          p.first_name, p.last_name, p.dob, p.gender, p.mobile, p.email,
-         p.address_line1, p.address_line2, p.city, p.state, p.pincode
+         p.address_line1, p.address_line2, p.city, p.state, p.pincode,
+         p.preferred_language
        FROM patient_condition_episodes pce
        JOIN patients p ON p.id = pce.patient_id
        WHERE pce.id = $1 AND pce.primary_doctor_id = $2`,
@@ -172,6 +223,23 @@ exports.getEpisodeForReview = async (req, res) => {
         [episodeId]
       );
       questionnaireData = qResult.rows[0] || null;
+
+      // Physician portal is English-only, always. If the patient's
+      // language isn't English, overwrite each free-text field with its
+      // English translation (physician's own correction takes priority
+      // over the AI's translation) before this reaches the response.
+      // field_translations itself (raw map) stays on the object too, so
+      // a "correct this translation" UI can diff against the AI output.
+      if (questionnaireData && episode.preferred_language && episode.preferred_language !== 'en') {
+        const translations = questionnaireData.field_translations || {};
+        for (const [field, entry] of Object.entries(translations)) {
+          if (!entry) continue;
+          const english = entry.en_corrected ?? entry.en_ai;
+          if (english !== undefined && english !== null) {
+            questionnaireData[field] = english;
+          }
+        }
+      }
     }
 
     // Uploaded documents
@@ -355,6 +423,11 @@ exports.submitOpinion = async (req, res) => {
     );
 
     res.json({ success: true, message: 'Online opinion submitted successfully', opinionId });
+
+    // Fire-and-forget — physician's submission is never blocked on this.
+    // Patient portal holds off showing the opinion until translation_status
+    // is 'success' (or 'not_required' if the patient's language is English).
+    translateOpinionAsync(opinionId, ep.patient_id, { clinicalSummary, impression, advice, remarks });
   } catch (err) {
     console.error('submitOpinion error:', err);
     res.status(500).json({ success: false, message: 'Failed to submit opinion' });
@@ -400,6 +473,11 @@ exports.amendOpinion = async (req, res) => {
     );
 
     res.json({ success: true, message: 'Opinion amended successfully' });
+
+    // Content changed — re-translate. Patient portal will hold off showing
+    // the (now stale) previous translation while this completes, same as
+    // on first submission.
+    translateOpinionAsync(opinionId, op.patient_id, { clinicalSummary, impression, advice, remarks });
   } catch (err) {
     console.error('amendOpinion error:', err);
     res.status(500).json({ success: false, message: 'Failed to amend opinion' });
@@ -434,6 +512,73 @@ exports.closeEpisode = async (req, res) => {
   }
 };
 
+// ─── 7b. Doctor: correct a free-text field's AI translation ───────────────
+// PATCH /api/physician/episode/:episodeId/questionnaire-translation
+// Body: { table: 'core_questionnaire'|'hypo_questionnaire'|'hyper_questionnaire'
+//              |'tc_questionnaire'|'nodule_questionnaire', field: string, correctedText: string }
+//
+// Stores the correction in field_translations[field].en_corrected — the
+// AI's original en_ai is left untouched for audit (migration 019). The
+// original patient-language text in the plain column is never touched by
+// this — the patient portal keeps showing exactly what the patient typed.
+
+const TRANSLATABLE_TABLES = new Set([
+  'core_questionnaire', 'hypo_questionnaire', 'hyper_questionnaire',
+  'tc_questionnaire', 'nodule_questionnaire',
+]);
+
+exports.correctFieldTranslation = async (req, res) => {
+  try {
+    const { episodeId } = req.params;
+    const doctorId = req.user.id;
+    const { table, field, correctedText } = req.body;
+
+    if (!TRANSLATABLE_TABLES.has(table)) {
+      return res.status(400).json({ success: false, message: 'Invalid table' });
+    }
+    if (!field || typeof correctedText !== 'string') {
+      return res.status(400).json({ success: false, message: 'field and correctedText are required' });
+    }
+
+    const epCheck = await db.query(
+      `SELECT id FROM patient_condition_episodes WHERE id = $1 AND primary_doctor_id = $2`,
+      [episodeId, doctorId]
+    );
+    if (!epCheck.rows.length) {
+      return res.status(403).json({ success: false, message: 'Episode not assigned to you' });
+    }
+
+    // table is validated against TRANSLATABLE_TABLES above (not user-controlled
+    // SQL) — safe to interpolate.
+    const existing = await db.query(
+      `SELECT field_translations FROM ${table} WHERE episode_id = $1`,
+      [episodeId]
+    );
+    if (!existing.rows.length) {
+      return res.status(404).json({ success: false, message: 'Questionnaire not found for this episode' });
+    }
+
+    const translations = existing.rows[0].field_translations || {};
+    if (!translations[field]) {
+      // No AI translation exists yet for this field (e.g. patient's language
+      // is English, so it was never translated) — still allow the physician
+      // to record a correction, with en_ai left null.
+      translations[field] = { en_ai: null, en_corrected: null, translated_at: null };
+    }
+    translations[field].en_corrected = correctedText;
+
+    await db.query(
+      `UPDATE ${table} SET field_translations = $1::jsonb WHERE episode_id = $2`,
+      [JSON.stringify(translations), episodeId]
+    );
+
+    res.json({ success: true, message: 'Translation correction saved' });
+  } catch (err) {
+    console.error('correctFieldTranslation error:', err);
+    res.status(500).json({ success: false, message: 'Failed to save correction' });
+  }
+};
+
 // ─── 8. Patient: get opinion ───────────────────────────────────────────────
 
 exports.getPatientOpinion = async (req, res) => {
@@ -455,17 +600,35 @@ exports.getPatientOpinion = async (req, res) => {
     }
 
     const op = result.rows[0];
+
+    // Gate on translation status (migration 019). 'not_required' means the
+    // patient's language is English — nothing to wait for. 'success' means
+    // the translated_* columns are ready. 'pending'/'failed' means we must
+    // NOT show untranslated English to a patient on a non-English portal —
+    // hold the opinion back with a status the frontend can poll on, rather
+    // than an error or a silent English fallback.
+    if (op.translation_status === 'pending' || op.translation_status === 'failed') {
+      return res.json({
+        success: true,
+        data: null,
+        translationPending: true,
+        message: 'Your doctor\'s opinion is ready and is being translated into your language — please check back shortly.',
+      });
+    }
+
+    const useTranslated = op.translation_status === 'success';
     res.json({
       success: true,
       data: {
         opinionId:       op.id,
         doctorName:      `Dr. ${decryptPHI(op.doctor_first)} ${decryptPHI(op.doctor_last)}`,
         qualification:   op.qualification,
-        clinicalSummary: op.clinical_summary,
-        impression:      op.impression,
-        advice:          op.advice,
+        clinicalSummary: useTranslated ? op.clinical_summary_translated : op.clinical_summary,
+        impression:      useTranslated ? op.impression_translated      : op.impression,
+        advice:          useTranslated ? op.advice_translated          : op.advice,
         investigations:  op.investigations || [],
-        remarks:         op.remarks,
+        remarks:         useTranslated ? op.remarks_translated         : op.remarks,
+        language:        useTranslated ? op.translated_lang : 'en',
         status:          op.status,
         submittedAt:     op.submitted_at,
         acknowledgedAt:  op.acknowledged_at,

@@ -284,7 +284,7 @@ function fmtDate(dateStr) {
 
 // ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
 
-export default function HyperQuestionnaire({ episodeId, patientId, patientGender, maritalStatus, hysterectomyDone, onComplete, onBack }) {
+export default function HyperQuestionnaire({ episodeId, patientId, patientDob, patientGender, maritalStatus, hysterectomyDone, onComplete, onBack }) {
   const isFemale = patientGender === "female" || patientGender === "Female";
   const hidePregnancy = ["unmarried", "divorced", "widowed"].includes((maritalStatus || "").toLowerCase()) || hysterectomyDone;
 
@@ -298,12 +298,22 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
   const set = useCallback((key, value) => setData(prev => ({ ...prev, [key]: value })), []);
   const get = useCallback((key, fallback = "") => (data[key] !== undefined ? data[key] : fallback), [data]);
 
+  // DOB/gender no longer asked here at all (A1/A2 removed — patient already
+  // gave these at registration; TC/Nodule already worked this way, this
+  // brings Hyper in line with them). data.dob is still pre-filled from the
+  // prop so the ~35 existing get("dob") call sites throughout this file
+  // (mostly minDate={get("dob")} on duration pickers) keep working
+  // unchanged rather than needing to touch every one individually.
+  useEffect(() => {
+    if (patientDob) setData(prev => ({ ...prev, dob: patientDob }));
+  }, [patientDob]);
+
   // ── Dynamic page list ─────────────────────────────────────────────────────
   const allPages = useMemo(() => {
     const internalHysterectomy = get("hysterectomy_status") === "yes";
     const hideInfertility = !isFemale || hidePregnancy || internalHysterectomy;
     const pages = [
-      "A1", "A2", "A3",
+      "A3",
       ...(isFemale ? ["B1", "B2", "B3", "B4", "B5"] : []),
       "C1", "C2a", "C2b", "C3", "C4", "C5",
       "D1", "D2", "D3", "D4", "D5", "D6",
@@ -333,11 +343,13 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
 
   // Blocks proceeding past a screen whose year-of-event field is before
   // the patient's own birth year.
-  const dobYear = get("dob") ? new Date(get("dob")).getFullYear() : null;
+  // dob is guaranteed present from registration (patientDob prop) now that
+  // A1 is gone — no more "did the patient fill this in" check needed here,
+  // matching TC/Nodule's equivalent logic.
+  const dobYear = patientDob ? new Date(patientDob).getFullYear() : null;
   const yearFieldByPage = { B1: "hysterectomy_year", B2: "menopause_year", C1: "thyroid_dx_year", C2a: "thyroid_surgery_year" };
   const currentYearField = yearFieldByPage[pageId];
-  const dobMissing = pageId === "A1" && !get("dob") && !get("age_years");
-  const yearInvalid = dobMissing || (dobYear && currentYearField && get(currentYearField) && parseInt(get(currentYearField)) < dobYear);
+  const yearInvalid = dobYear && currentYearField && get(currentYearField) && parseInt(get(currentYearField)) < dobYear;
 
   const next = () => { if (!yearInvalid) setCurrentPage(p => Math.min(p + 1, allPages.length - 1)); };
   const prev = () => setCurrentPage(p => Math.max(p - 1, 0));
@@ -408,32 +420,6 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientGender
       // ══════════════════════════════════════════════════════
       // MODULE A — DEMOGRAPHICS
       // ══════════════════════════════════════════════════════
-
-      case "A1": return (
-        <div>
-          <h3>What is your date of birth?</h3>
-          <HyperField>
-            <HyperDobField
-              dob={get("dob")} ageYears={get("age_years")} ageMonths={get("age_months")}
-              onChange={({ dob, ageYears, ageMonths }) => { set("dob", dob); set("age_years", ageYears); set("age_months", ageMonths); }}
-            />
-          </HyperField>
-          {get("dob") && (() => {
-            const d = new Date(get("dob")); const now = new Date();
-            const y = now.getFullYear() - d.getFullYear() - (now < new Date(now.getFullYear(), d.getMonth(), d.getDate()) ? 1 : 0);
-            return <p style={{ color: "#3a7bd5", fontWeight: 600 }}>Age: {y} years</p>;
-          })()}
-          <HyperOutputBox text={get("dob") ? `DOB: ${fmtDate(get("dob"))}` : ""} />
-        </div>
-      );
-
-      case "A2": return (
-        <div>
-          <h3>What is your biological sex?</h3>
-          <HyperRadioGroup value={get("sex_status")} onChange={v => set("sex_status", v)} options={[{ value: "male", label: "Male" }, { value: "female", label: "Female" }, { value: "other", label: "Other" }]} inline />
-          <HyperOutputBox text={get("sex_status") ? get("sex_status").charAt(0).toUpperCase() + get("sex_status").slice(1) : ""} />
-        </div>
-      );
 
       case "A3": return (
         <div>

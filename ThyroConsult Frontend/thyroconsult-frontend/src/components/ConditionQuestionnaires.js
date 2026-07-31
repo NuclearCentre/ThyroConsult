@@ -155,6 +155,18 @@ const HypoTextInput = ({ value, onChange, placeholder, type = 'text', min, max, 
     style={{ fontSize: 13, ...style }} />
 );
 
+// Was referenced at two call sites (antitpoUnit/antitgUnit) but never
+// defined anywhere in this file — a plain single-value dropdown, matching
+// the same native <select> pattern already used inline for the FT3/FT4/TSH
+// unit pickers elsewhere in this component (see HypoLabScreen below).
+const HypoSelect = ({ value, onChange, options, placeholder = 'Select...', style }) => (
+  <select className="form-input" style={{ fontSize: 13, ...style }}
+    value={value || ''} onChange={e => onChange(e.target.value)}>
+    <option value="">{placeholder}</option>
+    {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+  </select>
+);
+
 // Year-of-event input (diagnosis / surgery / RAI / any other "what year
 // did X happen" question) that can never be before the patient's own
 // birth year. A plain HTML min attribute doesn't stop someone from
@@ -462,8 +474,6 @@ function formatDurationOver(d) {
 // (there shouldn't be any) default to "complete" rather than silently
 // blocking submission on something unvalidated.
 const HYPO_PAGE_VALIDATORS = {
-  A1: (f) => !!f.dob || !!f.ageYears,
-  A2: (f) => !!f.sex,
   A3: (f) => !!f.maritalStatus,
   A4: (f) => !!f.occupation && (f.occupation !== 'other' || !!f.occupationOther),
   B1: (f) => !!f.hysterectomy && (f.hysterectomy !== 'yes' || (!!(f.hysterectomyDate?.date || f.hysterectomyDate?.years) && !!f.hysterectomyReason && (f.hysterectomyReason !== 'others' || !!f.hysterectomyOther))),
@@ -662,8 +672,6 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
   // ── All pages definition ──────────────────────────────
   const allPages = [
     // ── MODULE A ──
-    { id: 'A1', module: 'A', title: 'Date of birth' },
-    { id: 'A2', module: 'A', title: 'Biological sex' },
     { id: 'A3', module: 'A', title: 'Marital status' },
     { id: 'A4', module: 'A', title: 'Occupation' },
 
@@ -781,12 +789,14 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
   }, [f.thyroidSurgeryType, f.thyroidRai, f.thyroidDx, f.thyroidDxType]);
 
   // Blocks proceeding past a screen whose year-of-event field (diagnosis/
-  // surgery/RAI year) is before the patient's own birth year.
-  const dobYear = f.dob ? new Date(f.dob).getFullYear() : null;
+  // surgery/RAI year) is before the patient's own birth year. dob is
+  // guaranteed present from registration (patientDob prop) now that A1 is
+  // gone — no more "did the patient fill this in" check needed here,
+  // matching TC/Nodule's equivalent logic.
+  const dobYear = patientDob ? new Date(patientDob).getFullYear() : (f.dob ? new Date(f.dob).getFullYear() : null);
   const yearFieldByPage = { C1: 'thyroidDxYear', C2a: 'thyroidSurgeryYear', C2b: 'thyroidRaiYear' };
   const currentYearField = yearFieldByPage[page?.id];
-  const dobMissing = page?.id === 'A1' && !f.dob && !f.ageYears;
-  const yearInvalid = dobMissing || (dobYear && currentYearField && f[currentYearField] && parseInt(f[currentYearField]) < dobYear);
+  const yearInvalid = dobYear && currentYearField && f[currentYearField] && parseInt(f[currentYearField]) < dobYear;
 
   const goNext = () => {
     if (yearInvalid) return;
@@ -865,30 +875,6 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
   const renderPage = () => {
     if (!page) return null;
     switch (page.id) {
-
-      // ── A1: DOB ──
-      case 'A1': return (
-        <>
-          <div style={{ fontSize: 16, fontWeight: 500, marginBottom: 16 }}>What is your date of birth?</div>
-          <HypoField label="Date of birth" required hint="Either the exact date, or your age in years, is required">
-            <HypoDobField
-              dob={f.dob} ageYears={f.ageYears} ageMonths={f.ageMonths}
-              onChange={({ dob, ageYears, ageMonths }) => setF(p => ({ ...p, dob, ageYears, ageMonths }))}
-            />
-          </HypoField>
-          {f.dob && (
-            <HypoInfoNote text={`Age: ${Math.floor((new Date() - new Date(f.dob)) / (365.25 * 24 * 60 * 60 * 1000))} years`} />
-          )}
-        </>
-      );
-
-      // ── A2: Sex ──
-      case 'A2': return (
-        <>
-          <div style={{ fontSize: 16, fontWeight: 500, marginBottom: 16 }}>What is your biological sex?</div>
-          <HypoRadioGroup value={f.sex} onChange={set('sex')} options={[['male', 'Male'], ['female', 'Female'], ['other', 'Other']]} />
-        </>
-      );
 
       // ── A3: Marital status ──
       case 'A3': return (

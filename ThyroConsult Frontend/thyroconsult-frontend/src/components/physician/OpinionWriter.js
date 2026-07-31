@@ -259,9 +259,122 @@ function SectionCard({ number, title, children, accent = '#3a7bd5' }) {
   );
 }
 
+// ─── Translation correction section (migration 019) ───────────────────────
+// Only the free-text fields that FREE_TEXT_FIELDS (conditionController.js)
+// can ever translate show up here — this mirrors that list exactly so a
+// mismatch between frontend/backend surfaces immediately as a missing label
+// rather than silently.
+const CONDITION_TABLE_MAP = {
+  hypothyroidism:  'hypo_questionnaire',
+  hyperthyroidism: 'hyper_questionnaire',
+  thyroid_cancer:  'tc_questionnaire',
+  nodule:          'nodule_questionnaire',
+};
+
+const FIELD_LABELS = {
+  // core_questionnaire
+  chief_complaint: 'Chief complaint',
+  sym_menstrual_changes: 'Menstrual changes',
+  surgical_history_details: 'Surgical history details',
+  allergies: 'Allergies',
+  occupation: 'Occupation',
+  sym_other: 'Other symptoms',
+  pmh_autoimmune_details: 'Autoimmune history details',
+  pmh_autoimmune_other: 'Other autoimmune condition',
+  hysterectomy_reason_other: 'Hysterectomy reason (other)',
+  pmh_previous_thyroid_details: 'Previous thyroid diagnosis details',
+  pmh_neck_radiation_details: 'Neck radiation history details',
+  pmh_other: 'Other past medical history',
+  fh_thyroid_details: 'Family thyroid history details',
+  fh_thyroid_cancer_details: 'Family thyroid cancer details',
+  fh_autoimmune_details: 'Family autoimmune history details',
+  fh_other: 'Other family history',
+  radiation_exposure_details: 'Radiation exposure details',
+  // hyper_questionnaire / tc_questionnaire (shared field names)
+  graves_dermopathy_details: "Graves' dermopathy details",
+  fnac_details: 'FNAC details',
+  mtc_ret_mutation_details: 'RET mutation details',
+  surveillance_notes: 'Surveillance notes',
+  // nodule_questionnaire
+  occupation_other: 'Occupation (other)',
+  nodule_discovery_other: 'Nodule discovery — other',
+  outcomes_details: 'Outcomes details',
+  patient_concern_other: "Patient's primary concern (other)",
+  autoimmune_other: 'Other autoimmune condition',
+  radiation_exposure_other: 'Radiation exposure (other)',
+  additional_notes: 'Additional notes',
+  opinion_trigger_other: 'Reason for seeking opinion (other)',
+};
+
+function fieldLabel(field) {
+  return FIELD_LABELS[field] || field.replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase());
+}
+
+function TranslationReviewSection({ episodeId, questionnaire, conditionType }) {
+  const table = CONDITION_TABLE_MAP[conditionType];
+  const translations = questionnaire?.field_translations || {};
+  const fields = Object.keys(translations);
+
+  const [drafts,  setDrafts]  = useState(() => {
+    const initial = {};
+    fields.forEach(f => { initial[f] = translations[f]?.en_corrected ?? translations[f]?.en_ai ?? ''; });
+    return initial;
+  });
+  const [saving,  setSaving]  = useState({});
+  const [savedOk, setSavedOk] = useState({});
+
+  if (!table || fields.length === 0) return null; // nothing to translate — patient's language is English, or condition unrecognised
+
+  const saveCorrection = async (field) => {
+    setSaving(s => ({ ...s, [field]: true }));
+    setSavedOk(s => ({ ...s, [field]: false }));
+    try {
+      await physicianAPI.correctFieldTranslation(episodeId, table, field, drafts[field]);
+      setSavedOk(s => ({ ...s, [field]: true }));
+    } catch (err) {
+      alert('Could not save this correction. Please try again.');
+    } finally {
+      setSaving(s => ({ ...s, [field]: false }));
+    }
+  };
+
+  return (
+    <SectionCard number="🌐" title="Patient's Translated Answers" accent="#0891b2">
+      <p style={{ margin: '0 0 16px', fontSize: 13, color: '#6b7280' }}>
+        The patient answered these in their own language. Shown below is the AI's English
+        translation — edit and save any that read awkwardly or need clinical correction. Your
+        correction is saved separately from the AI's original output.
+      </p>
+      {fields.map(field => (
+        <Field key={field} label={fieldLabel(field)}>
+          <Textarea
+            value={drafts[field]}
+            onChange={(val) => { setDrafts(d => ({ ...d, [field]: val })); setSavedOk(s => ({ ...s, [field]: false })); }}
+            minRows={2}
+          />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
+            <button
+              onClick={() => saveCorrection(field)}
+              disabled={saving[field]}
+              style={{
+                padding: '5px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+                border: '1px solid #0891b2', background: '#fff', color: '#0891b2',
+                cursor: saving[field] ? 'wait' : 'pointer',
+              }}
+            >
+              {saving[field] ? 'Saving…' : 'Save correction'}
+            </button>
+            {savedOk[field] && <span style={{ fontSize: 12, color: '#166534' }}>✓ Saved</span>}
+          </div>
+        </Field>
+      ))}
+    </SectionCard>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────
 
-export default function OpinionWriter({ episodeId, existingOpinion, onSaved, onSubmitted, onBack }) {
+export default function OpinionWriter({ episodeId, existingOpinion, questionnaire, conditionType, onSaved, onSubmitted, onBack }) {
   const [form, setForm] = useState({
     clinicalSummary: '',
     impression:      '',
@@ -368,6 +481,9 @@ export default function OpinionWriter({ episodeId, existingOpinion, onSaved, onS
           )}
         </div>
       </div>
+
+      {/* Patient's translated free-text answers, if any needed translation */}
+      <TranslationReviewSection episodeId={episodeId} questionnaire={questionnaire} conditionType={conditionType} />
 
       {/* Section 1 — Clinical Summary */}
       <SectionCard number="1" title="Clinical Summary" accent="#3a7bd5">

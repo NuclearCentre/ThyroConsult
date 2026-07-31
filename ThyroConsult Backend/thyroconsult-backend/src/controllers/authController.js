@@ -40,7 +40,7 @@ const registerPatientStep1 = async (req, res) => {
     guardianName, guardianRelation,
     dob, dobAutoCalculated,
     gender, bloodGroup,
-    addressLine1, addressLine2, city, state, pincode,
+    country, addressLine1, addressLine2, city, state, pincode,
     mobile, whatsapp, email,
     password,
   } = req.body;
@@ -79,6 +79,7 @@ const registerPatientStep1 = async (req, res) => {
       dob_auto_calculated: dobAutoCalculated || false,
       gender,
       blood_group: bloodGroup || null,
+      country: country || 'IN', // not PHI — plain, like gender
       address_line1: addressLine1 ? encryptPHI(addressLine1) : null,
       address_line2: addressLine2 ? encryptPHI(addressLine2) : null,
       city: city ? encryptPHI(city) : null,
@@ -92,8 +93,8 @@ const registerPatientStep1 = async (req, res) => {
        (mobile, mobile_hash, whatsapp, whatsapp_hash, email, email_hash,
         password_hash, first_name, middle_name, last_name, guardian_name,
         guardian_relation, dob, dob_auto_calculated, gender, blood_group,
-        address_line1, address_line2, city, state, pincode, registration_step)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+        country, address_line1, address_line2, city, state, pincode, registration_step)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
        RETURNING id, patient_code`,
       Object.values(patientData)
     );
@@ -177,41 +178,131 @@ const sendVerificationOTPs = async (req, res) => {
   }
 };
 
+// ─── Step 2: Edit a contact value before (re-)verifying ────
+// Only usable pre-registration-complete (registration_step is still in
+// the early steps) — a fully registered patient changing a verified
+// mobile/email later is a different, higher-stakes operation (identity
+// change on an active account) and should go through a proper flow, not
+// this one. Resets that channel's verified flag, hash, and attempt
+// counter, since the value just changed and the old verification no
+// longer applies to it.
+const updateRegistrationContact = async (req, res) => {
+  const { patientId, channel, value } = req.body;
+
+  const CHANNEL_MAP = {
+    mobile:   { col: 'mobile',   hashCol: 'mobile_hash',   verifiedCol: 'mobile_verified',   attemptsCol: 'mobile_otp_attempts',   lockedCol: 'mobile_otp_locked_until' },
+    whatsapp: { col: 'whatsapp', hashCol: 'whatsapp_hash', verifiedCol: 'whatsapp_verified', attemptsCol: 'whatsapp_otp_attempts', lockedCol: 'whatsapp_otp_locked_until' },
+    email:    { col: 'email',    hashCol: 'email_hash',    verifiedCol: 'email_verified',    attemptsCol: 'email_otp_attempts',    lockedCol: 'email_otp_locked_until' },
+  };
+  const map = CHANNEL_MAP[channel];
+  if (!map) return res.status(400).json({ error: 'Invalid channel' });
+  if (!value || !value.trim()) return res.status(400).json({ error: 'Value is required' });
+
+  try {
+    const patRow = await query('SELECT registration_step, registration_complete FROM patients WHERE id = $1', [patientId]);
+    if (!patRow.rows.length) return res.status(404).json({ error: 'Patient not found' });
+    if (patRow.rows[0].registration_complete) {
+      return res.status(403).json({ error: 'Cannot edit a verified contact after registration is complete' });
+    }
+
+    const normalized = channel === 'email' ? value.trim().toLowerCase() : value.trim();
+    await query(
+      `UPDATE patients SET
+         ${map.col} = $1, ${map.hashCol} = $2, ${map.verifiedCol} = FALSE,
+         ${map.attemptsCol} = 0, ${map.lockedCol} = NULL
+       WHERE id = $3`,
+      [encryptPHI(normalized), hmacHash(normalized), patientId]
+    );
+
+    logger.audit('REGISTRATION_CONTACT_EDITED', { patientId, ip: req.ip, resource: channel });
+    res.json({ message: 'Updated — please verify again', channel });
+  } catch (err) {
+    logger.error('Update registration contact error', { error: err.message });
+    res.status(500).json({ error: 'Failed to update contact' });
+  }
+};
+
 // ─── Step 2: Verify OTPs ───────────────────────────────────
+const OTP_MAX_ATTEMPTS = 5;
+const OTP_LOCKOUT_MINUTES = 15;
+
 const verifyContactOTP = async (req, res) => {
   const { patientId, channel, otp } = req.body;
 
   try {
     const result = await query(
-      'SELECT mobile, whatsapp, email FROM patients WHERE id = $1',
+      `SELECT mobile, whatsapp, email,
+              mobile_otp_attempts, mobile_otp_locked_until,
+              whatsapp_otp_attempts, whatsapp_otp_locked_until,
+              email_otp_attempts, email_otp_locked_until
+       FROM patients WHERE id = $1`,
       [patientId]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'Patient not found' });
 
     const patient = result.rows[0];
-    let identifier, purpose, updateField;
+    let identifier, purpose, updateField, attemptsField, lockedField;
 
     if (channel === 'mobile') {
       identifier = decryptPHI(patient.mobile);
       purpose = 'mobile_verify';
       updateField = 'mobile_verified';
+      attemptsField = 'mobile_otp_attempts'; lockedField = 'mobile_otp_locked_until';
     } else if (channel === 'whatsapp') {
       identifier = decryptPHI(patient.whatsapp || patient.mobile);
       purpose = 'whatsapp_verify';
       updateField = 'whatsapp_verified';
+      attemptsField = 'whatsapp_otp_attempts'; lockedField = 'whatsapp_otp_locked_until';
     } else if (channel === 'email') {
       identifier = decryptPHI(patient.email);
       purpose = 'email_verify';
       updateField = 'email_verified';
+      attemptsField = 'email_otp_attempts'; lockedField = 'email_otp_locked_until';
     } else {
       return res.status(400).json({ error: 'Invalid channel' });
     }
 
+    // migration 020 — 5 attempts, then a 15-minute lockout, enforced here
+    // (not just client-side, which is trivially bypassed by refreshing).
+    const lockedUntil = patient[lockedField];
+    if (lockedUntil && new Date(lockedUntil) > new Date()) {
+      logger.audit('OTP_VERIFICATION_LOCKED', { patientId, ip: req.ip, resource: channel });
+      return res.status(429).json({
+        error: 'Too many authentication attempts. Please retry after 15 mins.',
+        code: 'OTP_LOCKED',
+        lockedUntil,
+      });
+    }
+
     const { valid, reason } = await verifyOTP(identifier, purpose, otp);
     if (!valid) {
+      const newAttempts = (patient[attemptsField] || 0) + 1;
+      const lockingNow = newAttempts >= OTP_MAX_ATTEMPTS;
+      await query(
+        `UPDATE patients SET ${attemptsField} = $1, ${lockedField} = $2 WHERE id = $3`,
+        [
+          lockingNow ? 0 : newAttempts, // reset the counter once locked, so the next window starts clean
+          lockingNow ? new Date(Date.now() + OTP_LOCKOUT_MINUTES * 60 * 1000) : null,
+          patientId,
+        ]
+      );
       logger.audit('OTP_VERIFICATION_FAILED', { patientId, ip: req.ip, detail: reason });
-      return res.status(400).json({ error: reason, code: 'OTP_INVALID' });
+
+      if (lockingNow) {
+        return res.status(429).json({
+          error: 'Too many authentication attempts. Please retry after 15 mins.',
+          code: 'OTP_LOCKED',
+        });
+      }
+      return res.status(400).json({
+        error: reason,
+        code: 'OTP_INVALID',
+        attemptsRemaining: OTP_MAX_ATTEMPTS - newAttempts,
+      });
     }
+
+    // Correct OTP — reset this channel's attempt counter.
+    await query(`UPDATE patients SET ${attemptsField} = 0, ${lockedField} = NULL WHERE id = $1`, [patientId]);
 
     await query(`UPDATE patients SET ${updateField} = TRUE WHERE id = $1`, [patientId]);
 
@@ -221,7 +312,10 @@ const verifyContactOTP = async (req, res) => {
       [patientId]
     );
     const p = updated.rows[0];
-    const allVerified = p.mobile_verified && p.whatsapp_verified && p.email_verified;
+    // WhatsApp downgraded from required to optional/unverified — patient
+    // can add a number if they want, but only mobile + email actually
+    // gate registration progress now.
+    const allVerified = p.mobile_verified && p.email_verified;
 
     if (allVerified) {
       await query('UPDATE patients SET registration_step = 2 WHERE id = $1', [patientId]);
@@ -507,6 +601,7 @@ const logout = async (req, res) => {
 module.exports = {
   registerPatientStep1,
   sendVerificationOTPs,
+  updateRegistrationContact,
   verifyContactOTP,
   saveConsent,
   savePhoto,

@@ -23,6 +23,7 @@ const decryptPatient = (row) => ({
   whatsapp: row.whatsapp ? decryptPHI(row.whatsapp) : null,
   email: row.email ? decryptPHI(row.email) : null,
   address: {
+    country: row.country || 'IN',
     line1: row.address_line1 ? decryptPHI(row.address_line1) : null,
     line2: row.address_line2 ? decryptPHI(row.address_line2) : null,
     city: row.city ? decryptPHI(row.city) : null,
@@ -35,6 +36,7 @@ const decryptPatient = (row) => ({
   registrationStep: row.registration_step,
   registrationComplete: row.registration_complete,
   primaryDoctorId: row.primary_doctor_id,
+  preferredLanguage: row.preferred_language, // migration 019 — drives both UI display language and opinion translation target
   createdAt: row.created_at,
 });
 
@@ -62,8 +64,14 @@ const updatePatient = async (req, res) => {
   const {
     firstName, middleName, lastName, guardianName, guardianRelation,
     dob, dobAutoCalculated, gender, bloodGroup,
-    addressLine1, addressLine2, city, state, pincode,
+    addressLine1, addressLine2, city, state, pincode, country,
+    preferredLanguage,
   } = req.body;
+
+  const VALID_LANGUAGES = ['en', 'hi', 'gu', 'mr', 'ta', 'te', 'kn', 'ml', 'bn', 'pa'];
+  if (preferredLanguage !== undefined && !VALID_LANGUAGES.includes(preferredLanguage)) {
+    return res.status(400).json({ error: `preferredLanguage must be one of: ${VALID_LANGUAGES.join(', ')}` });
+  }
   const patientId = req.params.id || req.user.id; // self-service (/patient/profile) has no :id param
 
   try {
@@ -88,10 +96,12 @@ const updatePatient = async (req, res) => {
     addField('gender', gender);
     addField('blood_group', bloodGroup);
     addField('address_line1', addressLine1, true);
+    addField('country', country);
     addField('address_line2', addressLine2, true);
     addField('city', city, true);
     addField('state', state, true);
     addField('pincode', pincode, true);
+    addField('preferred_language', preferredLanguage); // not PHI — plain, drives translation pipeline
 
     if (!fields.length) return res.status(400).json({ error: 'No fields to update' });
 
@@ -333,40 +343,55 @@ const addBloodReportValue = async (req, res) => {
 };
 
 // ─── GET previous opinions ───────────────────────────
-// NOTE: still reads the underlying `consultations` table as-is — that
-// table/its columns were NOT renamed in this pass. It looks like it may
-// be the legacy video-consultation table flagged in the 27 Jul summary
-// as "unconfirmed whether dead" (there's a separate opinionController.js
-// in the folder listing, which may already be the live replacement for
-// this). Confirm live/dead before renaming the schema itself. Only the
-// JS-facing names below (function name, output keys, log strings) have
-// been purged of "consultation" wording so nothing leaks out via the API.
+// FIXED this pass — confirmed dead. This was still reading the legacy
+// `consultations` table (flagged as "unconfirmed whether dead" in the
+// 27 Jul summary; confirmed dead now — it throws "column c.opinion_number
+// does not exist" on every call, which is what caused the patient
+// dashboard's "MY CONDITIONS" spinner to hang forever). The real, live
+// opinion data has always been in the `opinions` table (migration 016),
+// which opinionController.js's own endpoints already use correctly —
+// this was simply never repointed at it.
+//
+// Field mapping (old legacy column -> new opinions-table equivalent):
+//   opinion_number  -> dropped; opinions has no equivalent, id is unique
+//   started_at      -> dropped; opinions has no equivalent
+//   completed_at    -> submitted_at (closest available "when ready" timestamp)
+//   duration_minutes -> dropped; not meaningful for async opinions
+//   chief_complaint -> dropped from here; lives on the questionnaire, not the opinion
+//   diagnosis       -> impression (closest semantic equivalent in the new model)
+//   doctor_notes    -> clinical_summary
+//   follow_up_notes -> remarks
+//   (new) type      -> condition, from patient_condition_episodes — the
+//                       patient dashboard's opinion history table displays this
+//
+// Only 'submitted'/'acknowledged' opinions are returned — a doctor's
+// in-progress draft should never be visible to the patient.
 const getPatientOpinions = async (req, res) => {
   try {
     const patientId = req.params.id || req.user.id;
     const result = await query(
-      `SELECT c.id, c.opinion_number, c.status,
-              c.started_at, c.completed_at, c.duration_minutes,
-              c.chief_complaint, c.diagnosis, c.doctor_notes, c.follow_up_notes,
+      `SELECT o.id, o.status, o.submitted_at, o.acknowledged_at,
+              o.clinical_summary, o.impression, o.advice, o.remarks,
+              pce.condition AS condition_type,
               d.first_name AS doctor_first, d.last_name AS doctor_last
-       FROM consultations c
-       JOIN doctors d ON c.doctor_id = d.id
-       WHERE c.patient_id = $1
-       ORDER BY c.created_at DESC`,
+       FROM opinions o
+       JOIN patient_condition_episodes pce ON pce.id = o.episode_id
+       JOIN doctors d ON d.id = o.doctor_id
+       WHERE o.patient_id = $1
+         AND o.status IN ('submitted', 'acknowledged')
+       ORDER BY o.submitted_at DESC`,
       [patientId]
     );
 
     const opinions = result.rows.map(r => ({
       id: r.id,
-      opinionNumber: r.opinion_number,
       status: r.status,
-      startedAt: r.started_at,
-      completedAt: r.completed_at,
-      durationMinutes: r.duration_minutes,
-      chiefComplaint: r.chief_complaint ? decryptPHI(r.chief_complaint) : null,
-      diagnosis: r.diagnosis ? decryptPHI(r.diagnosis) : null,
-      doctorNotes: r.doctor_notes ? decryptPHI(r.doctor_notes) : null,
-      followUpNotes: r.follow_up_notes ? decryptPHI(r.follow_up_notes) : null,
+      completedAt: r.submitted_at,
+      acknowledgedAt: r.acknowledged_at,
+      type: r.condition_type,
+      diagnosis: r.impression,
+      doctorNotes: r.clinical_summary,
+      followUpNotes: r.remarks,
       doctorName: `Dr. ${decryptPHI(r.doctor_first)} ${decryptPHI(r.doctor_last)}`,
     }));
 

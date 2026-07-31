@@ -2,7 +2,7 @@
 // Patient reads the submitted online opinion and acknowledges it
 
 import React, { useState, useEffect } from 'react';
-import { opinionAPI, adviseLetterAPI } from '../api/index';
+import { opinionAPI, adviseLetterAPI, authAPI } from '../api/index';
 
 function Section({ title, accent, children }) {
   return (
@@ -86,18 +86,47 @@ export default function OpinionViewer({ episodeId, onAcknowledged }) {
   const [ackError,   setAckError]   = useState(null);
   const [confirmed,  setConfirmed]  = useState(false);
   const [letterReady, setLetterReady] = useState(false);
+  // migration 019 — physician has submitted, but the translation into the
+  // patient's preferred language hasn't succeeded yet. Distinct from
+  // `opinion === null` with no flag, which means the doctor hasn't
+  // submitted an opinion at all yet.
+  const [translationPending, setTranslationPending] = useState(false);
 
   useEffect(() => {
     if (!episodeId) return;
-    opinionAPI.getPatientOpinion(episodeId)
-      .then(res => setOpinion(res.data))
-      .catch(() => setError('Failed to load opinion.'))
-      .finally(() => setLoading(false));
+
+    let cancelled = false;
+    let pollTimer = null;
+
+    const fetchOpinion = (isPoll) => {
+      opinionAPI.getPatientOpinion(episodeId)
+        .then(res => {
+          if (cancelled) return;
+          if (res.data) {
+            setOpinion(res.data);
+            setTranslationPending(false);
+          } else if (res.translationPending) {
+            setTranslationPending(true);
+            // Keep checking in the background — translation retries
+            // server-side and this picks it up without the patient having
+            // to manually refresh the page.
+            pollTimer = setTimeout(() => fetchOpinion(true), 15000);
+          } else {
+            setTranslationPending(false);
+          }
+        })
+        .catch(() => { if (!cancelled) setError('Failed to load opinion.'); })
+        .finally(() => { if (!cancelled && !isPoll) setLoading(false); });
+    };
+
+    fetchOpinion(false);
 
     // Check advise letter status (non-fatal)
     adviseLetterAPI.getStatus(episodeId)
-      .then(res => setLetterReady(res.ready || false))
+      .then(res => { if (!cancelled) setLetterReady(res.ready || false); })
       .catch(() => {});
+
+    return () => { cancelled = true; if (pollTimer) clearTimeout(pollTimer); };
   }, [episodeId]);
 
   const acknowledge = async () => {
@@ -121,6 +150,24 @@ export default function OpinionViewer({ episodeId, onAcknowledged }) {
 
   if (error) {
     return <div style={{ padding: 16, color: '#ef4444', fontSize: 14 }}>{error}</div>;
+  }
+
+  if (!opinion && translationPending) {
+    return (
+      <div style={{
+        padding: 32, textAlign: 'center',
+        fontFamily: 'system-ui, sans-serif',
+      }}>
+        <div style={{ fontSize: 40, marginBottom: 12 }}>🌐</div>
+        <div style={{ fontSize: 15, color: '#64748b', fontWeight: 600 }}>
+          Your doctor's opinion is ready
+        </div>
+        <div style={{ fontSize: 13, color: '#9ca3af', marginTop: 8 }}>
+          It's being translated into your selected language — this page will
+          update automatically in a few moments. No need to refresh.
+        </div>
+      </div>
+    );
   }
 
   if (!opinion) {
@@ -154,6 +201,11 @@ export default function OpinionViewer({ episodeId, onAcknowledged }) {
       }}>
         <div style={{ fontSize: 12, opacity: 0.8, textTransform: 'uppercase', letterSpacing: 1 }}>
           Online Opinion
+          {opinion.language && opinion.language !== 'en' && (
+            <span style={{ marginLeft: 8, opacity: 0.75, textTransform: 'none', letterSpacing: 0 }}>
+              (translated for you)
+            </span>
+          )}
         </div>
         <div style={{ fontSize: 18, fontWeight: 700, marginTop: 4 }}>
           {opinion.doctorName}
@@ -313,7 +365,7 @@ export default function OpinionViewer({ episodeId, onAcknowledged }) {
           </div>
           <button
             onClick={() => {
-              const token = localStorage.getItem('thyro_access_token');
+              const token = authAPI.getToken();
               const url   = adviseLetterAPI.patientDownload(episodeId);
               // Fetch as blob so auth header is sent
               fetch(url, { headers: { Authorization: `Bearer ${token}` } })

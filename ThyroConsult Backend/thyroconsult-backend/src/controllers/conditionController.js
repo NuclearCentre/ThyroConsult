@@ -19,7 +19,89 @@
 
 const { query, transaction } = require('../config/database');
 const { encryptPHI, decryptPHI } = require('../utils/encryption');
+const { translateToEnglish } = require('../services/translationService');
 const logger = require('../utils/logger');
+
+// ─────────────────────────────────────────────────────────
+// TRANSLATION — patient free text -> English for physician view
+// (migration 019 — field_translations JSONB column per table)
+// ─────────────────────────────────────────────────────────
+
+// Columns per questionnaire table that may hold patient-authored free
+// text in their own language. hypo_questionnaire and tc_questionnaire
+// don't have "other/please specify" style columns as of this pass —
+// add here if/when those questionnaires gain them.
+const FREE_TEXT_FIELDS = {
+  core_questionnaire: [
+    'chief_complaint', 'sym_menstrual_changes', 'surgical_history_details',
+    'allergies', 'occupation', 'sym_other', 'pmh_autoimmune_details',
+    'pmh_autoimmune_other', 'hysterectomy_reason_other',
+    'pmh_previous_thyroid_details', 'pmh_neck_radiation_details', 'pmh_other',
+    'fh_thyroid_details', 'fh_thyroid_cancer_details', 'fh_autoimmune_details',
+    'fh_other', 'radiation_exposure_details',
+  ],
+  hypo_questionnaire: [],
+  hyper_questionnaire: [
+    'graves_dermopathy_details', 'fnac_details', 'mtc_ret_mutation_details',
+    'surveillance_notes',
+  ],
+  tc_questionnaire: [
+    'fnac_details', 'mtc_ret_mutation_details', 'surveillance_notes',
+  ],
+  nodule_questionnaire: [
+    'occupation_other', 'hysterectomy_reason_other', 'nodule_discovery_other',
+    'outcomes_details', 'patient_concern_other', 'autoimmune_other',
+    'radiation_exposure_other', 'additional_notes', 'opinion_trigger_other',
+  ],
+};
+
+/**
+ * Best-effort, non-blocking translation of whichever free-text fields
+ * were part of THIS save into English, merged into field_translations.
+ * Never throws — must never affect the patient's save response. Skipped
+ * entirely if the patient's preferred_language is 'en' (nothing to do)
+ * or if none of this save's fields are free-text fields with content.
+ *
+ * Called fire-and-forget (not awaited) from save*Questionnaire so AI
+ * translation latency never delays the patient's save/autosave.
+ */
+async function translateFreeTextFields(table, episodeId, patientId, savedCols) {
+  const fields = FREE_TEXT_FIELDS[table] || [];
+  if (!fields.length) return;
+
+  try {
+    const patRow = await query('SELECT preferred_language FROM patients WHERE id = $1', [patientId]);
+    const lang = patRow.rows[0]?.preferred_language || 'en';
+    if (lang === 'en') return;
+
+    const toTranslate = fields.filter(
+      (f) => savedCols[f] !== undefined && savedCols[f] !== null && String(savedCols[f]).trim() !== ''
+    );
+    if (!toTranslate.length) return;
+
+    const entries = {};
+    for (const field of toTranslate) {
+      try {
+        const en = await translateToEnglish(String(savedCols[field]), lang);
+        entries[field] = { en_ai: en, en_corrected: null, translated_at: new Date().toISOString() };
+      } catch (fieldErr) {
+        logger.error(`translateFreeTextFields: failed for ${table}.${field}`, {
+          error: fieldErr.message, episodeId,
+        });
+        // Skip this field's entry. Physician falls back to seeing the raw
+        // (non-English) value rather than nothing — see getEpisodeForReview.
+      }
+    }
+    if (!Object.keys(entries).length) return;
+
+    await query(
+      `UPDATE ${table} SET field_translations = field_translations || $1::jsonb WHERE episode_id = $2`,
+      [JSON.stringify(entries), episodeId]
+    );
+  } catch (err) {
+    logger.error(`translateFreeTextFields error for ${table}`, { error: err.message, episodeId });
+  }
+}
 
 // ─────────────────────────────────────────────────────────
 // HELPERS
@@ -397,6 +479,10 @@ const saveCoreQuestionnaire = async (req, res) => {
     });
 
     res.json({ message: 'Core questionnaire saved' });
+
+    // Fire-and-forget — do not delay the save response on AI translation.
+    translateFreeTextFields('core_questionnaire', episodeId, patientId, defined)
+      .catch((e) => logger.error('translateFreeTextFields (core) error', { error: e.message }));
   } catch (err) {
     logger.error('saveCoreQuestionnaire error', { error: err.message });
     res.status(500).json({ error: 'Failed to save core questionnaire' });
@@ -521,6 +607,11 @@ const saveHypoQuestionnaire = async (req, res) => {
     });
 
     res.json({ message: 'Hypothyroidism questionnaire saved' });
+
+    // No-op today (FREE_TEXT_FIELDS.hypo_questionnaire is empty) — wired up
+    // so translation activates automatically if hypo gains free-text fields.
+    translateFreeTextFields('hypo_questionnaire', episodeId, patientId, defined)
+      .catch((e) => logger.error('translateFreeTextFields (hypo) error', { error: e.message }));
   } catch (err) {
     logger.error('saveHypoQuestionnaire error', { error: err.message });
     res.status(500).json({ error: 'Failed to save hypothyroidism questionnaire' });
@@ -656,6 +747,9 @@ const saveHyperQuestionnaire = async (req, res) => {
     });
 
     res.json({ message: 'Hyperthyroidism questionnaire saved' });
+
+    translateFreeTextFields('hyper_questionnaire', episodeId, patientId, defined)
+      .catch((e) => logger.error('translateFreeTextFields (hyper) error', { error: e.message }));
   } catch (err) {
     logger.error('saveHyperQuestionnaire error', { error: err.message });
     res.status(500).json({ error: 'Failed to save hyperthyroidism questionnaire' });
@@ -790,6 +884,9 @@ const saveTcQuestionnaire = async (req, res) => {
     });
 
     res.json({ message: 'Thyroid cancer questionnaire saved' });
+
+    translateFreeTextFields('tc_questionnaire', episodeId, patientId, defined)
+      .catch((e) => logger.error('translateFreeTextFields (tc) error', { error: e.message }));
   } catch (err) {
     logger.error('saveTcQuestionnaire error', { error: err.message });
     res.status(500).json({ error: 'Failed to save thyroid cancer questionnaire' });
@@ -962,6 +1059,9 @@ const saveNoduleQuestionnaire = async (req, res) => {
     });
 
     res.json({ message: 'Nodule questionnaire saved' });
+
+    translateFreeTextFields('nodule_questionnaire', episodeId, patientId, defined)
+      .catch((e) => logger.error('translateFreeTextFields (nodule) error', { error: e.message }));
   } catch (err) {
     logger.error('saveNoduleQuestionnaire error', { error: err.message });
     res.status(500).json({ error: 'Failed to save nodule questionnaire' });

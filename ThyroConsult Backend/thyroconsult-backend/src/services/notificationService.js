@@ -68,6 +68,17 @@ const { hmacHash, generateOTP } = require('../utils/encryption');
 //   AWS_ACCESS_KEY_ID=your_key
 //   AWS_SECRET_ACCESS_KEY=your_secret
 //   EMAIL_FROM=noreply@thyroconsult.in
+//
+// SMS — Twilio (mobile OTP delivery):
+//   SMS_PROVIDER=twilio
+//   TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//   TWILIO_AUTH_TOKEN=your_auth_token
+//   TWILIO_SMS_FROM=+1XXXXXXXXXX
+//   (can reuse the same Twilio account as WHATSAPP_PROVIDER=twilio above —
+//   SMS and WhatsApp are separate Twilio products under one account, with
+//   separate "from" numbers)
+//   SMS_PROVIDER=disabled — silently skip all SMS sends (dev-console OTP
+//   log below still fires regardless, so Step 2 stays testable either way)
 // ─────────────────────────────────────────────────────────────
 
 // ══════════════════════════════════════════════════════════════
@@ -136,6 +147,26 @@ async function sendWhatsAppWati(to, message) {
     const err = await resp.json().catch(() => ({}));
     throw new Error(`WATI API error: ${JSON.stringify(err)}`);
   }
+}
+
+// ══════════════════════════════════════════════════════════════
+// SMS ADAPTERS (mobile OTP delivery)
+// ══════════════════════════════════════════════════════════════
+
+async function sendSMSTwilio(to, message) {
+  const twilio = require('twilio');
+  const client = twilio(
+    process.env.TWILIO_ACCOUNT_SID,
+    process.env.TWILIO_AUTH_TOKEN
+  );
+  // Plain E.164 number, not the "whatsapp:" prefixed form the WhatsApp
+  // adapter above uses — same Twilio account, separate product/from-number.
+  const toSms = to.startsWith('+') ? to : `+91${to.replace(/\D/g, '').slice(-10)}`;
+  await client.messages.create({
+    from: process.env.TWILIO_SMS_FROM,
+    to:   toSms,
+    body: message,
+  });
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -229,6 +260,30 @@ async function sendWhatsApp(to, message) {
 }
 
 /**
+ * Send an SMS (used for mobile OTP delivery — WhatsApp/email have their
+ * own separate send paths above).
+ * @param {string} to      — phone number (Indian 10-digit or with country code)
+ * @param {string} message — message body
+ */
+async function sendSMS(to, message) {
+  const provider = (process.env.SMS_PROVIDER || 'twilio').toLowerCase();
+
+  if (provider === 'disabled' || !to) return;
+
+  try {
+    if (provider === 'twilio') await sendSMSTwilio(to, message);
+    else {
+      console.warn(`notificationService: unknown SMS_PROVIDER "${provider}" — message not sent`);
+      return;
+    }
+    console.log(`SMS sent via ${provider} to ${to.slice(-4).padStart(10, '*')}`);
+  } catch (err) {
+    // Non-fatal — log but don't crash the calling request
+    console.error(`SMS send failed (${provider}):`, err.message || err);
+  }
+}
+
+/**
  * Send an email.
  * @param {object} opts — { to, subject, text, html? }
  */
@@ -293,7 +348,9 @@ async function sendOTP(channel, destination, purpose, ip) {
     console.log(`[DEV OTP] ${channel} OTP for ${destination} (${purpose}): ${otp}`);
   }
 
-  if (channel === 'whatsapp') {
+  if (channel === 'sms') {
+    await sendSMS(destination, `Your ThyroConsult verification code is ${otp}. Valid for ${expiresMinutes} minutes.`);
+  } else if (channel === 'whatsapp') {
     await sendWhatsApp(destination, `Your ThyroConsult verification code is ${otp}. Valid for ${expiresMinutes} minutes.`);
   } else if (channel === 'email') {
     await sendEmail({
@@ -302,8 +359,9 @@ async function sendOTP(channel, destination, purpose, ip) {
       text: `Your verification code is ${otp}. Valid for ${expiresMinutes} minutes.`,
     });
   }
-  // channel === 'sms': no provider configured — dev-console log above is
-  // the only delivery path until an SMS gateway is added.
+  // channel === 'sms' now sends via SMS_PROVIDER (Twilio) above — the
+  // dev-console log further up still fires regardless, so Step 2 stays
+  // testable locally even without real Twilio credentials configured.
 
   return { sent: true };
 }
@@ -343,4 +401,4 @@ async function verifyOTP(destinationRaw, purpose, otp) {
   return { valid: true };
 }
 
-module.exports = { sendWhatsApp, sendEmail, notify, sendOTP, verifyOTP };
+module.exports = { sendWhatsApp, sendSMS, sendEmail, notify, sendOTP, verifyOTP };

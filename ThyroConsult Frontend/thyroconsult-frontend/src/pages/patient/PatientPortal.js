@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Routes, Route, useNavigate } from 'react-router-dom';
+import { Routes, Route } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer, Legend } from 'recharts';
 import { patientAPI, receiptAPI } from '../../api';
 import { PatientSidebar } from '../../components/common/Sidebar';
@@ -33,10 +33,15 @@ const CONDITION_COLOURS = {
 // ─── Add Condition Flow (modal overlay) ───────────────────
 const SUB = { SELECT: 'select', CONDITION_Q: 'condition_q', DONE: 'done' };
 
-const AddConditionFlow = ({ patient, onClose, onDone }) => {
-  const [sub, setSub]             = useState(SUB.SELECT);
-  const [condition, setCondition] = useState('');
-  const [episodeId, setEpisodeId] = useState(null);
+const AddConditionFlow = ({ patient, resumeEpisode, onClose, onDone }) => {
+  // resumeEpisode = { id, condition } when opened via "Resume" on an
+  // existing in-progress episode — skips SELECT entirely and drops the
+  // patient straight back into their questionnaire, at whatever page it
+  // autosaved to. Undefined/null for a genuine "+ Add condition" click,
+  // which starts at SELECT exactly as before.
+  const [sub, setSub]             = useState(resumeEpisode ? SUB.CONDITION_Q : SUB.SELECT);
+  const [condition, setCondition] = useState(resumeEpisode?.condition || '');
+  const [episodeId, setEpisodeId] = useState(resumeEpisode?.id || null);
 
   const ConditionQComponent =
     condition === 'hypothyroidism'  ? HypoQuestionnaire  :
@@ -128,7 +133,7 @@ const EpisodeStatusModal = ({ episodeId, onClose }) => {
 };
 
 // ─── My Conditions page ────────────────────────────────────
-const MyConditions = ({ patient, onAddCondition }) => {
+const MyConditions = ({ patient, onAddCondition, onResumeCondition }) => {
   const [episodes, setEpisodes] = useState([]);
   const [loading, setLoading]   = useState(true);
   const [statusEpisodeId, setStatusEpisodeId] = useState(null);
@@ -161,6 +166,7 @@ const MyConditions = ({ patient, onAddCondition }) => {
             {episodes.map(ep => {
               const c = CONDITION_COLOURS[ep.condition_type] || CONDITION_COLOURS[ep.condition] || CONDITION_COLOURS.hypothyroidism;
               const label = CONDITION_LABELS[ep.condition_type] || CONDITION_LABELS[ep.condition] || ep.condition;
+              const isComplete = ep.questionnaire_status === 'completed' || ep.core_q_complete;
               return (
                 <div key={ep.id} style={{ background:c.bg, border:`1px solid ${c.border}`, borderRadius:12, padding:'18px 20px' }}>
                   <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:10 }}>
@@ -171,21 +177,36 @@ const MyConditions = ({ patient, onAddCondition }) => {
                     📅 Started: {ep.episode_start_date ? new Date(ep.episode_start_date).toLocaleDateString('en-IN') : ep.created_at ? new Date(ep.created_at).toLocaleDateString('en-IN') : '—'}
                   </div>
                   <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:8 }}>
-                    {ep.core_q_complete || ep.questionnaire_status === 'completed'
+                    {ep.core_q_complete || isComplete
                       ? <span className="badge badge-teal">✓ Core Q</span>
                       : <span className="badge badge-gray">Core Q pending</span>}
-                    {ep.condition_q_complete || ep.questionnaire_status === 'completed'
+                    {ep.condition_q_complete || isComplete
                       ? <span className="badge badge-teal">✓ Condition Q</span>
                       : <span className="badge badge-gray">Condition Q pending</span>}
                   </div>
                   <StatusBadge status={ep.episode_status || ep.status || 'active'} />
-                  {(ep.questionnaire_status === 'completed' || ep.core_q_complete) && (
+
+                  {/* In-progress episode: jump straight back into the questionnaire
+                      at its saved page — no more re-running condition selection. */}
+                  {!isComplete && (
+                    <button
+                      className="btn btn-primary btn-sm"
+                      style={{ marginTop: 10, width: '100%' }}
+                      onClick={() => onResumeCondition && onResumeCondition(ep)}
+                    >
+                      ▶ Resume
+                    </button>
+                  )}
+
+                  {/* Completed episode: clearly marked submitted, still opens
+                      the same status/opinion view as before on click. */}
+                  {isComplete && (
                     <button
                       className="btn btn-ghost btn-sm"
-                      style={{ marginTop: 10, width: '100%' }}
+                      style={{ marginTop: 10, width: '100%', color: 'var(--teal-700)' }}
                       onClick={() => setStatusEpisodeId(ep.id)}
                     >
-                      View status / opinion
+                      ✓ Submitted — View status
                     </button>
                   )}
                 </div>
@@ -215,7 +236,7 @@ const PatientLayout = ({ children, patient }) => (
 );
 
 // ─── Dashboard overview ────────────────────────────────────
-const Dashboard = ({ patient, opinions, invoices, onAddCondition }) => {
+const Dashboard = ({ patient, opinions, invoices, onAddCondition, onResumeCondition, onLanguageChange }) => {
   const [bloodValues, setBloodValues] = useState([]);
   useEffect(() => {
     if (patient) {
@@ -225,14 +246,18 @@ const Dashboard = ({ patient, opinions, invoices, onAddCondition }) => {
   }, [patient]);
 
   const nextAppt = opinions.find(c => c.status === 'scheduled');
-  const lastTSH = bloodValues[bloodValues.length - 1];
 
   return (
     <>
       <SectionHeader
         title={`Good day, ${patient?.firstName || ''}` }
         subtitle={new Date().toLocaleDateString('en-IN', { weekday:'long', year:'numeric', month:'long', day:'numeric' })}
-        action={<SecureBadge />}
+        action={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <LanguagePicker value={patient?.preferredLanguage || 'en'} onChange={onLanguageChange} />
+            <SecureBadge />
+          </div>
+        }
       />
 
       <div className="stat-grid">
@@ -245,15 +270,6 @@ const Dashboard = ({ patient, opinions, invoices, onAddCondition }) => {
           <div className="stat-label">Next appointment</div>
           <div className="stat-value" style={{ fontSize: 16, marginTop: 4 }}>{nextAppt ? new Date(nextAppt.completedAt || nextAppt.startedAt).toLocaleDateString('en-IN') : '—'}</div>
           <div className="stat-sub">{nextAppt ? 'Scheduled' : 'No upcoming'}</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-label">Last TSH</div>
-          <div className="stat-value" style={{ color: lastTSH?.is_abnormal ? 'var(--red-600)' : 'var(--teal-600)' }}>
-            {lastTSH ? `${lastTSH.value} ${lastTSH.unit}` : '—'}
-          </div>
-          <div className="stat-sub" style={{ color: lastTSH?.is_abnormal ? 'var(--red-600)' : 'var(--text-tertiary)' }}>
-            {lastTSH?.is_abnormal ? '⚠ Above range' : lastTSH ? 'Normal' : 'No data'}
-          </div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Total paid</div>
@@ -270,7 +286,7 @@ const Dashboard = ({ patient, opinions, invoices, onAddCondition }) => {
           <div className="card-title" style={{ margin:0 }}>My conditions</div>
           <button className="btn btn-primary btn-sm" onClick={onAddCondition}>+ Add condition</button>
         </div>
-        <ConditionsMiniList patientId={patient?.id} />
+        <ConditionsMiniList patientId={patient?.id} onResumeCondition={onResumeCondition} />
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
@@ -455,9 +471,10 @@ const Invoices = ({ patient, invoices }) => {
 };
 
 // ─── Conditions mini list (used inside Dashboard card) ─────
-const ConditionsMiniList = ({ patientId }) => {
+const ConditionsMiniList = ({ patientId, onResumeCondition }) => {
   const [episodes, setEpisodes] = useState([]);
   const [loading, setLoading]   = useState(true);
+  const [statusEpisodeId, setStatusEpisodeId] = useState(null);
   useEffect(() => {
     if (!patientId) return;
     patientAPI.getEpisodes(patientId)
@@ -470,16 +487,90 @@ const ConditionsMiniList = ({ patientId }) => {
     <div style={{ fontSize:13, color:'var(--text-tertiary)', padding:'4px 0' }}>No conditions added yet. Click "+ Add condition" to begin.</div>
   );
   return (
-    <div style={{ display:'flex', flexWrap:'wrap', gap:8 }}>
-      {episodes.map(ep => {
-        const c = CONDITION_COLOURS[ep.condition_type] || CONDITION_COLOURS[ep.condition] || CONDITION_COLOURS.hypothyroidism;
-        const label = CONDITION_LABELS[ep.condition_type] || CONDITION_LABELS[ep.condition] || ep.condition;
-        return (
-          <span key={ep.id} style={{ background:c.bg, border:`1px solid ${c.border}`, color:c.text, borderRadius:20, padding:'4px 12px', fontSize:12, fontWeight:500 }}>
-            {c.icon} {label} {ep.questionnaire_status === 'completed' ? '✓' : '⏳'}
-          </span>
-        );
-      })}
+    <>
+      <div style={{ display:'flex', flexWrap:'wrap', gap:8 }}>
+        {episodes.map(ep => {
+          const c = CONDITION_COLOURS[ep.condition_type] || CONDITION_COLOURS[ep.condition] || CONDITION_COLOURS.hypothyroidism;
+          const label = CONDITION_LABELS[ep.condition_type] || CONDITION_LABELS[ep.condition] || ep.condition;
+          const isComplete = ep.questionnaire_status === 'completed';
+          return (
+            <button
+              key={ep.id}
+              // Direct action, same as the buttons on the full My Conditions
+              // page — no more navigating to a page that just asks again.
+              onClick={() => isComplete ? setStatusEpisodeId(ep.id) : (onResumeCondition && onResumeCondition(ep))}
+              title={isComplete ? 'View status / opinion' : 'Resume questionnaire'}
+              style={{ background:c.bg, border:`1px solid ${c.border}`, color:c.text, borderRadius:20, padding:'4px 12px', fontSize:12, fontWeight:500, cursor:'pointer' }}
+            >
+              {c.icon} {label} {isComplete ? '· ✓ Submitted' : '· Resume'}
+            </button>
+          );
+        })}
+      </div>
+      {statusEpisodeId && (
+        <EpisodeStatusModal episodeId={statusEpisodeId} onClose={() => setStatusEpisodeId(null)} />
+      )}
+    </>
+  );
+};
+
+// ─── Language picker (migration 019 — patients.preferred_language) ────────
+// Drives both this portal's own i18n display language AND the target
+// language for the physician's translated opinion (see OpinionViewer).
+const LANGUAGES = [
+  ['en', 'English'], ['hi', 'हिन्दी (Hindi)'], ['gu', 'ગુજરાતી (Gujarati)'],
+  ['mr', 'मराठी (Marathi)'], ['ta', 'தமிழ் (Tamil)'], ['te', 'తెలుగు (Telugu)'],
+  ['kn', 'ಕನ್ನಡ (Kannada)'], ['ml', 'മലയാളം (Malayalam)'],
+  ['bn', 'বাংলা (Bengali)'], ['pa', 'ਪੰਜਾਬੀ (Punjabi)'],
+];
+
+const LanguagePicker = ({ value, onChange }) => {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleChange = async (e) => {
+    const lang = e.target.value;
+    setSaving(true);
+    setError('');
+    try {
+      await patientAPI.updateLanguage(lang);
+      onChange(lang);
+      // Full reload so every screen (questionnaire labels, opinion display,
+      // etc.) picks up the new language immediately rather than only the
+      // components that happen to re-render from this state change.
+      window.location.reload();
+    } catch (err) {
+      setError('Could not save language — please try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div>
+      <select
+        className="form-select"
+        value={value}
+        onChange={handleChange}
+        disabled={saving}
+        style={{
+          borderRadius: 999,
+          paddingLeft: 16,
+          paddingRight: 32,
+          paddingTop: 6,
+          paddingBottom: 6,
+          background: 'var(--teal-50)',
+          border: '1px solid var(--teal-200)',
+          color: 'var(--teal-700)',
+          fontSize: 13,
+          fontWeight: 500,
+        }}
+      >
+        {LANGUAGES.map(([code, label]) => (
+          <option key={code} value={code} style={{ paddingLeft: '1.2em' }}>{label}</option>
+        ))}
+      </select>
+      {error && <div style={{ color: 'var(--red-600)', fontSize: 12, marginTop: 6 }}>{error}</div>}
     </div>
   );
 };
@@ -492,6 +583,17 @@ const PatientPortal = () => {
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddCondition, setShowAddCondition] = useState(false);
+  const [resumeTarget, setResumeTarget] = useState(null); // { id, condition } — set by "Resume" on an in-progress episode
+
+  const closeAddCondition = () => {
+    setShowAddCondition(false);
+    setResumeTarget(null); // so the next "+ Add condition" click starts fresh at SELECT, not stuck resuming the last episode
+  };
+
+  const resumeCondition = (ep) => {
+    setResumeTarget({ id: ep.id, condition: ep.condition_type || ep.condition });
+    setShowAddCondition(true);
+  };
 
   useEffect(() => {
     if (!user?.id) return;
@@ -513,13 +615,14 @@ const PatientPortal = () => {
       {showAddCondition && (
         <AddConditionFlow
           patient={patient}
-          onClose={() => setShowAddCondition(false)}
-          onDone={() => setShowAddCondition(false)}
+          resumeEpisode={resumeTarget}
+          onClose={closeAddCondition}
+          onDone={closeAddCondition}
         />
       )}
       <Routes>
-        <Route path="dashboard" element={<Dashboard patient={patient} opinions={opinions} invoices={invoices} onAddCondition={() => setShowAddCondition(true)} />} />
-        <Route path="conditions" element={<MyConditions patient={patient} onAddCondition={() => setShowAddCondition(true)} />} />
+        <Route path="dashboard" element={<Dashboard patient={patient} opinions={opinions} invoices={invoices} onAddCondition={() => setShowAddCondition(true)} onResumeCondition={resumeCondition} onLanguageChange={(lang) => setPatient(p => ({ ...p, preferredLanguage: lang }))} />} />
+        <Route path="conditions" element={<MyConditions patient={patient} onAddCondition={() => setShowAddCondition(true)} onResumeCondition={resumeCondition} />} />
         <Route path="opinions" element={
           <>
             <SectionHeader title="Opinion history" />
@@ -549,17 +652,90 @@ const PatientPortal = () => {
           <>
             <SectionHeader title="My profile" action={<SecureBadge />} />
             {patient && (
-              <div className="card">
-                <div className="form-grid-2">
-                  {[['Name', `${patient.firstName} ${patient.middleName || ''} ${patient.lastName}`],['Patient code', patient.patientCode],['Date of birth', patient.dob],['Gender', patient.gender],['Blood group', patient.bloodGroup || '—'],['Mobile', patient.mobile],['WhatsApp', patient.whatsapp],['Email', patient.email]].map(([label, value]) => (
-                    <div key={label} style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
-                      <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 2 }}>{label}</div>
-                      <div style={{ fontSize: 14 }}>{value}</div>
-                    </div>
-                  ))}
+              <>
+                <div className="card">
+                  <div className="card-title">Personal details</div>
+                  <div className="form-grid-2">
+                    {[
+                      ['Name', `${patient.firstName} ${patient.middleName || ''} ${patient.lastName}`],
+                      ['Patient code', patient.patientCode],
+                      ['Date of birth', patient.dob],
+                      ['Gender', patient.gender],
+                      ['Blood group', patient.bloodGroup || '—'],
+                    ].map(([label, value]) => (
+                      <div key={label} style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+                        <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 2 }}>{label}</div>
+                        <div style={{ fontSize: 14 }}>{value}</div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
+
+                {/* Guardian details — only shown when actually on file (minor patients) */}
+                {(patient.guardianName || patient.guardianRelation) && (
+                  <div className="card" style={{ marginTop: 16 }}>
+                    <div className="card-title">Guardian details</div>
+                    <div className="form-grid-2">
+                      {[
+                        ['Guardian name', patient.guardianName || '—'],
+                        ['Relation to patient', patient.guardianRelation || '—'],
+                      ].map(([label, value]) => (
+                        <div key={label} style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+                          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 2 }}>{label}</div>
+                          <div style={{ fontSize: 14 }}>{value}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="card" style={{ marginTop: 16 }}>
+                  <div className="card-title">Contact</div>
+                  <div className="form-grid-2">
+                    {[
+                      ['Mobile', patient.mobile, patient.mobileVerified],
+                      ['WhatsApp', patient.whatsapp, patient.whatsappVerified],
+                      ['Email', patient.email, patient.emailVerified],
+                    ].map(([label, value, verified]) => (
+                      <div key={label} style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+                        <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 2 }}>{label}</div>
+                        <div style={{ fontSize: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+                          {value || '—'}
+                          {value && (verified
+                            ? <span style={{ fontSize: 11, color: 'var(--teal-600)' }}>✓ Verified</span>
+                            : <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Unverified</span>)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="card" style={{ marginTop: 16 }}>
+                  <div className="card-title">Address</div>
+                  <div className="form-grid-2">
+                    {[
+                      ['Address line 1', patient.address?.line1],
+                      ['Address line 2', patient.address?.line2],
+                      ['City', patient.address?.city],
+                      ['State', patient.address?.state],
+                      ['Pincode', patient.address?.pincode],
+                    ].map(([label, value]) => (
+                      <div key={label} style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+                        <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 2 }}>{label}</div>
+                        <div style={{ fontSize: 14 }}>{value || '—'}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
             )}
+            <div className="card" style={{ marginTop: 16 }}>
+              <div className="card-title">Language</div>
+              <LanguagePicker
+                value={patient?.preferredLanguage || 'en'}
+                onChange={(lang) => setPatient((p) => ({ ...p, preferredLanguage: lang }))}
+              />
+            </div>
           </>
         } />
         <Route path="documents" element={

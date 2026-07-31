@@ -100,6 +100,8 @@ const OpinionsTab = () => {
       <OpinionWriter
         episodeId={selectedEpisode.episodeId}
         existingOpinion={reviewData.opinion}
+        questionnaire={reviewData.questionnaire}
+        conditionType={reviewData.episode?.condition}
         onSaved={() => {}}
         onSubmitted={backToQueue}
         onBack={backToQueue}

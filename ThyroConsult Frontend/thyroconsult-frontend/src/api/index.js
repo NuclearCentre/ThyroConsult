@@ -5,19 +5,25 @@
 const BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
 
 // ─── Token management ─────────────────────────────────────────────────────
+// sessionStorage (not localStorage) — clears automatically when the browser
+// or tab closes, satisfying "closing browser should log the user out"
+// without breaking normal page refreshes (sessionStorage survives those).
+// NOTE: this makes sessions per-tab — logging in on one tab doesn't share
+// the session with another tab open to the same site. That's the standard
+// tradeoff of sessionStorage and is expected, not a bug.
 
 function getToken() {
-  return localStorage.getItem('thyro_access_token');
+  return sessionStorage.getItem('thyro_access_token');
 }
 
 function setTokens(access, refresh) {
-  localStorage.setItem('thyro_access_token', access);
-  if (refresh) localStorage.setItem('thyro_refresh_token', refresh);
+  sessionStorage.setItem('thyro_access_token', access);
+  if (refresh) sessionStorage.setItem('thyro_refresh_token', refresh);
 }
 
 function clearTokens() {
-  localStorage.removeItem('thyro_access_token');
-  localStorage.removeItem('thyro_refresh_token');
+  sessionStorage.removeItem('thyro_access_token');
+  sessionStorage.removeItem('thyro_refresh_token');
 }
 
 // ─── Core fetch wrapper ───────────────────────────────────────────────────
@@ -58,7 +64,7 @@ async function apiFetch(path, options = {}) {
   // hard-navigate to /login (no refresh token exists yet on a fresh login),
   // wiping the form and the error message before it could ever be shown.
   if (response.status === 401 && token) {
-    const refreshToken = localStorage.getItem('thyro_refresh_token');
+    const refreshToken = sessionStorage.getItem('thyro_refresh_token');
     if (refreshToken) {
       const refreshRes = await fetchWithTimeout(`${BASE_URL}/auth/refresh`, {
         method: 'POST',
@@ -133,6 +139,7 @@ export const authAPI = {
   //         city, state, pincode, mobile, whatsapp, email, password }
 
   sendVerificationOtp: (patientId, channel)      => post('/auth/patient/send-verification-otp', { patientId, channel }),
+  updateContact:       (patientId, channel, value) => post('/auth/patient/update-contact', { patientId, channel, value }),
   // channel: 'mobile' | 'whatsapp' | 'email'
 
   verifyContactOtp:    (patientId, channel, otp) => post('/auth/patient/verify-contact-otp', { patientId, channel, otp }),
@@ -163,6 +170,10 @@ export const authAPI = {
 export const patientAPI = {
   getProfile:     ()                    => get('/patient/profile'),
   updateProfile:  (data)                => put('/patient/profile', data),
+  // Convenience wrapper over updateProfile — migration 019's preferred_language
+  // column. Uses the same PATCH /patient/profile endpoint; narrower call for
+  // the language switcher so callers don't need to know the field name.
+  updateLanguage: (preferredLanguage)   => put('/patient/profile', { preferredLanguage }),
   // Backend returns { episodes, total } — unwrap to the array here so
   // call sites (e.g. PatientDashboard.js) can use the result directly.
   getEpisodes:    (patientId)           => get(`/condition/episodes/${patientId}`).then(r => r.episodes),
@@ -251,6 +262,11 @@ export const physicianAPI = {
   saveDraftOpinion:     (episodeId, data) => post(`/physician/episode/${episodeId}/opinion/draft`, data),
   submitOpinion:        (episodeId, data) => post(`/physician/episode/${episodeId}/opinion/submit`, data),
   amendOpinion:         (opinionId, data) => put(`/physician/opinion/${opinionId}/amend`, data),
+
+  // Translation — correct an AI translation of a patient's free-text answer
+  // (migration 019). table must be one of the five questionnaire table names.
+  correctFieldTranslation: (episodeId, table, field, correctedText) =>
+    put(`/physician/episode/${episodeId}/questionnaire-translation`, { table, field, correctedText }),
 
   // Investigation master
   getInvestigationMaster: ()              => get('/physician/investigations/master'),

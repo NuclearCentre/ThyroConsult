@@ -31,6 +31,8 @@ router.post('/auth/patient/register-step1',
   authLimiter, authController.registerPatientStep1);
 router.post('/auth/patient/send-verification-otp',
   otpLimiter,  authLimiter, authController.sendVerificationOTPs);
+router.post('/auth/patient/update-contact',
+  authLimiter, authController.updateRegistrationContact);
 router.post('/auth/patient/verify-contact-otp',
   authLimiter, authController.verifyContactOTP);
 router.post('/auth/patient/consent',
@@ -323,6 +325,8 @@ router.post('/physician/episode/:episodeId/opinion/submit',
   verifyToken, requireRole('doctor'), sessionTimeout, opinionController.submitOpinion);
 router.put ('/physician/opinion/:opinionId/amend',
   verifyToken, requireRole('doctor'), sessionTimeout, opinionController.amendOpinion);
+router.put ('/physician/episode/:episodeId/questionnaire-translation',
+  verifyToken, requireRole('doctor'), sessionTimeout, opinionController.correctFieldTranslation);
 router.post('/physician/episode/:episodeId/close',
   verifyToken, requireRole('doctor'), sessionTimeout, opinionController.closeEpisode);
 router.get ('/physician/investigations/master',

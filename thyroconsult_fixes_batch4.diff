@@ -1,0 +1,220 @@
+diff --git a/ThyroConsult Backend/thyroconsult-backend/src/services/invoiceService.js b/ThyroConsult Backend/thyroconsult-backend/src/services/invoiceService.js
+index 62a229a..854bb8e 100644
+--- a/ThyroConsult Backend/thyroconsult-backend/src/services/invoiceService.js	
++++ b/ThyroConsult Backend/thyroconsult-backend/src/services/invoiceService.js	
+@@ -127,10 +127,10 @@ function generateReceipt(data) {
+       doc.save().font('Helvetica').fontSize(10).fillColor('#A7F3D0')
+          .text('Thyroid Online Opinion Platform', MARGIN + 54, 44, { lineBreak: false }).restore();
+ 
+-      // HIPAA badge
++      // Secure badge
+       fillRect(W - 130, 18, 90, 22, '#0D7A59', 4);
+       doc.save().font('Helvetica-Bold').fontSize(7).fillColor(COLOR.white)
+-         .text('HIPAA COMPLIANT', W - 130, 25, { width: 90, align: 'center', lineBreak: false }).restore();
++         .text('SECURE & ENCRYPTED', W - 130, 25, { width: 90, align: 'center', lineBreak: false }).restore();
+ 
+       y = 108;
+ 
+@@ -265,7 +265,7 @@ function generateReceipt(data) {
+          .text('This is a computer-generated receipt and does not require a physical signature.', MARGIN, y, { width: CONTENT_W, align: 'center', lineBreak: false }).restore();
+       y += 12;
+       doc.save().font('Helvetica').fontSize(8).fillColor(COLOR.gray400)
+-         .text('ThyroConsult  |  HIPAA-Compliant Thyroid Online Opinion Platform', MARGIN, y, { width: CONTENT_W, align: 'center', lineBreak: false }).restore();
++         .text('ThyroConsult  |  Thyroid Online Opinion Platform', MARGIN, y, { width: CONTENT_W, align: 'center', lineBreak: false }).restore();
+ 
+       doc.end();
+     } catch (err) {
+diff --git a/ThyroConsult Frontend/thyroconsult-frontend/src/components/ConditionSelection.js b/ThyroConsult Frontend/thyroconsult-frontend/src/components/ConditionSelection.js
+index e803892..9f151a4 100644
+--- a/ThyroConsult Frontend/thyroconsult-frontend/src/components/ConditionSelection.js	
++++ b/ThyroConsult Frontend/thyroconsult-frontend/src/components/ConditionSelection.js	
+@@ -44,6 +44,16 @@ const CONDITIONS = [
+     bg: '#fdf0f0',
+     border: '#e8a5a5',
+   },
++  {
++    id: 'nodule',
++    icon: '🟣',
++    title: 'Thyroid Nodule',
++    subtitle: 'Lump or swelling in the thyroid gland',
++    symptoms: ['Neck lump or swelling', 'Difficulty swallowing', 'Voice changes', 'Rapidly growing nodule', 'Found on scan/ultrasound'],
++    color: '#534AB7',
++    bg: '#EEEDFE',
++    border: '#c7c2f0',
++  },
+ ];
+ 
+ const ConditionSelection = ({ patientId, doctorId, onComplete, onBack }) => {
+@@ -56,8 +66,16 @@ const ConditionSelection = ({ patientId, doctorId, onComplete, onBack }) => {
+     setLoading(true);
+     setError('');
+     try {
+-      const res = await conditionAPI.selectCondition(patientId, selected, doctorId);
+-      const { episode } = res.data;
++      // selectCondition takes a single body object — patientId isn't even
++      // needed, the backend derives it from the JWT (req.user.patientId).
++      // This previously called selectCondition(patientId, selected,
++      // doctorId) against a (data) => post(...) signature, so `data`
++      // silently became the raw patientId string and condition/doctorId
++      // were dropped entirely — the backend always rejected it as an
++      // invalid condition.
++      const res = await conditionAPI.selectCondition({ condition: selected, doctorId });
++      // Backend returns { message, episode } flat, not wrapped in .data.
++      const { episode } = res;
+       onComplete({ condition: selected, episodeId: episode.id });
+     } catch (err) {
+       setError(err.response?.data?.error || 'Failed to save condition selection. Please try again.');
+diff --git a/ThyroConsult Frontend/thyroconsult-frontend/src/components/common/Sidebar.js b/ThyroConsult Frontend/thyroconsult-frontend/src/components/common/Sidebar.js
+index 670ad30..740bfaf 100644
+--- a/ThyroConsult Frontend/thyroconsult-frontend/src/components/common/Sidebar.js	
++++ b/ThyroConsult Frontend/thyroconsult-frontend/src/components/common/Sidebar.js	
+@@ -109,7 +109,7 @@ export const AdminSidebar = () => {
+         <NavItem to="/admin/patients" icon="🏥" label="Patient records" />
+         <NavItem to="/admin/doctors" icon="👨‍⚕️" label="Doctor management" />
+         <NavItem to="/admin/payments" icon="💳" label="Payments & invoices" />
+-        <NavItem to="/admin/audit" icon="🔍" label="HIPAA audit log" />
++        <NavItem to="/admin/audit" icon="🔍" label="Data access audit log" />
+         <NavItem to="/admin/security" icon="🔒" label="Encryption & security" />
+         <NavItem to="/admin/roles" icon="🔑" label="Roles & permissions" />
+         <NavItem to="/admin/alerts" icon="🔔" label="Alerts & notifications" />
+diff --git a/ThyroConsult Frontend/thyroconsult-frontend/src/components/common/index.js b/ThyroConsult Frontend/thyroconsult-frontend/src/components/common/index.js
+index c92f4d3..3337d54 100644
+--- a/ThyroConsult Frontend/thyroconsult-frontend/src/components/common/index.js	
++++ b/ThyroConsult Frontend/thyroconsult-frontend/src/components/common/index.js	
+@@ -14,14 +14,14 @@ export const Logo = ({ size = 'md', light = false }) => {
+   );
+ };
+ 
+-// ─── HIPAA Badge ───────────────────────────────────────────
+-export const HIPAABadge = () => (
++// ─── Secure Badge ──────────────────────────────────────────
++export const SecureBadge = () => (
+   <span className="hipaa-badge">
+     <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+       <path d="M6 1L1.5 3v3c0 2.76 1.98 5.34 4.5 6 2.52-.66 4.5-3.24 4.5-6V3L6 1z" fill="var(--teal-400)" opacity="0.2"/>
+       <path d="M4 6l1.5 1.5L8 4" stroke="var(--teal-600)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+     </svg>
+-    HIPAA Protected
++    Secure & Encrypted
+   </span>
+ );
+ 
+diff --git a/ThyroConsult Frontend/thyroconsult-frontend/src/pages/LoginPage.js b/ThyroConsult Frontend/thyroconsult-frontend/src/pages/LoginPage.js
+index 5459201..2bb8caf 100644
+--- a/ThyroConsult Frontend/thyroconsult-frontend/src/pages/LoginPage.js	
++++ b/ThyroConsult Frontend/thyroconsult-frontend/src/pages/LoginPage.js	
+@@ -77,9 +77,9 @@ const LoginPage = () => {
+           )}
+         </div>
+ 
+-        {/* HIPAA notice */}
++        {/* Security notice */}
+         <p style={{ textAlign: 'center', fontSize: 12, color: 'var(--text-tertiary)', marginTop: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
+-          🔒 HIPAA-compliant · End-to-end encrypted · Your data is protected
++          🔒 End-to-end encrypted · Your data is protected
+         </p>
+       </div>
+     </div>
+diff --git a/ThyroConsult Frontend/thyroconsult-frontend/src/pages/admin/AdminPortal.js b/ThyroConsult Frontend/thyroconsult-frontend/src/pages/admin/AdminPortal.js
+index 654d935..8155b96 100644
+--- a/ThyroConsult Frontend/thyroconsult-frontend/src/pages/admin/AdminPortal.js	
++++ b/ThyroConsult Frontend/thyroconsult-frontend/src/pages/admin/AdminPortal.js	
+@@ -33,7 +33,7 @@ const AdminDashboard = () => {
+         <h2 style={{ fontSize:'1.4rem' }}>Platform overview</h2>
+         <div style={{ display:'flex', gap:8 }}>
+           <span className="badge badge-teal">✓ All systems operational</span>
+-          <span className="badge badge-indigo">HIPAA compliant</span>
++          <span className="badge badge-indigo">Secure & Encrypted</span>
+         </div>
+       </div>
+ 
+@@ -243,7 +243,7 @@ const AuditLog = () => {
+ 
+   return (
+     <>
+-      <SectionHeader title="HIPAA audit log" subtitle={`${total.toLocaleString()} total events`} action={
++      <SectionHeader title="Data access audit log" subtitle={`${total.toLocaleString()} total events`} action={
+         <button className="btn btn-primary btn-sm" onClick={exportLog}>⬇ Export CSV</button>
+       } />
+       <div className="card">
+diff --git a/ThyroConsult Frontend/thyroconsult-frontend/src/pages/patient/PatientPortal.js b/ThyroConsult Frontend/thyroconsult-frontend/src/pages/patient/PatientPortal.js
+index 72df0af..ebea0cf 100644
+--- a/ThyroConsult Frontend/thyroconsult-frontend/src/pages/patient/PatientPortal.js	
++++ b/ThyroConsult Frontend/thyroconsult-frontend/src/pages/patient/PatientPortal.js	
+@@ -3,7 +3,7 @@ import { Routes, Route, useNavigate } from 'react-router-dom';
+ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer, Legend } from 'recharts';
+ import { patientAPI, receiptAPI } from '../../api';
+ import { PatientSidebar } from '../../components/common/Sidebar';
+-import { Badge, StatusBadge, EmptyState, Spinner, SectionHeader, HIPAABadge } from '../../components/common/index';
++import { Badge, StatusBadge, EmptyState, Spinner, SectionHeader, SecureBadge } from '../../components/common/index';
+ import { useAuth } from '../../context/AuthContext';
+ import ConditionSelection from '../../components/ConditionSelection';
+ import { HypoQuestionnaire, HyperQuestionnaire, TcQuestionnaire } from '../../components/ConditionQuestionnaires';
+@@ -229,7 +229,7 @@ const Dashboard = ({ patient, consultations, invoices, onAddCondition }) => {
+       <SectionHeader
+         title={`Good day, ${patient?.firstName || ''}` }
+         subtitle={new Date().toLocaleDateString('en-IN', { weekday:'long', year:'numeric', month:'long', day:'numeric' })}
+-        action={<HIPAABadge />}
++        action={<SecureBadge />}
+       />
+ 
+       <div className="stat-grid">
+@@ -544,7 +544,7 @@ const PatientPortal = () => {
+         <Route path="invoices" element={<Invoices patient={patient} invoices={invoices} />} />
+         <Route path="profile" element={
+           <>
+-            <SectionHeader title="My profile" action={<HIPAABadge />} />
++            <SectionHeader title="My profile" action={<SecureBadge />} />
+             {patient && (
+               <div className="card">
+                 <div className="form-grid-2">
+diff --git a/ThyroConsult Frontend/thyroconsult-frontend/src/pages/patient/RegisterPage.js b/ThyroConsult Frontend/thyroconsult-frontend/src/pages/patient/RegisterPage.js
+index a94b3a4..fa1ca84 100644
+--- a/ThyroConsult Frontend/thyroconsult-frontend/src/pages/patient/RegisterPage.js	
++++ b/ThyroConsult Frontend/thyroconsult-frontend/src/pages/patient/RegisterPage.js	
+@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
+ import Webcam from 'react-webcam';
+ import SignaturePad from 'react-signature-canvas';
+ import { authAPI, doctorAPI, patientAPI, appointmentAPI } from '../../api';
+-import { Logo, HIPAABadge, Alert, Spinner } from '../../components/common/index';
++import { Logo, SecureBadge, Alert, Spinner } from '../../components/common/index';
+ import ConditionSelection from '../../components/ConditionSelection';
+ import CoreQuestionnaire from '../../components/CoreQuestionnaire';
+ import { HypoQuestionnaire, HyperQuestionnaire } from '../../components/ConditionQuestionnaires';
+@@ -38,8 +38,8 @@ const SUB_STEP_CORE_Q           = '5.6';
+ const SUB_STEP_CONDITION_Q      = '5.7';
+ 
+ const CONSENT_TEXT = {
+-  treatment: `I, the undersigned, hereby consent to receive thyroid online opinion services from the licensed physicians at ThyroConsult. I understand that online opinions will be provided via this secure, HIPAA-compliant platform. I acknowledge that I have been fully informed of the nature of the online opinion service, including its risks, benefits, and available alternatives. I understand my case will be documented and that records will be maintained securely in accordance with applicable medical record laws.`,
+-  data_privacy: `I consent to the secure collection, storage, and processing of my Protected Health Information (PHI) as described under HIPAA Privacy Rule 45 CFR §164. I understand that my data will be encrypted using AES-256 standards and will only be accessible to my treating physician and authorised platform administrators. My data will not be sold, shared, or used for any purpose other than my medical care without my explicit written consent.`,
++  treatment: `I, the undersigned, hereby consent to receive thyroid online opinion services from the licensed physicians at ThyroConsult. I understand that online opinions will be provided via this secure, encrypted platform. I acknowledge that I have been fully informed of the nature of the online opinion service, including its risks, benefits, and available alternatives. I understand my case will be documented and that records will be maintained securely in accordance with applicable medical record laws.`,
++  data_privacy: `I consent to the secure collection, storage, and processing of my personal and health information in accordance with applicable data protection laws. I understand that my data will be encrypted using AES-256 standards and will only be accessible to my treating physician and authorised platform administrators. My data will not be sold, shared, or used for any purpose other than my medical care without my explicit written consent.`,
+   telemedicine: `I understand and accept the limitations of online opinion services including the inability to perform physical examinations. I consent to receive online thyroid opinion via this platform. I acknowledge that in case of a medical emergency, I should contact emergency services immediately. I have been informed about the technology requirements and privacy measures in place.`,
+ };
+ 
+@@ -331,7 +331,7 @@ const RegisterPage = () => {
+       <div style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)', padding: '14px 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 40 }}>
+         <Logo />
+         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+-          <HIPAABadge />
++          <SecureBadge />
+           {savedAt && <span className="autosave">✓ Saved {savedAt}</span>}
+         </div>
+       </div>
+@@ -536,7 +536,6 @@ const RegisterPage = () => {
+           <div className="card">
+             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
+               <h3>Electronic consent form</h3>
+-              <span style={{ fontSize: 11, background: 'var(--indigo-50)', color: 'var(--indigo-800)', padding: '3px 9px', borderRadius: 20, fontWeight: 500 }}>HIPAA §164.508</span>
+             </div>
+             {Object.entries(CONSENT_TEXT).map(([type, text]) => {
+               const labels = { treatment: 'Treatment consent', data_privacy: 'Data privacy', telemedicine: 'Telemedicine consent' };
+@@ -559,7 +558,7 @@ const RegisterPage = () => {
+             <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+               <button className="btn btn-secondary btn-sm" onClick={() => sigPadRef.current?.clear()}>Clear signature</button>
+             </div>
+-            <p style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Timestamp, IP address, and document hash are recorded for HIPAA compliance.</p>
++            <p style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Timestamp, IP address, and document hash are recorded for compliance and audit purposes.</p>
+             <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 20 }}>
+               <button className="btn btn-secondary" onClick={() => setStep(2)}>← Back</button>
+               <button className="btn btn-primary btn-lg" onClick={submitConsents} disabled={loading || !Object.values(consents).every(Boolean)}>

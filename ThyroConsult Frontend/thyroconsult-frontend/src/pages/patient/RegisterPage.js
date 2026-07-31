@@ -17,6 +17,11 @@ import TcQuestionnaire from '../../components/TcQuestionnaire';
 // mistake happening again — flagging rather than deleting it myself.
 import NoduleQuestionnaire from '../../components/NoduleQuestionnaire';
 import { loadRazorpayScript } from '../../utils/loadRazorpay';
+// Needs: npm install country-state-city --save
+// Static offline dataset (no API key, no external network call at runtime) —
+// gives Country -> State -> City cascading dropdowns and each country's
+// dialing code for the phone-number country-code selector below.
+import { Country, State, City } from 'country-state-city';
 
 // ── Steps now include 5.5 (condition), 5.6 (core Q), 5.7 (condition Q)
 // These are sub-steps rendered inside the same step bar position
@@ -50,6 +55,9 @@ const RegisterPage = () => {
   const [patientId, setPatientId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [showWhatsappField, setShowWhatsappField] = useState(false);
   const [savedAt, setSavedAt] = useState('');
   const webcamRef = useRef(null);
   const sigPadRef = useRef(null);
@@ -65,8 +73,8 @@ const RegisterPage = () => {
     guardianName: '', guardianRelation: '',
     dob: '', age: { yy: '', mm: '', dd: '' }, dobAutoCalculated: false,
     gender: '', bloodGroup: '',
-    addressLine1: '', addressLine2: '', city: '', state: '', pincode: '',
-    mobile: '', whatsapp: '', email: '',
+    country: 'IN', addressLine1: '', addressLine2: '', city: '', state: '', pincode: '',
+    mobileCountryCode: '+91', mobile: '', whatsappCountryCode: '+91', whatsapp: '', email: '',
     password: '', confirmPassword: '',
   });
 
@@ -74,6 +82,12 @@ const RegisterPage = () => {
   const [verification, setVerification] = useState({ mobile: false, whatsapp: false, email: false });
   const [otpValues, setOtpValues] = useState({ mobile: '', whatsapp: '', email: '' });
   const [otpSent, setOtpSent] = useState({ mobile: false, whatsapp: false, email: false });
+  const [editingChannel, setEditingChannel] = useState(null); // 'mobile' | 'whatsapp' | 'email' | null
+  const [editValue, setEditValue] = useState('');
+  const [editCountryCode, setEditCountryCode] = useState('+91'); // mobile/whatsapp only
+  const [attemptsRemaining, setAttemptsRemaining] = useState({ mobile: null, whatsapp: null, email: null });
+  const [lockedUntil, setLockedUntil] = useState({ mobile: null, whatsapp: null, email: null });
+  const [otpErrors, setOtpErrors] = useState({ mobile: '', whatsapp: '', email: '' });
 
   // Step 3 consents
   const [consents, setConsents] = useState({ treatment: false, data_privacy: false, telemedicine: false });
@@ -131,6 +145,7 @@ const RegisterPage = () => {
   // ── Step 1: Submit personal info ────────────────────
   const submitStep1 = async () => {
     if (form.password !== form.confirmPassword) return setError('Passwords do not match');
+    if (form.country === 'IN' && !/^\d{6}$/.test(form.pincode)) return setError('PIN code must be exactly 6 digits');
     setLoading(true); setError('');
     try {
       const res = await authAPI.registerStep1({
@@ -138,9 +153,11 @@ const RegisterPage = () => {
         guardianName: form.guardianName, guardianRelation: form.guardianRelation,
         dob: form.dob, dobAutoCalculated: form.dobAutoCalculated,
         gender: form.gender, bloodGroup: form.bloodGroup,
-        addressLine1: form.addressLine1, addressLine2: form.addressLine2,
-        city: form.city, state: form.state, pincode: form.pincode,
-        mobile: form.mobile, whatsapp: form.whatsapp, email: form.email,
+        country: form.country, addressLine1: form.addressLine1, addressLine2: form.addressLine2,
+        city: form.city, state: form.state, pincode: form.pincode || null,
+        mobile: `${form.mobileCountryCode}${form.mobile}`,
+        whatsapp: form.whatsapp ? `${form.whatsappCountryCode}${form.whatsapp}` : null,
+        email: form.email,
         password: form.password,
       });
       setPatientId(res.patientId);
@@ -158,21 +175,70 @@ const RegisterPage = () => {
 
   // ── Step 2: OTP ──────────────────────────────────────
   const sendOTP = async (channel) => {
-    setLoading(true); setError('');
+    setLoading(true); setError(''); setOtpErrors(prev => ({ ...prev, [channel]: '' }));
     try {
       await authAPI.sendVerificationOtp(patientId, channel);
       setOtpSent(prev => ({ ...prev, [channel]: true }));
+      setOtpValues(prev => ({ ...prev, [channel]: '' }));
     } catch (err) { setError(err.response?.data?.error || 'Failed to send OTP'); }
     finally { setLoading(false); }
   };
 
   const verifyOTP = async (channel) => {
-    setLoading(true); setError('');
+    setLoading(true); setError(''); setOtpErrors(prev => ({ ...prev, [channel]: '' }));
     try {
       const res = await authAPI.verifyContactOtp(patientId, channel, otpValues[channel]);
       setVerification(prev => ({ ...prev, [channel]: true }));
+      setAttemptsRemaining(prev => ({ ...prev, [channel]: null }));
       if (res.allVerified) setTimeout(() => setStep(3), 600);
-    } catch (err) { setError(err.response?.data?.error || 'Invalid OTP'); }
+    } catch (err) {
+      const data = err.response?.data || {};
+      if (data.code === 'OTP_LOCKED') {
+        setLockedUntil(prev => ({ ...prev, [channel]: Date.now() + 15 * 60 * 1000 }));
+        setError(data.error || 'Too many authentication attempts. Please retry after 15 mins.');
+      } else {
+        if (data.attemptsRemaining !== undefined) {
+          setAttemptsRemaining(prev => ({ ...prev, [channel]: data.attemptsRemaining }));
+        }
+        // Shown right at the OTP box itself, not just the page-bottom
+        // alert — the patient shouldn't have to look away from where
+        // they just typed to find out it was wrong.
+        setOtpErrors(prev => ({ ...prev, [channel]: data.error || 'Incorrect OTP' }));
+      }
+    }
+    finally { setLoading(false); }
+  };
+
+  // ── Step 2: Edit a contact value before (re-)verifying ──
+  const startEditContact = (channel) => {
+    setEditingChannel(channel);
+    setError('');
+    if (channel === 'mobile') { setEditValue(form.mobile); setEditCountryCode(form.mobileCountryCode); }
+    else if (channel === 'whatsapp') { setEditValue(form.whatsapp); setEditCountryCode(form.whatsappCountryCode); }
+    else { setEditValue(form.email); }
+  };
+  const cancelEditContact = () => { setEditingChannel(null); setEditValue(''); };
+  const saveEditContact = async () => {
+    const channel = editingChannel;
+    if (!editValue.trim()) return setError('Value cannot be empty');
+    const fullValue = channel === 'email' ? editValue.trim() : `${editCountryCode}${editValue.trim()}`;
+    setLoading(true); setError('');
+    try {
+      await authAPI.updateContact(patientId, channel, fullValue);
+      // Reflect the edit locally and reset that channel's verify state —
+      // the old OTP send/verify no longer applies to the new value.
+      setForm(prev => channel === 'mobile'
+        ? { ...prev, mobile: editValue.trim(), mobileCountryCode: editCountryCode }
+        : channel === 'whatsapp'
+        ? { ...prev, whatsapp: editValue.trim(), whatsappCountryCode: editCountryCode }
+        : { ...prev, email: editValue.trim() });
+      setVerification(prev => ({ ...prev, [channel]: false }));
+      setOtpSent(prev => ({ ...prev, [channel]: false }));
+      setOtpValues(prev => ({ ...prev, [channel]: '' }));
+      setAttemptsRemaining(prev => ({ ...prev, [channel]: null }));
+      setLockedUntil(prev => ({ ...prev, [channel]: null }));
+      setEditingChannel(null);
+    } catch (err) { setError(err.response?.data?.error || 'Failed to update — please try again'); }
     finally { setLoading(false); }
   };
 
@@ -311,7 +377,31 @@ const RegisterPage = () => {
   };
 
   const fld = (k) => (e) => setForm(prev => ({ ...prev, [k]: e.target.value }));
-  const allVerified = verification.mobile && verification.whatsapp && verification.email;
+
+  // ── Country -> State -> City cascade ──────────────────
+  // Changing country resets state/city (they're no longer valid for the
+  // new country) and re-suggests the phone country code for both mobile
+  // and WhatsApp — the patient can still override the phone code
+  // independently afterward, this is just a sensible default.
+  const countryList = Country.getAllCountries();
+  const stateList = form.country ? State.getStatesOfCountry(form.country) : [];
+  const cityList = (form.country && form.state) ? City.getCitiesOfState(form.country, form.state) : [];
+
+  const handleCountryChange = (isoCode) => {
+    const country = countryList.find(c => c.isoCode === isoCode);
+    const dialCode = country ? `+${country.phonecode}` : '';
+    setForm(prev => ({
+      ...prev,
+      country: isoCode, state: '', city: '',
+      mobileCountryCode: dialCode || prev.mobileCountryCode,
+      whatsappCountryCode: dialCode || prev.whatsappCountryCode,
+    }));
+  };
+  const handleStateChange = (stateCode) => {
+    setForm(prev => ({ ...prev, state: stateCode, city: '' }));
+  };
+
+  const allVerified = verification.mobile && verification.email;
 
   // ── Which step number to highlight in progress bar ───
   // Sub-steps all show as step 6 in the bar
@@ -373,7 +463,7 @@ const RegisterPage = () => {
           </div>
         )}
 
-        {error && !subStep && <Alert type="error" onClose={() => setError('')}>{error}</Alert>}
+        {/* Error alert moved to the bottom of the page — see below */}
 
         {/* ═══════════════════════════════════════════════════
             STEP 1 — Personal info (unchanged)
@@ -438,24 +528,42 @@ const RegisterPage = () => {
 
             <h4 style={{ marginBottom: 12, fontSize: 14 }}>Address</h4>
             <div className="form-group">
+              <label className="form-label">Country <span style={{ color: 'var(--red-400)' }}>*</span></label>
+              <select className="form-input" value={form.country} onChange={e => handleCountryChange(e.target.value)} required>
+                {countryList.map(c => <option key={c.isoCode} value={c.isoCode}>{c.name}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
               <label className="form-label">State <span style={{ color: 'var(--red-400)' }}>*</span></label>
-              <input className="form-input" type="text" value={form.state} onChange={fld('state')} placeholder="State" required />
+              <select className="form-input" value={form.state} onChange={e => handleStateChange(e.target.value)} required disabled={!stateList.length}>
+                <option value="">{stateList.length ? 'Select state' : 'No states listed for this country'}</option>
+                {stateList.map(s => <option key={s.isoCode} value={s.isoCode}>{s.name}</option>)}
+              </select>
             </div>
             <div className="form-group">
-              <label className="form-label">City <span style={{ color: 'var(--red-400)' }}>*</span></label>
-              <input className="form-input" type="text" value={form.city} onChange={fld('city')} placeholder="City" required />
+              <label className="form-label">City/District <span style={{ color: 'var(--red-400)' }}>*</span></label>
+              <select className="form-input" value={form.city} onChange={fld('city')} required disabled={!form.state}>
+                <option value="">{form.state ? 'Select city' : 'Select a state first'}</option>
+                {cityList.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+              </select>
             </div>
             <div className="form-group">
-              <label className="form-label">Flat / House No., Street <span style={{ color: 'var(--red-400)' }}>*</span></label>
+              <label className="form-label">Flat / House No., Street Name, Area <span style={{ color: 'var(--red-400)' }}>*</span></label>
               <input className="form-input" type="text" value={form.addressLine1} onChange={fld('addressLine1')} placeholder="Flat no., building, street" required />
             </div>
             <div className="form-group">
               <label className="form-label">Landmark</label>
               <input className="form-input" type="text" value={form.addressLine2} onChange={fld('addressLine2')} placeholder="Landmark (optional)" />
             </div>
-            <div className="form-group" style={{ maxWidth: 160 }}>
-              <label className="form-label">PIN code <span style={{ color: 'var(--red-400)' }}>*</span></label>
-              <input className="form-input" type="text" value={form.pincode} onChange={fld('pincode')} placeholder="6-digit PIN" maxLength={6} required />
+            <div className="form-group" style={{ maxWidth: 200 }}>
+              <label className="form-label">
+                {form.country === 'IN' ? 'PIN code' : 'Postal code'}
+                {form.country === 'IN' && <span style={{ color: 'var(--red-400)' }}> *</span>}
+              </label>
+              <input className="form-input" type="text" value={form.pincode} onChange={fld('pincode')}
+                placeholder={form.country === 'IN' ? '6-digit PIN' : 'Postal code (optional)'}
+                maxLength={form.country === 'IN' ? 6 : 12}
+                required={form.country === 'IN'} />
             </div>
 
             <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '16px 0' }} />
@@ -463,11 +571,26 @@ const RegisterPage = () => {
             <h4 style={{ marginBottom: 12, fontSize: 14 }}>Contact details</h4>
             <div className="form-group">
               <label className="form-label">Mobile number <span style={{ color: 'var(--red-400)' }}>*</span></label>
-              <input className="form-input" type="tel" value={form.mobile} onChange={fld('mobile')} placeholder="+91 XXXXX XXXXX" required />
+              <div style={{ display: 'flex', gap: 8 }}>
+                <select className="form-input" style={{ maxWidth: 110 }} value={form.mobileCountryCode} onChange={fld('mobileCountryCode')}>
+                  {countryList.map(c => <option key={c.isoCode} value={`+${c.phonecode}`}>+{c.phonecode} {c.isoCode}</option>)}
+                </select>
+                <input className="form-input" type="tel" value={form.mobile} onChange={fld('mobile')} placeholder="XXXXX XXXXX" required />
+              </div>
             </div>
             <div className="form-group">
-              <label className="form-label">WhatsApp number <span style={{ color: 'var(--red-400)' }}>*</span></label>
-              <input className="form-input" type="tel" value={form.whatsapp} onChange={fld('whatsapp')} placeholder="+91 XXXXX XXXXX" required />
+              <label className="form-label">WhatsApp number <span style={{ fontWeight: 400, color: 'var(--text-tertiary)' }}>(optional)</span></label>
+              {showWhatsappField ? (
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <select className="form-input" style={{ maxWidth: 110 }} value={form.whatsappCountryCode} onChange={fld('whatsappCountryCode')}>
+                    {countryList.map(c => <option key={c.isoCode} value={`+${c.phonecode}`}>+{c.phonecode} {c.isoCode}</option>)}
+                  </select>
+                  <input className="form-input" type="tel" value={form.whatsapp} onChange={fld('whatsapp')} placeholder="XXXXX XXXXX" />
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setShowWhatsappField(false); setForm(p => ({ ...p, whatsapp: '' })); }}>Remove</button>
+                </div>
+              ) : (
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowWhatsappField(true)}>+ Add WhatsApp number</button>
+              )}
             </div>
             <div className="form-group">
               <label className="form-label">Email address <span style={{ color: 'var(--red-400)' }}>*</span></label>
@@ -479,11 +602,23 @@ const RegisterPage = () => {
             <div className="form-grid-2">
               <div className="form-group">
                 <label className="form-label">Password <span style={{ color: 'var(--red-400)' }}>*</span></label>
-                <input className="form-input" type="password" value={form.password} onChange={fld('password')} placeholder="Min 8 chars, 1 upper, 1 number, 1 symbol" required />
+                <div style={{ position: 'relative' }}>
+                  <input className="form-input" type={showPassword ? 'text' : 'password'} value={form.password} onChange={fld('password')} placeholder="Min 8 chars, 1 upper, 1 number, 1 symbol" required style={{ paddingRight: 36 }} />
+                  <button type="button" onClick={() => setShowPassword(v => !v)} aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, padding: 4, color: 'var(--text-tertiary)' }}>
+                    {showPassword ? '🙈' : '👁️'}
+                  </button>
+                </div>
               </div>
               <div className="form-group">
                 <label className="form-label">Confirm password <span style={{ color: 'var(--red-400)' }}>*</span></label>
-                <input className="form-input" type="password" value={form.confirmPassword} onChange={fld('confirmPassword')} placeholder="Repeat password" required />
+                <div style={{ position: 'relative' }}>
+                  <input className="form-input" type={showConfirmPassword ? 'text' : 'password'} value={form.confirmPassword} onChange={fld('confirmPassword')} placeholder="Repeat password" required style={{ paddingRight: 36 }} />
+                  <button type="button" onClick={() => setShowConfirmPassword(v => !v)} aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
+                    style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, padding: 4, color: 'var(--text-tertiary)' }}>
+                    {showConfirmPassword ? '🙈' : '👁️'}
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -496,32 +631,103 @@ const RegisterPage = () => {
         )}
 
         {/* ═══════════════════════════════════════════════════
-            STEP 2 — Verify contacts (unchanged)
+            STEP 2 — Verify contacts
         ═══════════════════════════════════════════════════ */}
         {step === 2 && !subStep && (
           <div className="card">
             <h3 style={{ marginBottom: 6 }}>Verify your contact details</h3>
-            <p style={{ color: 'var(--text-tertiary)', fontSize: 13, marginBottom: 24 }}>All three must be verified to continue <span style={{ color: 'var(--red-400)' }}>*</span></p>
-            {[['mobile', '📱 Mobile', 'SMS'], ['whatsapp', '💬 WhatsApp', 'WhatsApp'], ['email', '✉️ Email', 'Email']].map(([ch, label, method]) => (
-              <div key={ch} style={{ marginBottom: 20, padding: 16, border: `1px solid ${verification[ch] ? 'var(--teal-200)' : 'var(--border)'}`, borderRadius: 'var(--radius-md)', background: verification[ch] ? 'var(--teal-50)' : 'var(--surface)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                  <span style={{ fontWeight: 500, fontSize: 14 }}>{label}</span>
-                  {verification[ch]
-                    ? <span className="badge badge-teal">✓ Verified</span>
-                    : <button className="btn btn-secondary btn-sm" onClick={() => sendOTP(ch)} disabled={loading}>Send OTP via {method}</button>
-                  }
-                </div>
-                {!verification[ch] && otpSent[ch] && (
-                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 10 }}>
-                    <input className="form-input" placeholder="6-digit OTP" maxLength={6} value={otpValues[ch]}
-                      onChange={e => setOtpValues(p => ({ ...p, [ch]: e.target.value }))} style={{ maxWidth: 140 }} />
-                    <button className="btn btn-primary btn-sm" onClick={() => verifyOTP(ch)} disabled={loading || otpValues[ch].length < 6}>
-                      {loading ? <Spinner size={14} color="#fff" /> : 'Verify'}
-                    </button>
+            <p style={{ color: 'var(--text-tertiary)', fontSize: 13, marginBottom: 24 }}>Mobile and email must be verified to continue <span style={{ color: 'var(--red-400)' }}>*</span></p>
+            {[
+              ['mobile', '📱 Mobile', 'SMS', `${form.mobileCountryCode} ${form.mobile}`],
+              ['email', '✉️ Email', 'Email', form.email],
+            ].map(([ch, label, method, displayValue]) => {
+              const isLocked = lockedUntil[ch] && lockedUntil[ch] > Date.now();
+              const isEditing = editingChannel === ch;
+              return (
+                <div key={ch} style={{ marginBottom: 20, padding: 16, border: `1px solid ${verification[ch] ? 'var(--teal-200)' : 'var(--border)'}`, borderRadius: 'var(--radius-md)', background: verification[ch] ? 'var(--teal-50)' : 'var(--surface)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                    <span style={{ fontWeight: 500, fontSize: 14 }}>{label}</span>
+                    {verification[ch] && <span className="badge badge-teal">✓ Verified</span>}
                   </div>
-                )}
+
+                  {isEditing ? (
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+                      {ch !== 'email' && (
+                        <select className="form-input" style={{ maxWidth: 100 }} value={editCountryCode} onChange={e => setEditCountryCode(e.target.value)}>
+                          {countryList.map(c => <option key={c.isoCode} value={`+${c.phonecode}`}>+{c.phonecode}</option>)}
+                        </select>
+                      )}
+                      <input className="form-input" value={editValue} onChange={e => setEditValue(e.target.value)}
+                        type={ch === 'email' ? 'email' : 'tel'} placeholder={ch === 'email' ? 'you@example.com' : 'XXXXX XXXXX'} />
+                      <button className="btn btn-primary btn-sm" onClick={saveEditContact} disabled={loading}>Save</button>
+                      <button className="btn btn-secondary btn-sm" onClick={cancelEditContact} disabled={loading}>Cancel</button>
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 10 }}>{displayValue}</div>
+                      {!verification[ch] && (
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                          <button className="btn btn-ghost btn-sm" onClick={() => startEditContact(ch)} disabled={loading || isLocked}>✏️ Edit</button>
+                          {!otpSent[ch] && (
+                            <button className="btn btn-secondary btn-sm" onClick={() => sendOTP(ch)} disabled={loading || isLocked}>Send OTP via {method}</button>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {!verification[ch] && !isEditing && otpSent[ch] && !isLocked && (
+                    <div style={{ marginTop: 10 }}>
+                      <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                        <input className="form-input" placeholder="6-digit OTP" maxLength={6} value={otpValues[ch]}
+                          onChange={e => { setOtpValues(p => ({ ...p, [ch]: e.target.value })); setOtpErrors(p => ({ ...p, [ch]: '' })); }}
+                          style={{ maxWidth: 140, borderColor: otpErrors[ch] ? 'var(--red-400)' : undefined }} />
+                        <button className="btn btn-primary btn-sm" onClick={() => verifyOTP(ch)} disabled={loading || otpValues[ch].length < 6}>
+                          {loading ? <Spinner size={14} color="#fff" /> : 'Verify'}
+                        </button>
+                        {attemptsRemaining[ch] !== null && (
+                          <span style={{ fontSize: 12, color: 'var(--amber-600)' }}>{attemptsRemaining[ch]} attempt{attemptsRemaining[ch] === 1 ? '' : 's'} left</span>
+                        )}
+                      </div>
+                      {otpErrors[ch] && (
+                        <div style={{ fontSize: 12, color: 'var(--red-600)', marginTop: 6 }}>✕ {otpErrors[ch]}</div>
+                      )}
+                    </div>
+                  )}
+
+                  {isLocked && (
+                    <div style={{ fontSize: 12, color: 'var(--red-600)', marginTop: 8 }}>
+                      Too many attempts — retry after 15 minutes.
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* WhatsApp — optional, no OTP verification needed at all */}
+            <div style={{ marginBottom: 20, padding: 16, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <span style={{ fontWeight: 500, fontSize: 14 }}>💬 WhatsApp <span style={{ fontWeight: 400, color: 'var(--text-tertiary)' }}>(optional, no verification needed)</span></span>
               </div>
-            ))}
+              {editingChannel === 'whatsapp' ? (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+                  <select className="form-input" style={{ maxWidth: 100 }} value={editCountryCode} onChange={e => setEditCountryCode(e.target.value)}>
+                    {countryList.map(c => <option key={c.isoCode} value={`+${c.phonecode}`}>+{c.phonecode}</option>)}
+                  </select>
+                  <input className="form-input" value={editValue} onChange={e => setEditValue(e.target.value)} type="tel" placeholder="XXXXX XXXXX" />
+                  <button className="btn btn-primary btn-sm" onClick={saveEditContact} disabled={loading}>Save</button>
+                  <button className="btn btn-secondary btn-sm" onClick={cancelEditContact} disabled={loading}>Cancel</button>
+                </div>
+              ) : form.whatsapp ? (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{form.whatsappCountryCode} {form.whatsapp}</span>
+                  <button className="btn btn-ghost btn-sm" onClick={() => startEditContact('whatsapp')} disabled={loading}>✏️ Edit</button>
+                </div>
+              ) : (
+                <button className="btn btn-ghost btn-sm" onClick={() => startEditContact('whatsapp')} disabled={loading}>+ Add WhatsApp number</button>
+              )}
+            </div>
+
             <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
               <button className="btn btn-secondary" onClick={() => setStep(1)}>← Back</button>
               <button className="btn btn-primary btn-lg" onClick={() => setStep(3)} disabled={!allVerified}>Continue →</button>
@@ -806,6 +1012,12 @@ const RegisterPage = () => {
             <div style={{ display: 'flex', justifyContent: 'flex-start', marginTop: 16 }}>
               <button className="btn btn-secondary" onClick={() => setStep(7)}>← Back</button>
             </div>
+          </div>
+        )}
+
+        {error && !subStep && (
+          <div style={{ marginTop: 20 }}>
+            <Alert type="error" onClose={() => setError('')}>{error}</Alert>
           </div>
         )}
 
