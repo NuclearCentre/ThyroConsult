@@ -7,7 +7,7 @@
 //   S3 — follow-up visit: always full fee
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { patientAPI } from '../../api';
+import { patientAPI, followUpAPI, paymentAPI } from '../../api';
 import MissingReports      from '../../components/MissingReports';
 import InvestigationUpload from '../../components/InvestigationUpload';
 import FollowUpVisit       from '../../components/FollowUpVisit';
@@ -51,7 +51,7 @@ export default function PatientDashboard({ patient }) {
           .filter(ep => ep.status !== 'reviewed')
           .map(async ep => {
             try {
-              statusMap[ep.id] = await patientAPI.getGateStatus(ep.id);
+              statusMap[ep.id] = await followUpAPI.getStatus(ep.id);
             } catch {
               statusMap[ep.id] = null;
             }
@@ -70,7 +70,7 @@ export default function PatientDashboard({ patient }) {
     setPayingFor(episode.id);
     try {
       await loadRazorpayScript();
-      const order = await patientAPI.createPaymentOrder({
+      const order = await paymentAPI.createOrder({
         episodeId:     episode.id,
         scenario:      gate.scenario,
         conditionType: episode.condition,
@@ -96,7 +96,7 @@ export default function PatientDashboard({ patient }) {
         theme: { color: '#185FA5' },
         handler: async (response) => {
           // Verify client-side (belt-and-braces alongside webhook)
-          await patientAPI.verifyPayment({
+          await paymentAPI.verifyPayment({
             razorpayOrderId:   response.razorpay_order_id,
             razorpayPaymentId: response.razorpay_payment_id,
             razorpaySignature: response.razorpay_signature,

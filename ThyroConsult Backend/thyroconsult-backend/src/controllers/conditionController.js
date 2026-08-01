@@ -138,7 +138,8 @@ const d = (val) => (val ? decryptPHI(val) : null);
  * Creates:
  *   1. patient_condition_selection row
  *   2. patient_condition_episodes row
- *   3. Updates patients.registration_step to 6
+ * (registration_step advancement removed — see payment reorder, this
+ * always runs post-registration now)
  */
 const selectCondition = async (req, res) => {
   const patientId = req.user.patientId;
@@ -184,12 +185,15 @@ const selectCondition = async (req, res) => {
         [patientId, condition, assignedDoctorId]
       );
 
-      // Advance registration step to 6 (Upload Reports)
-      await client.query(
-        `UPDATE patients SET registration_step = 6, updated_at = NOW()
-         WHERE id = $1 AND registration_step = 5`,
-        [patientId]
-      );
+      // registration_step advancement REMOVED (payment reorder). This used
+      // to bump patients.registration_step to 6 for "Upload Reports" —
+      // that step no longer exists. Condition selection now only ever
+      // happens post-registration (Dashboard's "+ Add Condition" flow,
+      // after Payment has already flipped registration_step to 6 and
+      // registration_complete to TRUE in doctorAccountController.js), so this
+      // guarded UPDATE (WHERE registration_step = 5) would already always
+      // be a no-op by the time it runs. registration_step is now owned
+      // entirely by authController.js/doctorAccountController.js's wizard.
     });
 
     logger.audit('CONDITION_SELECTED', {

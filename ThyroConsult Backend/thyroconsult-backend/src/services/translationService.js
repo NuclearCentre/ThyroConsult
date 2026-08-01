@@ -28,6 +28,16 @@ const LANGUAGE_NAMES = {
   ml: 'Malayalam',
   bn: 'Bengali',
   pa: 'Punjabi',
+  or: 'Odia',
+  as: 'Assamese',
+  ne: 'Nepali',
+  // Manipuri has two scripts genuinely in active use — see PatientPortal.js's
+  // LanguagePicker comment for why both are offered rather than guessing.
+  // The script is spelled out explicitly here (not just "Manipuri") since
+  // that word alone is ambiguous between the two and the model needs to
+  // know which one to actually produce.
+  mnib: 'Manipuri (Meitei language), written in Bengali script',
+  mnim: 'Manipuri (Meitei language), written in Meitei Mayek script — this is a comparatively rare script; if genuinely unable to render it accurately, fall back to Bengali script and note that substitution at the start of the translation in brackets',
 };
 
 /**

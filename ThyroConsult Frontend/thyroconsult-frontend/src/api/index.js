@@ -180,11 +180,19 @@ export const patientAPI = {
   getConsents:    ()                    => get('/patient/consents'),
   saveConsents:   (consentType, agreed, signatureData) =>
     post('/patient/consents', { consentType, agreed, signatureData }),
-  // Self-service — filters by the logged-in patient's own id, optional
-  // category query. (There's also a separate, still-broken
-  // /patient/documents/:episodeId route another caller may depend on —
-  // left alone, not touched here.)
-  getDocuments:   (category)            => get('/patient/documents', category ? { category } : undefined),
+  // Self-service — filters by the logged-in patient's own id. Accepts
+  // either a plain category string (legacy call shape, kept working for
+  // existing callers) or a { category, episodeId } object — the episodeId
+  // form is what ConditionQuestionnaires.js uses to rehydrate "already
+  // uploaded" reports every time a questionnaire opens (resume, or long
+  // after submit), reading from the documents table itself rather than
+  // trusting a snapshot in the questionnaire's own draft JSON. (There's
+  // also a separate, still-broken /patient/documents/:episodeId route
+  // another caller may depend on — left alone, not touched here.)
+  getDocuments:   (params) => {
+    const q = typeof params === 'string' ? { category: params } : (params || undefined);
+    return get('/patient/documents', q);
+  },
   downloadDocument: (docId)             => getBlob(`/patient/documents/download/${docId}`),
   // PatientPortal.js/DoctorPortal.js were calling these under the names
   // getConsultations/getInvoices/getBloodValues — none of which existed
@@ -209,6 +217,13 @@ export const patientAPI = {
   uploadDocument: (formData)            => apiFetch('/patient/documents', {
     method: 'POST', body: formData, headers: { Authorization: `Bearer ${getToken()}` },
   }),
+  // AI auto-extract — runs an already-uploaded report through
+  // documentExtractionService (Anthropic API, vision) looking for one
+  // specific test's value/unit/date/reference range/lab name. Powers the
+  // "🤖 Auto-fill from this report" button. See
+  // patientController.extractDocumentFields.
+  extractDocumentFields: (docId, testLabel) =>
+    post(`/patient/documents/${docId}/extract`, { testLabel }),
 };
 
 // ─── Conditions + Questionnaires ──────────────────────────────────────────
@@ -392,7 +407,7 @@ export const doctorAPI = {
   listDoctors:          ()                => get('/doctors'),
   // ^ ADDED — RegisterPage.js's doctor-selection step (Step 5) calls this
   // for the public doctor list, but no matching export existed at all
-  // before this fix; matches doctorController.listDoctors' own comment
+  // before this fix; matches doctorAccountController.listDoctors' own comment
   // ("GET /doctors — public list for patient doctor selection"), but the
   // exact route path is a best guess pending the routes file confirming it.
   getProfile:           ()                => get('/doctor/profile'),

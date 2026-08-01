@@ -13,7 +13,7 @@ const {
 // ─── Controllers ─────────────────────────────────────────────────────────
 const authController         = require('../controllers/authController');
 const patientController      = require('../controllers/patientController');
-const doctorController       = require('../controllers/doctorController');
+const doctorAccountController = require('../controllers/doctorAccountController');
 const adminController        = require('../controllers/adminController');
 const conditionController    = require('../controllers/conditionController');
 const paymentController      = require('../controllers/paymentController');
@@ -52,7 +52,7 @@ router.post('/auth/logout',             verifyToken, authController.logout);
 // directly rather than via JWT at this stage. Matches doctorAPI.listDoctors
 // added to src/api/index.js this session — that export previously called
 // a /doctors path that had no route at all.
-router.get('/doctors', doctorController.listDoctors);
+router.get('/doctors', doctorAccountController.listDoctors);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PATIENT
@@ -75,7 +75,7 @@ router.post('/patient/consents',
 
 router.post('/patient/documents',
   verifyToken, requireRole('patient'),
-  uploadLimiter, uploadDocument.array('files', 5), handleUploadError,
+  uploadLimiter, uploadDocument.single('document'), handleUploadError,
   auditPhiAccess('patient_documents'),
   patientController.uploadDocument);
 router.get ('/patient/documents/:episodeId',
@@ -100,6 +100,10 @@ router.get ('/patient/documents/download/:docId',
   verifyToken, requireRole('patient'),
   auditPhiAccess('patient_documents'),
   patientController.downloadDocument);
+router.post('/patient/documents/:docId/extract',
+  verifyToken, requireRole('patient'),
+  auditPhiAccess('patient_documents'),
+  patientController.extractDocumentFields);
 router.get ('/patient/opinions',
   verifyToken, requireRole('patient'), patientController.getPatientOpinions);
 router.get ('/patient/invoices',
@@ -176,7 +180,7 @@ router.post('/condition/nodule/:patientId/:episodeId',
 // APPOINTMENTS (initial booking — Step 8 of registration)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// doctorController.bookAppointment is the function that actually creates the
+// doctorAccountController.bookAppointment is the function that actually creates the
 // initial appointments/consultations/payments rows and a Razorpay order for
 // the FIRST opinion. paymentController.createOrder (below) is for S1/S2/S3
 // FOLLOW-UP payments only and expects a different body shape entirely
@@ -185,20 +189,20 @@ router.post('/condition/nodule/:patientId/:episodeId',
 // this route never existed. Fixed: added the route, added appointmentAPI to
 // src/api/index.js, and pointed RegisterPage.js at appointmentAPI.book().
 router.post('/appointment/book',
-  verifyToken, requireRole('patient'), doctorController.bookAppointment);
+  verifyToken, requireRole('patient'), doctorAccountController.bookAppointment);
 
-// doctorController.verifyPayment / razorpayWebhook were fully built and
+// doctorAccountController.verifyPayment / razorpayWebhook were fully built and
 // exported but had NO route anywhere — RegisterPage.js's Razorpay success
 // handler was calling paymentAPI.verifyPayment instead (POST /payment/verify
 // -> paymentController.verifyPayment), which only updates the
 // followup_payments table. The initial booking's order lives in the
-// `payments` table (see doctorController.bookAppointment), so that call was
+// `payments` table (see doctorAccountController.bookAppointment), so that call was
 // silently doing nothing: no error, but the payment/appointment status never
 // flipped to confirmed and registration_complete never got set.
 router.post('/appointment/verify-payment',
-  verifyToken, requireRole('patient'), doctorController.verifyPayment);
+  verifyToken, requireRole('patient'), doctorAccountController.verifyPayment);
 router.post('/appointment/webhook',
-  doctorController.razorpayWebhook);
+  doctorAccountController.razorpayWebhook);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PAYMENTS
@@ -367,18 +371,18 @@ router.post('/physician/followup/:episodeId/:visitId/review',
 // ═══════════════════════════════════════════════════════════════════════════
 
 router.get ('/doctor/profile',
-  verifyToken, requireRole('doctor'), doctorController.getDoctorProfile);
+  verifyToken, requireRole('doctor'), doctorAccountController.getDoctorProfile);
 router.put ('/doctor/profile',
-  verifyToken, requireRole('doctor'), sessionTimeout, doctorController.updateProfile);
+  verifyToken, requireRole('doctor'), sessionTimeout, doctorAccountController.updateProfile);
 
 router.get ('/doctor/appointments',
-  verifyToken, requireRole('doctor'), doctorController.getDoctorAppointments);
+  verifyToken, requireRole('doctor'), doctorAccountController.getDoctorAppointments);
 router.get ('/doctor/weekly-stats',
-  verifyToken, requireRole('doctor'), doctorController.getWeeklyOpinionStats);
+  verifyToken, requireRole('doctor'), doctorAccountController.getWeeklyOpinionStats);
 router.get ('/doctor/appointment/:appointmentId',
-  verifyToken, requireRole('doctor'), doctorController.getAppointmentDetail);
+  verifyToken, requireRole('doctor'), doctorAccountController.getAppointmentDetail);
 router.put ('/doctor/appointment/:appointmentId',
-  verifyToken, requireRole('doctor'), sessionTimeout, doctorController.updateAppointment);
+  verifyToken, requireRole('doctor'), sessionTimeout, doctorAccountController.updateAppointment);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ADMIN — sessionTimeout on all write actions + PHI audit on patient access

@@ -6,13 +6,14 @@ import { PatientSidebar } from '../../components/common/Sidebar';
 import { Badge, StatusBadge, EmptyState, Spinner, SectionHeader, SecureBadge } from '../../components/common/index';
 import { useAuth } from '../../context/AuthContext';
 import ConditionSelection from '../../components/ConditionSelection';
-import { HypoQuestionnaire, HyperQuestionnaire } from '../../components/ConditionQuestionnaires';
-// TcQuestionnaire must come from its own file — ConditionQuestionnaires.js
-// still exports an older, much smaller TcQuestionnaire stub (~270 lines)
-// that RegisterPage.js stopped using a while back; this file was still
-// pulling that stub in, so adding a Thyroid Cancer condition from the
-// patient dashboard (as opposed to during initial registration) got a
-// materially incomplete questionnaire.
+import { HypoQuestionnaire } from '../../components/HypoQuestionnaire';
+import HyperQuestionnaire from '../../components/HyperQuestionnaire';
+// TcQuestionnaire comes from its own standalone file — the old, much
+// smaller dead stub that used to live inside ConditionQuestionnaires.js
+// (which caused a materially incomplete questionnaire if pulled in by
+// mistake) has since been removed entirely as part of that file's rename
+// to HypoQuestionnaire.js. This import was already correct; noting the
+// history so nobody re-adds a Tc import from the Hypo file later.
 import TcQuestionnaire from '../../components/TcQuestionnaire';
 import NoduleQuestionnaire from '../../components/NoduleQuestionnaire';
 import PatientTimeline from '../../components/PatientTimeline';
@@ -226,17 +227,42 @@ const MyConditions = ({ patient, onAddCondition, onResumeCondition }) => {
 };
 
 // ─── Shared layout wrapper ─────────────────────────────────
-const PatientLayout = ({ children, patient }) => (
+// Header bar added here (not just on the Dashboard route) so the
+// language picker is reachable from every page in the patient portal —
+// matches how Practo/Apollo/1mg keep it in a persistent top bar rather
+// than buried in settings, and closer to how CoWIN/Ayushman Bharat-style
+// government health portals treat language as a first-class, always-
+// visible choice for a multilingual health audience.
+const PatientLayout = ({ children, patient, onLanguageChange, keepAsDefault, onKeepAsDefaultChange, languageError }) => (
   <div className="app-shell">
     <PatientSidebar patient={patient} />
     <main className="main-area">
+      <div style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'flex-end',
+        gap: 4, padding: '10px 20px', borderBottom: '1px solid var(--border)',
+      }}>
+        <LanguagePicker
+          value={patient?.preferredLanguage || 'en'}
+          onChange={onLanguageChange}
+        />
+        <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-tertiary)', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={keepAsDefault}
+            onChange={e => onKeepAsDefaultChange(e.target.checked)}
+            style={{ accentColor: 'var(--teal-400)', width: 13, height: 13 }}
+          />
+          Keep as default
+        </label>
+        {languageError && <div style={{ fontSize: 11, color: 'var(--red-600)' }}>{languageError}</div>}
+      </div>
       <div className="page-content">{children}</div>
     </main>
   </div>
 );
 
 // ─── Dashboard overview ────────────────────────────────────
-const Dashboard = ({ patient, opinions, invoices, onAddCondition, onResumeCondition, onLanguageChange }) => {
+const Dashboard = ({ patient, opinions, invoices, onAddCondition, onResumeCondition }) => {
   const [bloodValues, setBloodValues] = useState([]);
   useEffect(() => {
     if (patient) {
@@ -252,12 +278,7 @@ const Dashboard = ({ patient, opinions, invoices, onAddCondition, onResumeCondit
       <SectionHeader
         title={`Good day, ${patient?.firstName || ''}` }
         subtitle={new Date().toLocaleDateString('en-IN', { weekday:'long', year:'numeric', month:'long', day:'numeric' })}
-        action={
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <LanguagePicker value={patient?.preferredLanguage || 'en'} onChange={onLanguageChange} />
-            <SecureBadge />
-          </div>
-        }
+        action={<SecureBadge />}
       />
 
       <div className="stat-grid">
@@ -522,58 +543,44 @@ const LANGUAGES = [
   ['mr', 'मराठी (Marathi)'], ['ta', 'தமிழ் (Tamil)'], ['te', 'తెలుగు (Telugu)'],
   ['kn', 'ಕನ್ನಡ (Kannada)'], ['ml', 'മലയാളം (Malayalam)'],
   ['bn', 'বাংলা (Bengali)'], ['pa', 'ਪੰਜਾਬੀ (Punjabi)'],
+  ['or', 'ଓଡ଼ିଆ (Odia)'], ['as', 'অসমীয়া (Assamese)'], ['ne', 'नेपाली (Nepali)'],
+  // Manipuri (Meitei) has a genuine split-script situation: most written
+  // Manipuri today (news, government, everyday typing) uses Bengali
+  // script, since the traditional Meitei Mayek script was suppressed for
+  // centuries and only reintroduced in Manipur's schools in 2021 — most
+  // literate speakers weren't taught it. Offering both rather than
+  // guessing which the patient actually reads.
+  ['mnib', 'মৈতৈলোন্ (Manipuri — Bengali script)'],
+  ['mnim', 'ꯃꯤꯇꯩꯂꯣꯟ (Manipuri — Meitei script)'],
 ];
 
-const LanguagePicker = ({ value, onChange }) => {
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-
-  const handleChange = async (e) => {
-    const lang = e.target.value;
-    setSaving(true);
-    setError('');
-    try {
-      await patientAPI.updateLanguage(lang);
-      onChange(lang);
-      // Full reload so every screen (questionnaire labels, opinion display,
-      // etc.) picks up the new language immediately rather than only the
-      // components that happen to re-render from this state change.
-      window.location.reload();
-    } catch (err) {
-      setError('Could not save language — please try again.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div>
-      <select
-        className="form-select"
-        value={value}
-        onChange={handleChange}
-        disabled={saving}
-        style={{
-          borderRadius: 999,
-          paddingLeft: 16,
-          paddingRight: 32,
-          paddingTop: 6,
-          paddingBottom: 6,
-          background: 'var(--teal-50)',
-          border: '1px solid var(--teal-200)',
-          color: 'var(--teal-700)',
-          fontSize: 13,
-          fontWeight: 500,
-        }}
-      >
-        {LANGUAGES.map(([code, label]) => (
-          <option key={code} value={code} style={{ paddingLeft: '1.2em' }}>{label}</option>
-        ))}
-      </select>
-      {error && <div style={{ color: 'var(--red-600)', fontSize: 12, marginTop: 6 }}>{error}</div>}
-    </div>
-  );
-};
+const LanguagePicker = ({ value, onChange }) => (
+  <div style={{
+    display: 'flex', alignItems: 'center', gap: 8,
+    background: 'var(--gray-100)', borderRadius: 'var(--radius-md)', padding: 4,
+  }}>
+    <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, fontWeight: 500, color: 'var(--text-tertiary)', paddingLeft: 8, whiteSpace: 'nowrap' }}>
+      <span aria-hidden="true">🌐</span> Choose language
+    </span>
+    <select
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      aria-label="Choose language"
+      style={{
+        border: 'none', borderRadius: 8, padding: '6px 10px',
+        fontSize: 13, fontWeight: 500, color: 'var(--teal-600)',
+        background: 'var(--surface)', boxShadow: 'var(--shadow-sm)',
+        cursor: 'pointer', transition: 'background 0.15s',
+      }}
+      onMouseEnter={e => { e.currentTarget.style.background = 'var(--blue-50)'; }}
+      onMouseLeave={e => { e.currentTarget.style.background = 'var(--surface)'; }}
+    >
+      {LANGUAGES.map(([code, label]) => (
+        <option key={code} value={code}>{label}</option>
+      ))}
+    </select>
+  </div>
+);
 
 // ─── Main patient portal ───────────────────────────────────
 const PatientPortal = () => {
@@ -588,6 +595,41 @@ const PatientPortal = () => {
   const closeAddCondition = () => {
     setShowAddCondition(false);
     setResumeTarget(null); // so the next "+ Add condition" click starts fresh at SELECT, not stuck resuming the last episode
+  };
+
+  // "Keep as default" starts TRUE — whatever was just fetched from the
+  // server profile IS by definition the current saved default, so the
+  // natural starting assumption is "further changes should keep updating
+  // it" (matches the old always-persist behavior unless the patient
+  // explicitly opts into session-only by unchecking).
+  const [keepAsDefault, setKeepAsDefault] = useState(true);
+  const [languageError, setLanguageError] = useState('');
+
+  // Always updates the session's active language immediately (local
+  // state only — no reload, so a session-only choice can't be
+  // accidentally destroyed by re-fetching the still-unsaved server
+  // value). Only persists to the server/DB if keepAsDefault is checked —
+  // otherwise this change applies for the current session and reverts
+  // to whatever's actually saved the next time they log in.
+  const handleLanguageChange = (lang) => {
+    setPatient(p => ({ ...p, preferredLanguage: lang }));
+    setLanguageError('');
+    if (keepAsDefault) {
+      patientAPI.updateLanguage(lang).catch(() => setLanguageError('Could not save as default — please try again.'));
+    }
+  };
+
+  // Toggling the checkbox itself: turning it ON persists whatever
+  // language is currently active this session (covers "changed the
+  // dropdown first, decided to keep it as default afterward"). Turning
+  // it OFF just stops future changes from persisting — it does not
+  // retroactively un-save anything already saved.
+  const handleKeepAsDefaultChange = (checked) => {
+    setKeepAsDefault(checked);
+    setLanguageError('');
+    if (checked && patient?.preferredLanguage) {
+      patientAPI.updateLanguage(patient.preferredLanguage).catch(() => setLanguageError('Could not save as default — please try again.'));
+    }
   };
 
   const resumeCondition = (ep) => {
@@ -611,7 +653,13 @@ const PatientPortal = () => {
   if (loading) return <div className="loading-screen"><Spinner size={32} /></div>;
 
   return (
-    <PatientLayout patient={patient}>
+    <PatientLayout
+      patient={patient}
+      onLanguageChange={handleLanguageChange}
+      keepAsDefault={keepAsDefault}
+      onKeepAsDefaultChange={handleKeepAsDefaultChange}
+      languageError={languageError}
+    >
       {showAddCondition && (
         <AddConditionFlow
           patient={patient}
@@ -621,7 +669,7 @@ const PatientPortal = () => {
         />
       )}
       <Routes>
-        <Route path="dashboard" element={<Dashboard patient={patient} opinions={opinions} invoices={invoices} onAddCondition={() => setShowAddCondition(true)} onResumeCondition={resumeCondition} onLanguageChange={(lang) => setPatient(p => ({ ...p, preferredLanguage: lang }))} />} />
+        <Route path="dashboard" element={<Dashboard patient={patient} opinions={opinions} invoices={invoices} onAddCondition={() => setShowAddCondition(true)} onResumeCondition={resumeCondition} />} />
         <Route path="conditions" element={<MyConditions patient={patient} onAddCondition={() => setShowAddCondition(true)} onResumeCondition={resumeCondition} />} />
         <Route path="opinions" element={
           <>
@@ -729,13 +777,10 @@ const PatientPortal = () => {
                 </div>
               </>
             )}
-            <div className="card" style={{ marginTop: 16 }}>
-              <div className="card-title">Language</div>
-              <LanguagePicker
-                value={patient?.preferredLanguage || 'en'}
-                onChange={(lang) => setPatient((p) => ({ ...p, preferredLanguage: lang }))}
-              />
-            </div>
+            {/* Language setting moved to the persistent header (see
+                PatientLayout) — shows on this page too, so a separate
+                copy here would just be a second, potentially
+                out-of-sync control for the same setting. */}
           </>
         } />
         <Route path="documents" element={
@@ -747,6 +792,13 @@ const PatientPortal = () => {
       </Routes>
     </PatientLayout>
   );
+};
+
+const CONDITION_FOLDER_LABELS = {
+  hypothyroidism:  'Hypothyroidism',
+  hyperthyroidism: "Hyperthyroidism (Graves')",
+  thyroid_cancer:  'Thyroid Cancer',
+  nodule:          'Thyroid Nodule',
 };
 
 const DocumentsPage = ({ patientId }) => {
@@ -774,6 +826,35 @@ const DocumentsPage = ({ patientId }) => {
 
   const catLabels = { blood_report:'🩸 Blood reports', scan_usg:'📡 Scan/USG', prescription:'💊 Prescriptions', biopsy:'🔬 Biopsy', other:'📄 Other' };
 
+  // ── Group into folders: by condition episode, then by opinion session ──
+  // A document with no episodeId (rare — general upload outside any
+  // questionnaire context) falls into an "Other uploads" folder. Within
+  // an episode, documents with no opinionId yet belong to "Pending first
+  // opinion"; once an opinion exists for that episode, later uploads
+  // (e.g. doctor-requested missing/additional reports) group under that
+  // opinion's own submission date/status instead — this is the literal
+  // "folder named as that particular opinion, one per session" grouping.
+  const folders = {};
+  for (const doc of docs) {
+    const episodeKey = doc.episodeId || '__none__';
+    if (!folders[episodeKey]) {
+      folders[episodeKey] = {
+        label: doc.episodeCondition ? (CONDITION_FOLDER_LABELS[doc.episodeCondition] || doc.episodeCondition) : 'Other uploads',
+        sessions: {},
+      };
+    }
+    const sessionKey = doc.opinionId || '__pending__';
+    if (!folders[episodeKey].sessions[sessionKey]) {
+      folders[episodeKey].sessions[sessionKey] = {
+        label: doc.opinionId
+          ? `Opinion${doc.opinionSubmittedAt ? ' — ' + new Date(doc.opinionSubmittedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}${doc.opinionStatus ? ` (${doc.opinionStatus})` : ''}`
+          : 'Pending first opinion',
+        docs: [],
+      };
+    }
+    folders[episodeKey].sessions[sessionKey].docs.push(doc);
+  }
+
   return (
     <div className="card">
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
@@ -785,14 +866,28 @@ const DocumentsPage = ({ patientId }) => {
       </div>
       {loading ? <div style={{ display:'flex', justifyContent:'center', padding:32 }}><Spinner /></div>
       : docs.length === 0 ? <EmptyState icon="📁" title="No documents" subtitle="Upload documents during registration or from this page" />
-      : docs.map(doc => (
-        <div key={doc.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
-          <span style={{ fontSize: 20 }}>📄</span>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 13, fontWeight: 500 }}>{doc.originalName}</div>
-            <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{catLabels[doc.category]} · {(doc.file_size_bytes / 1024).toFixed(0)} KB · {new Date(doc.created_at).toLocaleDateString('en-IN')}</div>
+      : Object.entries(folders).map(([episodeKey, folder]) => (
+        <div key={episodeKey} style={{ marginBottom: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
+            <span>📁</span>{folder.label}
           </div>
-          <button className="btn btn-ghost btn-sm" onClick={() => download(doc.id, doc.originalName)}>⬇</button>
+          {Object.entries(folder.sessions).map(([sessionKey, session]) => (
+            <div key={sessionKey} style={{ marginLeft: 20, marginBottom: 12 }}>
+              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 6, fontWeight: 500 }}>{session.label}</div>
+              {session.docs.map(doc => (
+                <div key={doc.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+                  <span style={{ fontSize: 20 }}>📄</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 500 }}>
+                      {doc.fieldLabel ? `${doc.fieldLabel} — ` : ''}{doc.originalName}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{catLabels[doc.category]} · {(doc.file_size_bytes / 1024).toFixed(0)} KB · {new Date(doc.created_at).toLocaleDateString('en-IN')}</div>
+                  </div>
+                  <button className="btn btn-ghost btn-sm" onClick={() => download(doc.id, doc.originalName)}>⬇</button>
+                </div>
+              ))}
+            </div>
+          ))}
         </div>
       ))}
     </div>

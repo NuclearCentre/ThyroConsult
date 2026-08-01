@@ -242,21 +242,22 @@ exports.getEpisodeForReview = async (req, res) => {
       }
     }
 
-    // Uploaded documents
-    // NOTE: documents has no episode_id column at all — it's associated by
-    // patient_id, not episode. This query previously filtered on a column
-    // that doesn't exist and used four more wrong column names on top of
-    // that (doc_type/file_name/file_url/uploaded_at vs the real
-    // category/original_name/storage_path/mime_type/created_at) —
-    // every single call to this endpoint would have thrown a hard SQL
-    // error ("column episode_id does not exist"). original_name is also
-    // PHI-encrypted and needs decrypting in JS, not read raw.
+    // Uploaded documents — migration 022 added episode_id + field_label to
+    // `documents`, so this now shows documents actually tagged to THIS
+    // episode (uploaded against a specific question inside the Hypo/
+    // Hyper/TC/Nodule/Core questionnaire), plus any older/general
+    // documents that predate that tagging or were uploaded outside a
+    // questionnaire context (episode_id IS NULL — those still show up,
+    // scoped by patient_id only, same as before this migration).
+    // field_label is surfaced so the physician sees e.g. "TSH" next to
+    // the filename instead of just the coarse category bucket.
     const docsResult = await db.query(
-      `SELECT id, category, original_name, mime_type, created_at
+      `SELECT id, category, original_name, mime_type, field_label, created_at
        FROM documents
        WHERE patient_id = $1 AND is_deleted = FALSE
+         AND (episode_id = $2 OR episode_id IS NULL)
        ORDER BY created_at DESC`,
-      [episode.patient_id]
+      [episode.patient_id, episodeId]
     );
     const documents = docsResult.rows.map(d => ({
       ...d,

@@ -1,12 +1,25 @@
 /**
  * ConditionSelection.js
- * Step 5.5 — rendered between Step 5 (Choose Doctor) and Step 6 (Upload Reports)
  *
- * Patient selects their condition. This:
- *   1. Calls POST /api/patients/:id/condition-selection
- *   2. Creates the episode in the DB
- *   3. Advances registration_step to 6
- *   4. Passes episodeId + condition back to RegisterPage
+ * Condition-picker screen for the "+ Add Condition" flow on the patient
+ * Dashboard — reached AFTER registration is already complete (payment
+ * reorder: registration now ends at Payment, right after Choose doctor).
+ * This is NOT a registration-wizard step and no longer touches
+ * registration_step at all (that field is fully owned by the wizard —
+ * see authController.js/doctorAccountController.js — this stale claim
+ * was removed from conditionController.js's selectCondition).
+ *
+ * Whatever component renders this (Dashboard's Add Condition flow —
+ * not yet reviewed here) is expected to:
+ *   1. Render this first
+ *   2. Receive { condition, episodeId } via onComplete
+ *   3. Move on to CoreQuestionnaire, then the matching condition
+ *      questionnaire (HypoQuestionnaire.js / HyperQuestionnaire.js /
+ *      TcQuestionnaire.js / NoduleQuestionnaire.js)
+ *
+ * This still calls POST /condition/select (conditionAPI.selectCondition),
+ * which creates the patient_condition_episodes row and returns the new
+ * episode — that part is unchanged and correct.
  */
 
 import React, { useState } from 'react';

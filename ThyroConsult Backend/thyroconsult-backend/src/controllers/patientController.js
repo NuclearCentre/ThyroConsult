@@ -68,7 +68,7 @@ const updatePatient = async (req, res) => {
     preferredLanguage,
   } = req.body;
 
-  const VALID_LANGUAGES = ['en', 'hi', 'gu', 'mr', 'ta', 'te', 'kn', 'ml', 'bn', 'pa'];
+  const VALID_LANGUAGES = ['en', 'hi', 'gu', 'mr', 'ta', 'te', 'kn', 'ml', 'bn', 'pa', 'or', 'as', 'ne', 'mnib', 'mnim'];
   if (preferredLanguage !== undefined && !VALID_LANGUAGES.includes(preferredLanguage)) {
     return res.status(400).json({ error: `preferredLanguage must be one of: ${VALID_LANGUAGES.join(', ')}` });
   }
@@ -157,20 +157,38 @@ const getPatientPhoto = async (req, res) => {
 };
 
 // ─── GET /patients/:id/documents ──────────────────────────
+// Now accepts an optional episodeId filter alongside category — used by
+// the questionnaire's "already uploaded for this question" check on
+// resume, and by the physician episode-review screen.
 const getDocuments = async (req, res) => {
-  const { category } = req.query;
+  const { category, episodeId } = req.query;
   const patientId = req.params.id || req.user.id;
   try {
-    let sql = `SELECT id, category, original_name, mime_type, file_size_bytes,
-               opinion_id, report_date, uploaded_by_role, created_at
-               FROM documents WHERE patient_id = $1 AND is_deleted = FALSE`;
+    // LEFT JOINs added so the frontend can group documents into folders
+    // by condition episode, then by which opinion cycle (if any) they
+    // were submitted under — a document uploaded before any opinion
+    // exists yet (op.id IS NULL) belongs to "pending first opinion";
+    // one uploaded later against a specific follow-up opinion groups
+    // under that opinion's own date/status instead.
+    let sql = `SELECT d.id, d.category, d.original_name, d.mime_type, d.file_size_bytes,
+               d.episode_id, d.field_label, d.opinion_id, d.report_date, d.uploaded_by_role, d.created_at,
+               pce.condition AS episode_condition,
+               op.status AS opinion_status, op.submitted_at AS opinion_submitted_at
+               FROM documents d
+               LEFT JOIN patient_condition_episodes pce ON pce.id = d.episode_id
+               LEFT JOIN opinions op ON op.id = d.opinion_id
+               WHERE d.patient_id = $1 AND d.is_deleted = FALSE`;
     const params = [patientId];
 
     if (category) {
-      sql += ` AND category = $2`;
       params.push(category);
+      sql += ` AND d.category = $${params.length}`;
     }
-    sql += ' ORDER BY created_at DESC';
+    if (episodeId) {
+      params.push(episodeId);
+      sql += ` AND d.episode_id = $${params.length}`;
+    }
+    sql += ' ORDER BY d.created_at DESC';
 
     const result = await query(sql, params);
 
@@ -178,6 +196,16 @@ const getDocuments = async (req, res) => {
       ...d,
       originalName: decryptPHI(d.original_name),
       original_name: undefined,
+      fieldLabel: d.field_label,
+      field_label: undefined,
+      episodeId: d.episode_id,
+      episode_id: undefined,
+      episodeCondition: d.episode_condition,
+      episode_condition: undefined,
+      opinionStatus: d.opinion_status,
+      opinion_status: undefined,
+      opinionSubmittedAt: d.opinion_submitted_at,
+      opinion_submitted_at: undefined,
     }));
 
     logger.audit('DOCUMENTS_LISTED', {
@@ -193,9 +221,14 @@ const getDocuments = async (req, res) => {
 };
 
 // ─── POST /patients/:id/documents ─────────────────────────
+// Now accepts optional episodeId + fieldLabel in the body, tagging the
+// upload to a specific condition episode and a specific question
+// ("TSH", "USG neck", "Anti-TPO", etc.) instead of only the coarse
+// category bucket. Both stay optional so general/legacy uploads with
+// neither still work unchanged.
 const uploadDocument = async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-  const { category } = req.body;
+  const { category, episodeId, fieldLabel } = req.body;
   const patientId = req.params.id || req.user.id;
   const validCategories = ['blood_report', 'scan_usg', 'prescription', 'biopsy', 'other'];
   if (!validCategories.includes(category)) {
@@ -206,6 +239,23 @@ const uploadDocument = async (req, res) => {
     const fileBuffer = fs.readFileSync(req.file.path);
     const fileHash = hashFile(fileBuffer);
 
+    // Tag this upload to the episode's current opinion cycle, if one
+    // exists yet. Most uploads happen either (a) during the very first
+    // questionnaire pass, before any opinion has ever been generated —
+    // opinion_id stays NULL, nothing to group under yet — or (b) later,
+    // when the doctor has requested something missing/additional against
+    // an existing opinion, in which case this ties the new upload to
+    // that specific opinion cycle so the patient dashboard can eventually
+    // group "what did I submit for opinion X" as its own folder.
+    let opinionId = null;
+    if (episodeId) {
+      const opRes = await query(
+        'SELECT id FROM opinions WHERE episode_id = $1 ORDER BY created_at DESC LIMIT 1',
+        [episodeId]
+      );
+      opinionId = opRes.rows[0]?.id || null;
+    }
+
     // Move to patient folder
     const patientDir = path.join(process.env.UPLOAD_PATH || './uploads', 'documents', patientId);
     if (!fs.existsSync(patientDir)) fs.mkdirSync(patientDir, { recursive: true });
@@ -213,8 +263,8 @@ const uploadDocument = async (req, res) => {
     fs.renameSync(req.file.path, finalPath);
 
     const result = await query(
-      `INSERT INTO documents(patient_id, category, original_name, storage_path, mime_type, file_size_bytes, file_hash, uploaded_by, uploaded_by_role)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+      `INSERT INTO documents(patient_id, category, original_name, storage_path, mime_type, file_size_bytes, file_hash, uploaded_by, uploaded_by_role, episode_id, field_label, opinion_id)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
       [
         patientId, category,
         encryptPHI(req.file.originalname),
@@ -224,6 +274,9 @@ const uploadDocument = async (req, res) => {
         fileHash,
         req.user.id,
         req.user.role,
+        episodeId || null,
+        fieldLabel || null,
+        opinionId,
       ]
     );
 
@@ -231,14 +284,16 @@ const uploadDocument = async (req, res) => {
       userId: req.user.id, userRole: req.user.role,
       patientId, ip: req.ip,
       resource: 'document', resourceId: result.rows[0].id,
-      detail: `${category} uploaded`,
+      detail: `${category} uploaded${fieldLabel ? ` (${fieldLabel})` : ''}`,
     });
 
-    // Auto-advance registration step if in step 6
-    const patient = await query('SELECT registration_step FROM patients WHERE id = $1', [patientId]);
-    if (patient.rows[0]?.registration_step === 5) {
-      await query('UPDATE patients SET registration_step = 6 WHERE id = $1', [patientId]);
-    }
+    // registration_step auto-advance REMOVED — was checking for step 5
+    // and bumping to 6 under the old "Upload Reports = step 6" meaning.
+    // That step no longer exists (Payment reorder: 6 is now Payment, and
+    // document upload only ever happens post-registration via the Add
+    // Condition flow, by which point registration_complete is already
+    // TRUE). Same class of stale step-machine bug already found and
+    // removed in conditionController.js's selectCondition.
 
     res.status(201).json({ message: 'Document uploaded', documentId: result.rows[0].id });
   } catch (err) {
@@ -286,6 +341,54 @@ const downloadDocument = async (req, res) => {
   } catch (err) {
     logger.error('Download document error', { error: err.message });
     res.status(500).json({ error: 'Download failed' });
+  }
+};
+
+// ─── POST /patients/:id/documents/:docId/extract ───────────
+// Powers the "🤖 Auto-fill from this report" button next to lab-value
+// questions. Runs the already-uploaded document through
+// documentExtractionService (Anthropic API, vision) with the specific
+// test name being asked about, and returns structured fields
+// (value/unit/date/refLow/refHigh/labName) for the frontend to drop
+// straight into the matching inputs. Does NOT write anything to the
+// database itself — extraction is a suggestion the patient can accept,
+// edit, or ignore; the normal questionnaire save (_draft/submit) is what
+// actually persists whatever ends up in those fields.
+const extractDocumentFields = async (req, res) => {
+  const patientId = req.params.id || req.user.id;
+  const { docId } = req.params;
+  const { testLabel } = req.body;
+
+  if (!testLabel || !testLabel.trim()) {
+    return res.status(400).json({ error: 'testLabel is required' });
+  }
+
+  try {
+    const result = await query(
+      'SELECT * FROM documents WHERE id = $1 AND patient_id = $2 AND is_deleted = FALSE',
+      [docId, patientId]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Document not found' });
+
+    const doc = result.rows[0];
+    const filePath = decryptPHI(doc.storage_path);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found on disk' });
+
+    const { extractLabValue } = require('../services/documentExtractionService');
+    const extracted = await extractLabValue(filePath, doc.mime_type, testLabel.trim());
+
+    logger.audit('DOCUMENT_EXTRACTION_RUN', {
+      userId: req.user.id, userRole: req.user.role,
+      patientId, ip: req.ip,
+      resource: 'document', resourceId: doc.id,
+      detail: `Extraction attempted for "${testLabel}" — found: ${extracted.found}`,
+      phiAccessed: true,
+    });
+
+    res.json(extracted);
+  } catch (err) {
+    logger.error('Extract document fields error', { error: err.message });
+    res.status(500).json({ error: 'Extraction failed — please enter values manually' });
   }
 };
 
@@ -562,6 +665,7 @@ module.exports = {
   getDocuments,
   uploadDocument,
   downloadDocument,
+  extractDocumentFields,
   getBloodReportValues,
   addBloodReportValue,
   getPatientOpinions,

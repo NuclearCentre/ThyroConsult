@@ -1,18 +1,23 @@
 /**
- * ConditionQuestionnaires.js
- * Condition-specific questionnaire — Part 2 of 2.
- * Three components in one file:
- *   <HypoQuestionnaire />   — Hypothyroidism
- *   <HyperQuestionnaire />  — Hyperthyroidism / Graves' Disease
- *   <TcQuestionnaire />     — Thyroid Cancer
+ * HypoQuestionnaire.js (renamed from ConditionQuestionnaires.js)
  *
- * All follow the same props pattern:
- *   patientId, episodeId, patientGender, onComplete, onBack
+ * Contains <HypoQuestionnaire /> — Hypothyroidism. Used to also re-export
+ * <HyperQuestionnaire /> from its own standalone file for backward
+ * compatibility, since the only known consumer (PatientPortal.js) hadn't
+ * been checked yet. That's now been verified and fixed directly — see
+ * PatientPortal.js's own import lines — so the re-export was removed.
+ *
+ * REMOVED as part of this rename: the old dead <TcQuestionnaire /> stub
+ * (~270 lines) that used to live at the bottom of this file. It was never
+ * the real component — the real, standalone TcQuestionnaire.js (1493
+ * lines) is what PatientPortal.js/RegisterPage.js actually import.
+ *
+ * Props pattern: patientId, episodeId, patientGender, onComplete, onBack
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { conditionAPI } from '../api';
-import { Spinner, Alert } from './common/index';
+import { conditionAPI, patientAPI } from '../api';
+import { Spinner, Alert, AdditionalDocumentsUploader, LabReportUpload } from './common/index';
 
 // ── Shared field helpers (same as CoreQuestionnaire) ─────
 const Field = ({ label, required, children, hint }) => (
@@ -659,6 +664,63 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
     }
   }, [patientId, episodeId, patientGender, patientDob]);
 
+  // ── Rehydrate uploaded reports on every load — resume AND post-submit ──
+  // Uploaded files are never deleted (see patientController.uploadDocument
+  // — nothing sets is_deleted); the gap was purely that the "already
+  // uploaded ✓" display lived only in this component's in-memory state,
+  // which resets on reload. Fixed here by treating the `documents` table
+  // (tagged with episodeId + fieldLabel — migration 022) as the single
+  // source of truth and re-reading it every time this questionnaire opens,
+  // whether that's mid-draft, after resuming, or long after the patient
+  // already submitted. This runs independently of the draft-load effect
+  // above and only ever adds report-list keys, so the two can't clobber
+  // each other.
+  //
+  // NOTE: patientAPI.getDocuments({ episodeId }) — verify this exact call
+  // shape against src/api/index.js once available; written to match the
+  // { documents: [...] } shape patientController.getDocuments returns.
+  useEffect(() => {
+    if (!episodeId) return;
+    const LABEL_TO_KEY = {
+      'TSH': 'tshReports',
+      'T3 (total)': 't3Reports',
+      'Free T3 (FT3)': 'ft3Reports',
+      'T4 (total)': 't4Reports',
+      'Free T4 (FT4)': 'ft4Reports',
+      'Anti-TPO': 'antitpoReports',
+      'Anti-Tg': 'antitgReports',
+    };
+    patientAPI.getDocuments({ episodeId })
+      .then(res => {
+        const docs = res?.documents || [];
+        if (!docs.length) return;
+
+        const grouped = {}; // reportKey -> [{ documentId, fileName }]
+        let latestImaging = null;
+
+        for (const d of docs) {
+          const entry = { documentId: d.id, fileName: d.originalName };
+          if (d.fieldLabel === 'Thyroid imaging') {
+            // singular field — keep only the most recent (docs are
+            // ordered created_at DESC from the backend)
+            if (!latestImaging) latestImaging = entry;
+            continue;
+          }
+          const key = LABEL_TO_KEY[d.fieldLabel];
+          if (!key) continue; // "Additional document" from the H9 catch-all, or untagged — not shown inline
+          if (!grouped[key]) grouped[key] = [];
+          grouped[key].push(entry);
+        }
+
+        setF(p => ({
+          ...p,
+          ...grouped,
+          ...(latestImaging ? { imagingReport: latestImaging } : {}),
+        }));
+      })
+      .catch(() => {}); // non-fatal — worst case, the upload boxes just start empty again
+  }, [episodeId]);
+
   // ── Reproductive gate helpers ─────────────────────────
   const isMale = f.sex === 'male';
   const isMarriedStatus = f.maritalStatus === 'married';
@@ -1197,27 +1259,27 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
       );
 
       // ── D1: TSH ──
-      case 'D1': return <HypoLabScreen label="TSH" field="tsh" unit="mIU/L" f={f} set={set}
+      case 'D1': return <HypoLabScreen patientId={patientId} episodeId={episodeId} label="TSH" field="tsh" unit="mIU/L" f={f} set={set}
         unitOptions={null} reportKey="tshReports" tshField="tshDate"
         output={f.tshValue ? `TSH — ${f.tshValue} mIU/L (${f.tshDate ? new Date(f.tshDate).toLocaleDateString('en-IN') : ''})` : ''} />;
 
       // ── D2: T3 (total) — optional ──
-      case 'D2': return <HypoLabScreen label="T3 (total)" field="t3" unit="" f={f} set={set}
+      case 'D2': return <HypoLabScreen patientId={patientId} episodeId={episodeId} label="T3 (total)" field="t3" unit="" f={f} set={set}
         unitOptions={[['nmol_l', 'nmol/L'], ['ng_dl', 'ng/dL']]} reportKey="t3Reports" tshField="tshDate" optional
         output={f.t3Value ? `T3 — ${f.t3Value} ${f.t3Unit || ''} (${f.t3Date ? new Date(f.t3Date).toLocaleDateString('en-IN') : ''})` : ''} />;
 
       // ── D3: FT3 ──
-      case 'D3': return <HypoLabScreen label="Free T3 (FT3)" field="ft3" unit="" f={f} set={set}
+      case 'D3': return <HypoLabScreen patientId={patientId} episodeId={episodeId} label="Free T3 (FT3)" field="ft3" unit="" f={f} set={set}
         unitOptions={[['pmol_l', 'pmol/L'], ['pg_ml', 'pg/mL']]} reportKey="ft3Reports" tshField="tshDate"
         output={f.ft3Value ? `Free T3 — ${f.ft3Value} ${f.ft3Unit || ''} (${f.ft3Date ? new Date(f.ft3Date).toLocaleDateString('en-IN') : ''})` : ''} />;
 
       // ── D4: T4 (total) — optional ──
-      case 'D4': return <HypoLabScreen label="T4 (total)" field="t4" unit="" f={f} set={set}
+      case 'D4': return <HypoLabScreen patientId={patientId} episodeId={episodeId} label="T4 (total)" field="t4" unit="" f={f} set={set}
         unitOptions={[['nmol_l', 'nmol/L'], ['mcg_dl', 'mcg/dL']]} reportKey="t4Reports" tshField="tshDate" optional
         output={f.t4Value ? `T4 — ${f.t4Value} ${f.t4Unit || ''} (${f.t4Date ? new Date(f.t4Date).toLocaleDateString('en-IN') : ''})` : ''} />;
 
       // ── D5: FT4 ──
-      case 'D5': return <HypoLabScreen label="Free T4 (FT4)" field="ft4" unit="" f={f} set={set}
+      case 'D5': return <HypoLabScreen patientId={patientId} episodeId={episodeId} label="Free T4 (FT4)" field="ft4" unit="" f={f} set={set}
         unitOptions={[['pmol_l', 'pmol/L'], ['ng_dl', 'ng/dL']]} reportKey="ft4Reports" tshField="tshDate"
         output={f.ft4Value ? `Free T4 — ${f.ft4Value} ${f.ft4Unit || ''} (${f.ft4Date ? new Date(f.ft4Date).toLocaleDateString('en-IN') : ''})` : ''} />;
 
@@ -1236,7 +1298,18 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
                 <HypoField label="Reference range low"><HypoTextInput type="number" value={f.antitpoRefLow} onChange={set('antitpoRefLow')} placeholder="Low" /></HypoField>
                 <HypoField label="Reference range high"><HypoTextInput type="number" value={f.antitpoRefHigh} onChange={set('antitpoRefHigh')} placeholder="High" /></HypoField>
               </div>
-              <div style={{ border: '1px dashed var(--border)', borderRadius: 8, padding: 12, textAlign: 'center', fontSize: 12, color: 'var(--text-tertiary)', marginTop: 6 }}>Upload Anti-TPO report (optional)</div>
+              <LabReportUpload
+                patientId={patientId} episodeId={episodeId} fieldLabel="Anti-TPO"
+                category="blood_report"
+                reports={f.antitpoReports || []}
+                onReportsChange={set('antitpoReports')}
+                onExtract={(extracted) => {
+                  if (extracted.value != null) set('antitpoValue')(extracted.value);
+                  if (extracted.date != null) set('antitpoDate')(extracted.date);
+                  if (extracted.refLow != null) set('antitpoRefLow')(extracted.refLow);
+                  if (extracted.refHigh != null) set('antitpoRefHigh')(extracted.refHigh);
+                }}
+              />
             </HypoSubBlock>
           )}
           <HypoOutputBox text={f.antitpoDone === 'yes' && f.antitpoValue ? `Anti-TPO — ${f.antitpoValue} ${f.antitpoUnit || 'IU/mL'}  (${f.antitpoDate ? new Date(f.antitpoDate).toLocaleDateString('en-IN') : ''})` : ''} />
@@ -1258,7 +1331,18 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
                 <HypoField label="Reference range low"><HypoTextInput type="number" value={f.antitgRefLow} onChange={set('antitgRefLow')} placeholder="Low" /></HypoField>
                 <HypoField label="Reference range high"><HypoTextInput type="number" value={f.antitgRefHigh} onChange={set('antitgRefHigh')} placeholder="High" /></HypoField>
               </div>
-              <div style={{ border: '1px dashed var(--border)', borderRadius: 8, padding: 12, textAlign: 'center', fontSize: 12, color: 'var(--text-tertiary)', marginTop: 6 }}>Upload Anti-Tg report (optional)</div>
+              <LabReportUpload
+                patientId={patientId} episodeId={episodeId} fieldLabel="Anti-Tg"
+                category="blood_report"
+                reports={f.antitgReports || []}
+                onReportsChange={set('antitgReports')}
+                onExtract={(extracted) => {
+                  if (extracted.value != null) set('antitgValue')(extracted.value);
+                  if (extracted.date != null) set('antitgDate')(extracted.date);
+                  if (extracted.refLow != null) set('antitgRefLow')(extracted.refLow);
+                  if (extracted.refHigh != null) set('antitgRefHigh')(extracted.refHigh);
+                }}
+              />
             </HypoSubBlock>
           )}
           <HypoOutputBox text={f.antitgDone === 'yes' && f.antitgValue ? `Anti-Tg — ${f.antitgValue} ${f.antitgUnit || 'IU/mL'}  (${f.antitgDate ? new Date(f.antitgDate).toLocaleDateString('en-IN') : ''})` : ''} />
@@ -1281,9 +1365,13 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
               </HypoField>
               <HypoField label="Date of imaging"><HypoDateInput value={f.imagingDate} onChange={set('imagingDate')} /></HypoField>
               <HypoField label="Key findings (optional)"><HypoTextInput value={f.imagingFinding} onChange={set('imagingFinding')} placeholder="e.g. Heterogeneous echotexture, features of Hashimoto's" /></HypoField>
-              <div style={{ border: '1px dashed var(--border)', borderRadius: 8, padding: 12, textAlign: 'center', fontSize: 12, color: 'var(--text-tertiary)' }}>
-                Upload imaging report (optional)
-              </div>
+              <LabReportUpload
+                patientId={patientId} episodeId={episodeId} fieldLabel="Thyroid imaging"
+                category="scan_usg"
+                enableExtract={false}
+                reports={f.imagingReport ? [f.imagingReport] : []}
+                onReportsChange={(arr) => set('imagingReport')(arr[arr.length - 1] || null)}
+              />
             </HypoSubBlock>
           )}
           <HypoOutputBox text={f.imagingDone === 'yes' && f.imagingTypes.length ? `${f.imagingTypes.join(', ').replace(/_/g,' ')} done on ${f.imagingDate ? new Date(f.imagingDate).toLocaleDateString('en-IN') : ''}${f.imagingFinding ? ' — ' + f.imagingFinding : ''}` : ''} />
@@ -2045,6 +2133,9 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
           <textarea className="form-input" rows={5} style={{ resize: 'vertical', fontSize: 13 }}
             value={f.additionalNotes} onChange={e => set('additionalNotes')(e.target.value)}
             placeholder="Type anything additional here..." />
+          <div style={{ fontSize: 13, fontWeight: 500, marginTop: 20, marginBottom: 6 }}>Want to add any more reports, images, or documents?</div>
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>Anything not covered by the questions above — old reports, discharge summaries, referral letters, etc.</div>
+          <AdditionalDocumentsUploader patientId={patientId} episodeId={episodeId} category="other" />
         </>
       );
 
@@ -2118,8 +2209,18 @@ const HypoSymptomScreen = ({ question, statusKey, durationKey, f, set, extra, ou
 );
 
 // ─── Reusable lab screen ──────────────────────────────────
-const HypoLabScreen = ({ label, field, unit, unitOptions, f, set, reportKey, output }) => {
+const HypoLabScreen = ({ patientId, episodeId, label, field, unit, unitOptions, f, set, reportKey, output }) => {
   const done = f[`${field}Done`];
+
+  const handleExtract = (extracted) => {
+    if (extracted.value != null) set(`${field}Value`)(extracted.value);
+    if (extracted.unit != null && unitOptions) set(`${field}Unit`)(extracted.unit);
+    if (extracted.date != null) set(`${field}Date`)(extracted.date);
+    if (extracted.refLow != null) set(`${field}RefLow`)(extracted.refLow);
+    if (extracted.refHigh != null) set(`${field}RefHigh`)(extracted.refHigh);
+    if (extracted.labName != null) set(`${field}Lab`)(extracted.labName);
+  };
+
   return (
     <>
       <div style={{ fontSize: 16, fontWeight: 500, marginBottom: 16 }}>Have you had a {label} test done?</div>
@@ -2127,12 +2228,13 @@ const HypoLabScreen = ({ label, field, unit, unitOptions, f, set, reportKey, out
         options={[['no', 'No'], ['unsure', 'Unsure'], ['yes', 'Yes']]} />
       {done === 'yes' && (
         <HypoSubBlock>
-          <div style={{ border: '1px dashed var(--border)', borderRadius: 8, padding: 12, textAlign: 'center', marginBottom: 12, fontSize: 12, color: 'var(--text-tertiary)' }}>
-            Upload test report (JPG / PNG / PDF) — AI will auto-extract values
-            <div style={{ marginTop: 6 }}>
-              <button className="btn btn-ghost btn-sm">+ Add another report</button>
-            </div>
-          </div>
+          <LabReportUpload
+            patientId={patientId} episodeId={episodeId} fieldLabel={label}
+            category="blood_report"
+            reports={f[reportKey] || []}
+            onReportsChange={set(reportKey)}
+            onExtract={handleExtract}
+          />
           <div style={{ fontSize: 11, color: 'var(--text-tertiary)', textAlign: 'center', marginBottom: 10 }}>— or enter manually —</div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
             <HypoField label={`${label} value`}>
@@ -2386,283 +2488,6 @@ function mapDbToForm(r) {
   };
 }
 
-// ═══════════════════════════════════════════════════════════
-// HYPERTHYROIDISM / GRAVES' DISEASE QUESTIONNAIRE
-// ── Replaced with full chatbot-style 1-question-per-page
-//    component. Imported from HyperQuestionnaire.js
-// ═══════════════════════════════════════════════════════════
-export { default as HyperQuestionnaire } from './HyperQuestionnaire';
-
-// THYROID CANCER QUESTIONNAIRE
-// ═══════════════════════════════════════════════════════════
-export const TcQuestionnaire = ({ patientId, episodeId, onComplete, onBack }) => {
-  const [f, setF] = useState({
-    cancerType: '', laterality: '', multifocal: false, multifocalCount: '',
-    tumourSizeMm: '', extrathyroidalExtension: false, extrathyroidalExtent: '',
-    tStage: '', nStage: '', mStage: '', overallStage: '', riskCategory: '',
-    fnacDone: false, fnacDate: '', fnacResult: '', fnacDetails: '',
-    coreBiopsyDone: false, coreBiopsyDate: '', coreBiopsyResult: '',
-    histopathologyReport: '', histopathologyDate: '',
-    symRapidlyGrowingNodule: false, symHardFixedNodule: false,
-    symCervicalLymphadenopathy: false, symHoarseness: false,
-    symDysphagia: 'none', symStridor: false, symBonePain: false, symHaemoptysis: false,
-    mtcCalcitoninElevated: false, mtcCeaElevated: false,
-    mtcRetMutation: false, mtcRetMutationDetails: '',
-    mtcFamilyScreeningAdvised: false, mtcMen2Associated: false, mtcMen2Type: '',
-    tshAtDiagnosis: '', tgAtDiagnosis: '', antiTgAtDiagnosis: '',
-    calcitoninAtDiagnosis: '', ceaAtDiagnosis: '',
-    srCalciumAtDiagnosis: '', vitD3AtDiagnosis: '', pthAtDiagnosis: '',
-    surgeryDone: false, raiTherapyDone: false, onTshSuppression: false,
-    onExternalBeamRt: false, onTargetedTherapy: false,
-    onChemotherapy: false, onActiveSurveillance: false,
-    tshSuppressionTarget: '', tshSuppressionIndication: '',
-    levothyroxineDoseMcg: '', levothyroxineBrand: '', levothyroxineCompliance: '',
-    surveillanceInterval: '', nextTgDate: '', nextUsgDate: '',
-    nextRaiScanDate: '', nextReviewDate: '', surveillanceNotes: '',
-  });
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const set = k => v => setF(p => ({ ...p, [k]: v }));
-
-  useEffect(() => {
-    conditionAPI.getTcQ(patientId, episodeId)
-      .then(r => { if (r.data) setF(p => ({ ...p, ...r.data })); })
-      .catch(() => {});
-  }, [patientId, episodeId]);
-
-  const save = async (andContinue = false) => {
-    setSaving(true); setError('');
-    try {
-      await conditionAPI.saveTcQ(patientId, episodeId, f);
-      if (andContinue) onComplete();
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to save. Please try again.');
-    } finally { setSaving(false); }
-  };
-
-  return (
-    <div className="card">
-      <h3 style={{ marginBottom: 4 }}>Thyroid Cancer — Condition-specific questions</h3>
-      <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 20 }}>Part 2 of 2</p>
-      {error && <Alert type="error" message={error} style={{ marginBottom: 16 }} />}
-
-      <SectionTitle icon="🔴" title="Cancer Characterisation" />
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-        <Field label="Type of thyroid cancer" required>
-          <Select value={f.cancerType} onChange={set('cancerType')} options={[
-            ['papillary', 'Papillary thyroid carcinoma (PTC)'],
-            ['follicular', 'Follicular thyroid carcinoma (FTC)'],
-            ['hurthle_cell', 'Hürthle cell carcinoma'],
-            ['medullary', 'Medullary thyroid carcinoma (MTC)'],
-            ['anaplastic', 'Anaplastic thyroid carcinoma'],
-            ['poorly_differentiated', 'Poorly differentiated carcinoma'],
-            ['other', 'Other / not yet confirmed'],
-          ]} />
-        </Field>
-        <Field label="Side affected">
-          <Select value={f.laterality} onChange={set('laterality')} options={[
-            ['left', 'Left lobe'], ['right', 'Right lobe'],
-            ['bilateral', 'Both lobes'], ['isthmus', 'Isthmus'],
-          ]} />
-        </Field>
-        <Field label="Tumour size (mm)">
-          <Input value={f.tumourSizeMm} onChange={set('tumourSizeMm')} type="number" min="0" step="0.5" />
-        </Field>
-      </div>
-      <BoolRow label="Multifocal tumour (more than one tumour in the thyroid)?" value={f.multifocal} onChange={set('multifocal')} />
-      {f.multifocal && (
-        <Field label="Number of tumours">
-          <Input value={f.multifocalCount} onChange={set('multifocalCount')} type="number" min="2" />
-        </Field>
-      )}
-      <BoolRow label="Extrathyroidal extension (tumour growing outside the thyroid capsule)?" value={f.extrathyroidalExtension} onChange={set('extrathyroidalExtension')} />
-      {f.extrathyroidalExtension && (
-        <Field label="Extent">
-          <Select value={f.extrathyroidalExtent} onChange={set('extrathyroidalExtent')} options={[
-            ['minimal', 'Minimal / microscopic'],
-            ['gross', 'Gross / macroscopic'],
-          ]} />
-        </Field>
-      )}
-
-      <SectionTitle icon="🏷️" title="TNM Staging" />
-      <div style={{ padding: 12, background: 'var(--blue-50)', borderRadius: 8, marginBottom: 12, fontSize: 12, color: 'var(--blue-700)' }}>
-        ℹ️ Fill in if staging has been done by your surgeon / oncologist. Leave blank if not yet staged.
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-        <Field label="T stage (tumour size/extent)">
-          <Select value={f.tStage} onChange={set('tStage')} options={[
-            ['T1a','T1a (≤1cm)'], ['T1b','T1b (1–2cm)'], ['T2','T2 (2–4cm)'],
-            ['T3a','T3a (>4cm, intrathyroidal)'], ['T3b','T3b (extrathyroidal, strap muscles)'],
-            ['T4a','T4a (gross extrathyroidal)'], ['T4b','T4b (encases carotid/mediastinum)'],
-          ]} />
-        </Field>
-        <Field label="N stage (lymph nodes)">
-          <Select value={f.nStage} onChange={set('nStage')} options={[
-            ['N0','N0 (no nodal spread)'], ['N1a','N1a (central neck nodes)'],
-            ['N1b','N1b (lateral neck nodes)'],
-          ]} />
-        </Field>
-        <Field label="M stage (metastasis)">
-          <Select value={f.mStage} onChange={set('mStage')} options={[
-            ['M0','M0 (no distant metastasis)'], ['M1','M1 (distant metastasis present)'],
-          ]} />
-        </Field>
-        <Field label="Overall stage">
-          <Select value={f.overallStage} onChange={set('overallStage')} options={[
-            ['I','Stage I'], ['II','Stage II'], ['III','Stage III'],
-            ['IVA','Stage IVA'], ['IVB','Stage IVB'], ['IVC','Stage IVC'],
-          ]} />
-        </Field>
-        <Field label="ATA Risk category">
-          <Select value={f.riskCategory} onChange={set('riskCategory')} options={[
-            ['very_low','Very low risk'], ['low','Low risk'],
-            ['intermediate','Intermediate risk'], ['high','High risk'],
-          ]} />
-        </Field>
-      </div>
-
-      <SectionTitle icon="🔬" title="FNAC / Biopsy" />
-      <BoolRow label="FNAC (fine needle aspiration cytology) done?" value={f.fnacDone} onChange={set('fnacDone')} />
-      {f.fnacDone && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <Field label="FNAC date">
-            <Input value={f.fnacDate} onChange={set('fnacDate')} type="date" max={new Date().toISOString().split('T')[0]} />
-          </Field>
-          <Field label="Bethesda category" hint="I=non-diagnostic, VI=malignant">
-            <Select value={f.fnacResult} onChange={set('fnacResult')} options={[
-              ['I','Bethesda I — Non-diagnostic'],
-              ['II','Bethesda II — Benign'],
-              ['III','Bethesda III — Atypia of undetermined significance'],
-              ['IV','Bethesda IV — Follicular neoplasm'],
-              ['V','Bethesda V — Suspicious for malignancy'],
-              ['VI','Bethesda VI — Malignant'],
-            ]} />
-          </Field>
-          <Field label="FNAC details / cell type" style={{ gridColumn: '1/-1' }}>
-            <Input value={f.fnacDetails} onChange={set('fnacDetails')} placeholder="e.g. PTC, follicular pattern, colloid..." />
-          </Field>
-        </div>
-      )}
-      <BoolRow label="Histopathology report available?" value={!!f.histopathologyReport} onChange={v => v ? null : set('histopathologyReport')('')} />
-      {f.histopathologyReport !== undefined && (
-        <>
-          <Field label="Histopathology findings">
-            <textarea className="form-control" rows={3} style={{ fontSize: 13 }}
-              value={f.histopathologyReport} onChange={e => set('histopathologyReport')(e.target.value)}
-              placeholder="Key findings from surgical pathology report..." />
-          </Field>
-          <Field label="Date of histopathology report">
-            <Input value={f.histopathologyDate} onChange={set('histopathologyDate')} type="date" max={new Date().toISOString().split('T')[0]} />
-          </Field>
-        </>
-      )}
-
-      <SectionTitle icon="🩺" title="Cancer-specific Symptoms" />
-      <BoolRow label="Rapidly growing neck nodule" value={f.symRapidlyGrowingNodule} onChange={set('symRapidlyGrowingNodule')} />
-      <BoolRow label="Hard, fixed (non-mobile) nodule in neck" value={f.symHardFixedNodule} onChange={set('symHardFixedNodule')} />
-      <BoolRow label="Enlarged cervical lymph nodes (neck glands)" value={f.symCervicalLymphadenopathy} onChange={set('symCervicalLymphadenopathy')} />
-      <BoolRow label="Hoarseness / change in voice" value={f.symHoarseness} onChange={set('symHoarseness')} />
-      <SeveritySelect label="Difficulty swallowing (dysphagia) severity" value={f.symDysphagia} onChange={set('symDysphagia')} />
-      <BoolRow label="Stridor (noisy breathing / high-pitched sound on breathing)" value={f.symStridor} onChange={set('symStridor')} />
-      <BoolRow label="Bone pain (unexplained)" value={f.symBonePain} onChange={set('symBonePain')} hint="May indicate bone metastasis" />
-      <BoolRow label="Haemoptysis (coughing blood)" value={f.symHaemoptysis} onChange={set('symHaemoptysis')} />
-
-      {f.cancerType === 'medullary' && (
-        <>
-          <SectionTitle icon="🧬" title="Medullary Cancer (MTC) Specific" />
-          <BoolRow label="Calcitonin elevated?" value={f.mtcCalcitoninElevated} onChange={set('mtcCalcitoninElevated')} />
-          <BoolRow label="CEA (carcinoembryonic antigen) elevated?" value={f.mtcCeaElevated} onChange={set('mtcCeaElevated')} />
-          <BoolRow label="RET proto-oncogene mutation present?" value={f.mtcRetMutation} onChange={set('mtcRetMutation')} />
-          {f.mtcRetMutation && (
-            <Field label="RET mutation details">
-              <Input value={f.mtcRetMutationDetails} onChange={set('mtcRetMutationDetails')} placeholder="e.g. C634R, M918T..." />
-            </Field>
-          )}
-          <BoolRow label="Family screening advised?" value={f.mtcFamilyScreeningAdvised} onChange={set('mtcFamilyScreeningAdvised')} />
-          <BoolRow label="Associated with MEN2 syndrome?" value={f.mtcMen2Associated} onChange={set('mtcMen2Associated')} />
-          {f.mtcMen2Associated && (
-            <Field label="MEN2 type">
-              <Select value={f.mtcMen2Type} onChange={set('mtcMen2Type')} options={[
-                ['MEN2A', 'MEN2A (MTC + phaeochromocytoma + hyperparathyroidism)'],
-                ['MEN2B', 'MEN2B (MTC + phaeochromocytoma + marfanoid)'],
-              ]} />
-            </Field>
-          )}
-        </>
-      )}
-
-      <SectionTitle icon="🧪" title="Biochemistry at Diagnosis" />
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-        {[
-          ['tshAtDiagnosis', 'TSH (mIU/L)', '0', '0.001'],
-          ['tgAtDiagnosis', 'Thyroglobulin / Tg (ng/mL)', '0', '0.1'],
-          ['antiTgAtDiagnosis', 'Anti-Tg antibody (IU/mL)', '0', '0.1'],
-          ['calcitoninAtDiagnosis', 'Calcitonin (pg/mL)', '0', '0.1'],
-          ['ceaAtDiagnosis', 'CEA (ng/mL)', '0', '0.01'],
-          ['srCalciumAtDiagnosis', 'Sr. Calcium (mg/dL)', '0', '0.1'],
-          ['vitD3AtDiagnosis', 'Vitamin D3 / 25-OH (ng/mL)', '0', '0.1'],
-          ['pthAtDiagnosis', 'PTH — Parathyroid Hormone (pg/mL)', '0', '0.1'],
-        ].map(([key, label, min, step]) => (
-          <Field key={key} label={label}>
-            <Input value={f[key]} onChange={set(key)} type="number" min={min} step={step} />
-          </Field>
-        ))}
-      </div>
-
-      <SectionTitle icon="🏥" title="Treatment Received" />
-      <p style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 12 }}>Which treatments have you received or are currently receiving?</p>
-      <BoolRow label="Surgery (thyroidectomy)" value={f.surgeryDone} onChange={set('surgeryDone')} hint="Details can be added by your doctor in the treatment history section" />
-      <BoolRow label="Radioiodine (RAI / I-131) therapy" value={f.raiTherapyDone} onChange={set('raiTherapyDone')} />
-      <BoolRow label="TSH suppression therapy (high-dose Levothyroxine)" value={f.onTshSuppression} onChange={set('onTshSuppression')} />
-      {f.onTshSuppression && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, paddingLeft: 12 }}>
-          <Field label="TSH suppression target" hint="e.g. <0.1 for high risk">
-            <Input value={f.tshSuppressionTarget} onChange={set('tshSuppressionTarget')} placeholder="e.g. <0.1 mIU/L" />
-          </Field>
-          <Field label="Levothyroxine dose (mcg)">
-            <Input value={f.levothyroxineDoseMcg} onChange={set('levothyroxineDoseMcg')} type="number" min="0" step="12.5" />
-          </Field>
-          <Field label="Compliance">
-            <Select value={f.levothyroxineCompliance} onChange={set('levothyroxineCompliance')} options={[
-              ['regular', 'Regular'], ['irregular', 'Irregular'], ['skips_sometimes', 'Skips sometimes'],
-            ]} />
-          </Field>
-        </div>
-      )}
-      <BoolRow label="External beam radiotherapy (EBRT)" value={f.onExternalBeamRt} onChange={set('onExternalBeamRt')} />
-      <BoolRow label="Targeted therapy (kinase inhibitors e.g. Sorafenib, Lenvatinib)" value={f.onTargetedTherapy} onChange={set('onTargetedTherapy')} />
-      <BoolRow label="Chemotherapy" value={f.onChemotherapy} onChange={set('onChemotherapy')} />
-      <BoolRow label="Active surveillance (watchful waiting — no treatment currently)" value={f.onActiveSurveillance} onChange={set('onActiveSurveillance')} />
-
-      <SectionTitle icon="📅" title="Surveillance Plan" />
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-        <Field label="Surveillance interval">
-          <Select value={f.surveillanceInterval} onChange={set('surveillanceInterval')} options={[
-            ['3_months', 'Every 3 months'], ['6_months', 'Every 6 months'],
-            ['12_months', 'Yearly'], ['24_months', 'Every 2 years'],
-          ]} />
-        </Field>
-        <Field label="Next Tg (thyroglobulin) test date">
-          <Input value={f.nextTgDate} onChange={set('nextTgDate')} type="date" />
-        </Field>
-        <Field label="Next neck USG date">
-          <Input value={f.nextUsgDate} onChange={set('nextUsgDate')} type="date" />
-        </Field>
-        <Field label="Next RAI scan date (if applicable)">
-          <Input value={f.nextRaiScanDate} onChange={set('nextRaiScanDate')} type="date" />
-        </Field>
-        <Field label="Next specialist review date">
-          <Input value={f.nextReviewDate} onChange={set('nextReviewDate')} type="date" />
-        </Field>
-      </div>
-      <Field label="Surveillance notes">
-        <textarea className="form-control" rows={2} style={{ fontSize: 13 }}
-          value={f.surveillanceNotes} onChange={e => set('surveillanceNotes')(e.target.value)}
-          placeholder="Any specific instructions from your doctor..." />
-      </Field>
-
-      <QuestionnaireFooter onBack={onBack} onSave={() => save(false)} saving={saving} onSaveAndContinue={() => save(true)} />
-    </div>
-  );
-};
+// HyperQuestionnaire lives in its own standalone file (HyperQuestionnaire.js)
+// — nothing to re-export here. PatientPortal.js (the only known consumer,
+// confirmed) now imports it directly from that file.

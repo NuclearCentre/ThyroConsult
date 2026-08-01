@@ -6,6 +6,53 @@ const { pool }    = require('../config/database');
 const { notify }  = require('../services/notificationService');
 const templates   = require('../services/notificationTemplates');
 const { decryptPHI } = require('../utils/encryption');
+const { saveUploadedDocument, getCurrentOpinionId } = require('../services/documentStorageService');
+
+// Field labels here MUST match exactly what each questionnaire's own
+// upload widget (HypoQuestionnaire.js / HyperQuestionnaire.js) tags its
+// uploads with — otherwise a report the patient already uploaded during
+// the original questionnaire won't be recognized here as "already done",
+// and a report uploaded here won't be recognized there. Hypo and Hyper
+// use different label text for the same underlying test in a few cases
+// (Hypo distinguishes "T3 (total)" from "Free T3 (FT3)"; Hyper only has
+// FT3/FT4 at all, tagged with the short form) — kept condition-specific
+// rather than one shared list to stay accurate to what each file actually
+// tags.
+//
+// NOTE on valueFld names: these are best-effort based on the migrations
+// reviewed so far (up to 018) plus what each questionnaire's own D-module
+// fields are named. Hyper's TRAb/TSI column names in particular were not
+// confirmed against an authoritative schema (migration 006 shows
+// trab_status_d8/trab_value_new/tsi_status — not trab_value_d4/tsi_value,
+// which is what's guessed below to match the frontend's actual field
+// names). This is safe either way — a wrong/missing column name here just
+// means that field never shows as "missing" (silent no-op via SELECT *),
+// it cannot throw, so it degrades gracefully rather than breaking — but
+// worth reconciling once the real hypo_questionnaire/hyper_questionnaire
+// schemas are confirmed (same pending item already flagged for the
+// saveHypoQuestionnaire/saveHyperQuestionnaire column-mapping bug).
+const LAB_FIELDS_BY_CONDITION = {
+  hypothyroidism: [
+    { key: 'D1',  label: 'TSH',              valueFld: 'tsh_value' },
+    { key: 'D2',  label: 'T3 (total)',       valueFld: 't3_value' },
+    { key: 'D3',  label: 'Free T3 (FT3)',    valueFld: 'ft3_value' },
+    { key: 'D4',  label: 'T4 (total)',       valueFld: 't4_value' },
+    { key: 'D5',  label: 'Free T4 (FT4)',    valueFld: 'ft4_value' },
+    { key: 'D6',  label: 'Anti-TPO',         valueFld: 'antitpo_value' },
+    { key: 'D7',  label: 'Anti-Tg',          valueFld: 'antitg_value' },
+    { key: 'D10', label: 'Thyroid imaging',  valueFld: 'imaging_status', category: 'scan_usg' },
+  ],
+  hyperthyroidism: [
+    { key: 'D1',  label: 'TSH',              valueFld: 'tsh_value' },
+    { key: 'D2',  label: 'FT4',              valueFld: 'ft4_value' },
+    { key: 'D3',  label: 'FT3',              valueFld: 'ft3_value' },
+    { key: 'D4a', label: 'TRAb',             valueFld: 'trab_value_d4' },
+    { key: 'D4b', label: 'TSI',              valueFld: 'tsi_value' },
+    { key: 'D5a', label: 'Anti-TPO',         valueFld: 'antitpo_value' },
+    { key: 'D5b', label: 'Anti-Tg',          valueFld: 'antitg_value' },
+    { key: 'D6',  label: 'Thyroid imaging',  valueFld: 'imaging_status', category: 'scan_usg' },
+  ],
+};
 
 // ─────────────────────────────────────────────────────────────
 // SCENARIO 1 — MISSING REPORTS
@@ -26,8 +73,6 @@ async function getMissingReports(req, res) {
     );
     if (!epResult.rows[0]) return res.status(404).json({ error: 'Episode not found' });
 
-    // Fetch questionnaire data to find which D fields have values but no report
-    // Each condition stores reports in its own table
     // NOTE: patient_condition_episodes.condition stores the full-word enum
     // values ('hypothyroidism' etc, from migration 002), not short codes —
     // this previously compared against 'hypo'/'hyper'/'tc' and always fell
@@ -38,46 +83,38 @@ async function getMissingReports(req, res) {
                    : condType === 'thyroid_cancer'   ? 'tc_questionnaire'
                    : 'nodule_questionnaire';
 
+    const labFields = LAB_FIELDS_BY_CONDITION[condType] || [];
+
     const qResult = await pool.query(
       `SELECT * FROM ${qTable} WHERE episode_id = $1`,
       [episodeId]
     );
     const q = qResult.rows[0] || {};
 
-    // Build missing report list — value entered but report_path is null/empty
-    const missing = [];
+    // A field is "missing" if the patient entered a value for it but no
+    // document exists yet tagged with that exact field_label for this
+    // episode — checked against the SAME `documents` table (migration
+    // 022) that the original questionnaire's own upload widgets write
+    // to, so an upload made during the initial questionnaire correctly
+    // counts here too, not just uploads made through this S1 flow.
+    const docsResult = await pool.query(
+      `SELECT DISTINCT field_label FROM documents
+       WHERE episode_id = $1 AND is_deleted = FALSE AND field_label IS NOT NULL`,
+      [episodeId]
+    );
+    const uploadedLabels = new Set(docsResult.rows.map(r => r.field_label));
 
-    const labFields = [
-      { key: 'D1',  label: 'TSH',              valueFld: 'tsh_value',      reportFld: 'tsh_report_path' },
-      { key: 'D2',  label: 'T3 (total)',        valueFld: 't3_value',       reportFld: 't3_report_path' },
-      { key: 'D3',  label: 'Free T3 (FT3)',     valueFld: 'ft3_value',      reportFld: 'ft3_report_path' },
-      { key: 'D4',  label: 'T4 (total)',        valueFld: 't4_value',       reportFld: 't4_report_path' },
-      { key: 'D5',  label: 'Free T4 (FT4)',     valueFld: 'ft4_value',      reportFld: 'ft4_report_path' },
-      { key: 'D6',  label: 'Anti-TPO',          valueFld: 'antitpo_value',  reportFld: 'antitpo_report_path' },
-      { key: 'D7',  label: 'Anti-Tg',           valueFld: 'antitg_value',   reportFld: 'antitg_report_path' },
-      { key: 'D10', label: 'Thyroid imaging',   valueFld: 'imaging_status', reportFld: 'imaging_report_path' },
-    ];
-
-    // Hyper-specific
-    if (condType === 'hyper') {
-      labFields.push(
-        { key: 'D8', label: 'TRAb', valueFld: 'trab_value', reportFld: 'trab_report_path' },
-        { key: 'D9', label: 'TSI',  valueFld: 'tsi_value',  reportFld: 'tsi_report_path' }
-      );
-    }
-
-    labFields.forEach(f => {
-      const hasValue  = q[f.valueFld] !== null && q[f.valueFld] !== '' && q[f.valueFld] !== undefined;
-      const hasReport = q[f.reportFld] !== null && q[f.reportFld] !== '' && q[f.reportFld] !== undefined;
-      if (hasValue && !hasReport) {
-        missing.push({
-          moduleKey:    f.key,
-          label:        f.label,
-          enteredValue: q[f.valueFld],
-          reportField:  f.reportFld,
-        });
-      }
-    });
+    const missing = labFields
+      .filter(f => {
+        const hasValue = q[f.valueFld] !== null && q[f.valueFld] !== '' && q[f.valueFld] !== undefined;
+        return hasValue && !uploadedLabels.has(f.label);
+      })
+      .map(f => ({
+        moduleKey:    f.key,
+        label:        f.label,
+        enteredValue: q[f.valueFld],
+        category:     f.category || 'blood_report',
+      }));
 
     res.json({ episodeId, conditionType: condType, missing });
   } catch (err) {
@@ -88,7 +125,6 @@ async function getMissingReports(req, res) {
 
 // POST /api/episodes/:episodeId/missing-reports/:moduleKey
 // Body: multipart — report file upload
-// Updates the report_path field for that specific D-module screen
 async function uploadMissingReport(req, res) {
   try {
     const { episodeId, moduleKey } = req.params;
@@ -96,9 +132,6 @@ async function uploadMissingReport(req, res) {
 
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-    const reportPath = req.file.path; // set by multer
-
-    // Map moduleKey to the correct table + column
     const epResult = await pool.query(
       `SELECT condition AS condition_type FROM patient_condition_episodes WHERE id = $1 AND patient_id = $2`,
       [episodeId, patientId]
@@ -111,31 +144,26 @@ async function uploadMissingReport(req, res) {
                    : condType === 'thyroid_cancer'   ? 'tc_questionnaire'
                    : 'nodule_questionnaire';
 
-    const reportFieldMap = {
-      D1:  'tsh_report_path',
-      D2:  't3_report_path',
-      D3:  'ft3_report_path',
-      D4:  't4_report_path',
-      D5:  'ft4_report_path',
-      D6:  'antitpo_report_path',
-      D7:  'antitg_report_path',
-      D8:  'trab_report_path',
-      D9:  'tsi_report_path',
-      D10: 'imaging_report_path',
-    };
+    const labFields = LAB_FIELDS_BY_CONDITION[condType] || [];
+    const field = labFields.find(f => f.key === moduleKey);
+    if (!field) return res.status(400).json({ error: `Unknown module key: ${moduleKey}` });
 
-    const col = reportFieldMap[moduleKey];
-    if (!col) return res.status(400).json({ error: `Unknown module key: ${moduleKey}` });
-
-    await pool.query(
-      `UPDATE ${qTable} SET ${col} = $1 WHERE episode_id = $2`,
-      [reportPath, episodeId]
-    );
+    const opinionId = await getCurrentOpinionId(episodeId);
+    await saveUploadedDocument({
+      file: req.file,
+      patientId,
+      category: field.category || 'blood_report',
+      episodeId,
+      fieldLabel: field.label,
+      opinionId,
+      uploadedBy: req.user.id,
+      uploadedByRole: req.user.role,
+    });
 
     // Check if all missing reports are now uploaded — if so, mark episode complete
     await checkAndMarkComplete(episodeId, condType, qTable);
 
-    res.json({ success: true, moduleKey, reportPath });
+    res.json({ success: true, moduleKey, label: field.label });
   } catch (err) {
     console.error('uploadMissingReport error:', err);
     res.status(500).json({ error: 'Upload failed' });
@@ -147,24 +175,18 @@ async function checkAndMarkComplete(episodeId, condType, qTable) {
   const { rows } = await pool.query(`SELECT * FROM ${qTable} WHERE episode_id = $1`, [episodeId]);
   const q = rows[0] || {};
 
-  // Check only fields that had a value entered — if they all now have reports, mark complete
-  const valueToReportMap = {
-    tsh_value:      'tsh_report_path',
-    t3_value:       't3_report_path',
-    ft3_value:      'ft3_report_path',
-    t4_value:       't4_report_path',
-    ft4_value:      'ft4_report_path',
-    antitpo_value:  'antitpo_report_path',
-    antitg_value:   'antitg_report_path',
-    trab_value:     'trab_report_path',
-    tsi_value:      'tsi_report_path',
-    imaging_status: 'imaging_report_path',
-  };
+  const labFields = LAB_FIELDS_BY_CONDITION[condType] || [];
 
-  const anyStillMissing = Object.entries(valueToReportMap).some(([valFld, repFld]) => {
-    const hasValue  = q[valFld] !== null && q[valFld] !== undefined && q[valFld] !== '';
-    const hasReport = q[repFld] !== null && q[repFld] !== undefined && q[repFld] !== '';
-    return hasValue && !hasReport;
+  const docsResult = await pool.query(
+    `SELECT DISTINCT field_label FROM documents
+     WHERE episode_id = $1 AND is_deleted = FALSE AND field_label IS NOT NULL`,
+    [episodeId]
+  );
+  const uploadedLabels = new Set(docsResult.rows.map(r => r.field_label));
+
+  const anyStillMissing = labFields.some(f => {
+    const hasValue = q[f.valueFld] !== null && q[f.valueFld] !== undefined && q[f.valueFld] !== '';
+    return hasValue && !uploadedLabels.has(f.label);
   });
 
   if (!anyStillMissing) {
@@ -198,7 +220,7 @@ async function getInvestigations(req, res) {
     // name has to be decrypted in JS, not concatenated in SQL.
     const { rows } = await pool.query(
       `SELECT ai.id, ai.test_name, ai.notes, ai.source,
-              ai.report_path, ai.report_uploaded_at, ai.status,
+              ai.document_id, ai.report_uploaded_at, ai.status,
               d.first_name AS advised_by_first, d.last_name AS advised_by_last
        FROM advised_investigations ai
        LEFT JOIN doctors d ON d.id = ai.advised_by
@@ -255,14 +277,36 @@ async function uploadInvestigationReport(req, res) {
 
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
+    // Fetch the investigation first — need its test_name to tag the
+    // upload with a matching field_label, and to confirm the patient
+    // actually owns it before writing anything.
+    const invResult = await pool.query(
+      `SELECT id, test_name FROM advised_investigations
+       WHERE id = $1 AND episode_id = $2 AND patient_id = $3`,
+      [invId, episodeId, patientId]
+    );
+    if (!invResult.rows[0]) return res.status(404).json({ error: 'Investigation not found' });
+
+    const opinionId = await getCurrentOpinionId(episodeId);
+    const doc = await saveUploadedDocument({
+      file: req.file,
+      patientId,
+      category: 'blood_report',
+      episodeId,
+      fieldLabel: invResult.rows[0].test_name,
+      opinionId,
+      uploadedBy: req.user.id,
+      uploadedByRole: req.user.role,
+    });
+
     const { rows } = await pool.query(
       `UPDATE advised_investigations
-       SET report_path        = $1,
-           report_uploaded_at = NOW(),
-           status             = 'uploaded'
+       SET document_id         = $1,
+           report_uploaded_at  = NOW(),
+           status              = 'uploaded'
        WHERE id = $2 AND episode_id = $3 AND patient_id = $4
        RETURNING id, test_name, status`,
-      [req.file.path, invId, episodeId, patientId]
+      [doc.id, invId, episodeId, patientId]
     );
 
     if (!rows[0]) return res.status(404).json({ error: 'Investigation not found' });
@@ -529,12 +573,30 @@ async function uploadFollowUpLab(req, res) {
     );
     if (!existing[0]) return res.status(404).json({ error: 'Visit not found' });
 
+    // Same fix as uploadMissingReport/uploadInvestigationReport: goes
+    // through the encrypted, tracked documents pipeline instead of a raw
+    // unencrypted path — this one's tagged as its own follow-up-visit
+    // reading (a distinct later data point from whatever was uploaded
+    // during the original questionnaire, so a fresh field_label is
+    // correct here, not a forced match to the original one).
+    const opinionId = await getCurrentOpinionId(episodeId);
+    const doc = await saveUploadedDocument({
+      file: req.file,
+      patientId,
+      category: 'blood_report',
+      episodeId,
+      fieldLabel: testKey ? `${testKey.toUpperCase()} (follow-up)` : 'Follow-up lab report',
+      opinionId,
+      uploadedBy: req.user.id,
+      uploadedByRole: req.user.role,
+    });
+
     const labData = existing[0].lab_data || {};
     labData[testKey] = {
       value:      value || null,
       unit:       unit || null,
       date:       testDate || null,
-      reportPath: req.file.path,
+      documentId: doc.id,
       uploadedAt: new Date().toISOString(),
     };
 

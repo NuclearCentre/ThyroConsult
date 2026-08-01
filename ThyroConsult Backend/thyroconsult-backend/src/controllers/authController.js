@@ -36,6 +36,7 @@ const registerPatientStep1 = async (req, res) => {
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
   const {
+    preferredLanguage,
     firstName, middleName, lastName,
     guardianName, guardianRelation,
     dob, dobAutoCalculated,
@@ -46,6 +47,14 @@ const registerPatientStep1 = async (req, res) => {
   } = req.body;
 
   try {
+    // Same whitelist as patientController.updatePatient — kept in sync
+    // manually since there's no shared constants module between
+    // controllers yet. Matches the DB CHECK constraint (migrations 019 + 024).
+    const VALID_LANGUAGES = ['en', 'hi', 'gu', 'mr', 'ta', 'te', 'kn', 'ml', 'bn', 'pa', 'or', 'as', 'ne', 'mnib', 'mnim'];
+    if (preferredLanguage !== undefined && preferredLanguage !== null && !VALID_LANGUAGES.includes(preferredLanguage)) {
+      return res.status(400).json({ error: `preferredLanguage must be one of: ${VALID_LANGUAGES.join(', ')}` });
+    }
+
     // Check uniqueness using HMAC hashes
     const mobileHash = hmacHash(mobile);
     const emailHash = hmacHash(email.toLowerCase());
@@ -86,6 +95,12 @@ const registerPatientStep1 = async (req, res) => {
       state: state ? encryptPHI(state) : null,
       pincode: pincode ? encryptPHI(pincode) : null,
       registration_step: 1,
+      // Migration 019 added this column with DEFAULT 'en' and a CHECK
+      // constraint (expanded in migration 024 to include the 5 newly
+      // added languages) — falls back to 'en' here too, matching the
+      // column default, since this INSERT lists every column explicitly
+      // and can't rely on the DEFAULT clause firing.
+      preferred_language: preferredLanguage || 'en',
     };
 
     const result = await query(
@@ -93,8 +108,9 @@ const registerPatientStep1 = async (req, res) => {
        (mobile, mobile_hash, whatsapp, whatsapp_hash, email, email_hash,
         password_hash, first_name, middle_name, last_name, guardian_name,
         guardian_relation, dob, dob_auto_calculated, gender, blood_group,
-        country, address_line1, address_line2, city, state, pincode, registration_step)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+        country, address_line1, address_line2, city, state, pincode, registration_step,
+        preferred_language)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
        RETURNING id, patient_code`,
       Object.values(patientData)
     );
@@ -107,11 +123,13 @@ const registerPatientStep1 = async (req, res) => {
       userAgent: req.get('user-agent'),
     });
 
-    // Issue a token pair immediately. Steps 2-7 of the wizard still take
-    // patientId directly in the body (kept as-is), but Step 7 (document
-    // upload) and Step 8 (booking/payment) hit routes protected by
-    // verifyToken/requireRole('patient') — without a token issued here,
-    // those calls have always 401'd with no refresh token to fall back on.
+    // Issue a token pair immediately. Steps 2-5 of the wizard still take
+    // patientId directly in the body (kept as-is), but Step 6 (booking/
+    // payment — moved up from step 8 as part of the payment reorder;
+    // document upload is no longer a wizard step at all, it now happens
+    // post-registration via the Add Condition flow) hits routes protected
+    // by verifyToken/requireRole('patient') — without a token issued here,
+    // that call would 401 with no refresh token to fall back on.
     const tokens = await generateTokenPair(patient.id, 'patient', req.ip, req.get('user-agent'));
 
     // Auto-save: return patientId for subsequent steps

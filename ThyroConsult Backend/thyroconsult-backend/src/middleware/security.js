@@ -154,6 +154,10 @@ const requestId = (req, res, next) => {
 };
 
 // ─── HIPAA Session Timeout ─────────────────────────────────
+// NOTE: this appears to be dead code — routes/index.js imports
+// sessionTimeout from ../middleware/auth (auth.js has an identical copy),
+// not from here. Kept in sync anyway rather than left stale, but worth
+// confirming nothing else actually requires this one before deleting it.
 const sessionTimeout = (req, res, next) => {
   const timeoutMs = (parseInt(process.env.SESSION_TIMEOUT_MINUTES) || 15) * 60 * 1000;
   if (req.user && req.user.iat) {

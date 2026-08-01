@@ -6,7 +6,8 @@
 // ============================================================
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { conditionAPI } from "../api/index";
+import { conditionAPI, patientAPI } from "../api/index";
+import { Spinner, AdditionalDocumentsUploader, LabReportUpload } from "./common/index";
 
 // ─── Primitive UI helpers (Hyper-prefixed to avoid conflicts) ────────────────
 
@@ -244,6 +245,13 @@ const HyperMedBlock = ({ med, index, onChange, onRemove, showSince = true, doseL
 // Underlying answers still save normally regardless of this.
 const HyperOutputBox = () => null;
 
+// Report upload + AI auto-fill now comes from the shared LabReportUpload
+// component (common/index.js) — previously a separate near-identical
+// local copy lived here (HyperLabReportUpload). Consolidated so the
+// upload experience is visually and behaviorally identical across every
+// questionnaire module. This questionnaire's own question order/
+// branching/sequence is unchanged — only the upload widget moved.
+
 const HyperSectionCard = ({ title, children }) => (
   <div style={{ marginTop: 20, padding: "16px 20px", border: "1.5px solid #d0d7e8", borderRadius: 10, background: "#fff" }}>
     {title && <p style={{ margin: "0 0 14px", fontWeight: 700, color: "#3a7bd5", fontSize: 13, textTransform: "uppercase", letterSpacing: 0.5 }}>{title}</p>}
@@ -405,6 +413,54 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
       })
       .catch(() => {});
   }, [patientId, episodeId]);
+
+  // ── Rehydrate uploaded reports on every load — resume AND post-submit ──
+  // Same fix as HypoQuestionnaire: documents are never deleted (see
+  // patientController.uploadDocument), so the `documents` table (tagged
+  // with episodeId + fieldLabel — migration 022) is the permanent source
+  // of truth. Re-read it every time this questionnaire opens rather than
+  // trusting a snapshot in the draft JSON, so uploaded files show as
+  // already-there whether this is mid-draft, resumed later, or opened
+  // long after the patient already submitted.
+  useEffect(() => {
+    if (!episodeId) return;
+    const LABEL_TO_KEY = {
+      "TSH": "tsh_reports",
+      "FT4": "ft4_reports",
+      "FT3": "ft3_reports",
+      "TRAb": "trab_reports",
+      "TSI": "tsi_reports",
+      "Anti-TPO": "antitpo_reports",
+      "Anti-Tg": "antitg_reports",
+    };
+    patientAPI.getDocuments({ episodeId })
+      .then(res => {
+        const docs = res?.documents || [];
+        if (!docs.length) return;
+
+        const grouped = {};
+        let latestImaging = null;
+
+        for (const d of docs) {
+          const entry = { documentId: d.id, fileName: d.originalName };
+          if (d.fieldLabel === "Thyroid imaging") {
+            if (!latestImaging) latestImaging = entry;
+            continue;
+          }
+          const key = LABEL_TO_KEY[d.fieldLabel];
+          if (!key) continue;
+          if (!grouped[key]) grouped[key] = [];
+          grouped[key].push(entry);
+        }
+
+        setData(prev => ({
+          ...prev,
+          ...grouped,
+          ...(latestImaging ? { imaging_report: latestImaging } : {}),
+        }));
+      })
+      .catch(() => {});
+  }, [episodeId]);
 
   // Branch: if RAI caused hypothyroidism, signal parent to switch questionnaire
   useEffect(() => {
@@ -725,6 +781,16 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
             <HyperSectionCard title="TRAb / TSI results">
               <p style={{ fontSize: 13, color: "#666", margin: "0 0 12px" }}>Either or both can be filled — neither is mandatory.</p>
               <p style={{ fontWeight: 700, color: "#3a7bd5", fontSize: 13, margin: "0 0 8px" }}>TRAb</p>
+              <LabReportUpload
+                patientId={patientId} episodeId={episodeId} fieldLabel="TRAb"
+                category="blood_report"
+                reports={get("trab_reports", [])}
+                onReportsChange={v => set("trab_reports", v)}
+                onExtract={(extracted) => {
+                  if (extracted.value != null) set("trab_value_d4", extracted.value);
+                  if (extracted.date != null) set("trab_date_d4", extracted.date);
+                }}
+              />
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
                 <HyperField label="Value"><HyperInput type="number" value={get("trab_value_d4")} onChange={v => set("trab_value_d4", v)} placeholder="e.g. 8.6" /></HyperField>
                 <HyperField label="Unit"><HyperInput value="IU/L" onChange={() => {}} style={{ background: "#f5f5f5", color: "#888" }} /></HyperField>
@@ -736,6 +802,17 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
                 </HyperField>
               </div>
               <p style={{ fontWeight: 700, color: "#3a7bd5", fontSize: 13, margin: "0 0 8px" }}>TSI</p>
+              <LabReportUpload
+                patientId={patientId} episodeId={episodeId} fieldLabel="TSI"
+                category="blood_report"
+                reports={get("tsi_reports", [])}
+                onReportsChange={v => set("tsi_reports", v)}
+                onExtract={(extracted) => {
+                  if (extracted.value != null) set("tsi_value", extracted.value);
+                  if (extracted.unit != null) set("tsi_unit", extracted.unit);
+                  if (extracted.date != null) set("tsi_date", extracted.date);
+                }}
+              />
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                 <HyperField label="Value"><HyperInput type="number" value={get("tsi_value")} onChange={v => set("tsi_value", v)} placeholder="e.g. 140" /></HyperField>
                 <HyperField label="Unit"><HyperInput value={get("tsi_unit") || "%"} onChange={v => set("tsi_unit", v)} placeholder="%" /></HyperField>
@@ -762,6 +839,16 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
               {[["antitpo", "Anti-TPO", "IU/mL"], ["antitg", "Anti-Tg", "IU/mL"]].map(([key, label, unit]) => (
                 <div key={key} style={{ marginBottom: 16 }}>
                   <p style={{ fontWeight: 700, color: "#3a7bd5", fontSize: 13, margin: "0 0 8px" }}>{label}</p>
+                  <LabReportUpload
+                    patientId={patientId} episodeId={episodeId} fieldLabel={label}
+                    category="blood_report"
+                    reports={get(`${key}_reports`, [])}
+                    onReportsChange={v => set(`${key}_reports`, v)}
+                    onExtract={(extracted) => {
+                      if (extracted.value != null) set(`${key}_value`, extracted.value);
+                      if (extracted.date != null) set(`${key}_date`, extracted.date);
+                    }}
+                  />
                   <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                     <HyperField label="Value"><HyperInput type="number" value={get(`${key}_value`)} onChange={v => set(`${key}_value`, v)} placeholder="numeric" /></HyperField>
                     <HyperField label="Unit"><HyperInput value={get(`${key}_unit`) || unit} onChange={v => set(`${key}_unit`, v)} placeholder={unit} /></HyperField>
@@ -791,6 +878,13 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
               </HyperField>
               <HyperField label="Date of imaging"><HyperInput type="date" value={get("imaging_date")} onChange={v => set("imaging_date", v)} max={new Date().toISOString().split("T")[0]} /></HyperField>
               <HyperField label="Key findings (optional)"><HyperInput value={get("imaging_finding")} onChange={v => set("imaging_finding", v)} placeholder="e.g. Features of Graves' disease, uptake 15.6%" /></HyperField>
+              <LabReportUpload
+                patientId={patientId} episodeId={episodeId} fieldLabel="Thyroid imaging"
+                category="scan_usg"
+                enableExtract={false}
+                reports={get("imaging_report") ? [get("imaging_report")] : []}
+                onReportsChange={(arr) => set("imaging_report", arr[arr.length - 1] || null)}
+              />
             </HyperSectionCard>
           )}
           <HyperOutputBox text={get("imaging_status") === "yes" && (get("imaging_types", []) || []).length > 0 ? `${(get("imaging_types", []) || []).join(", ").replace(/_/g, " ")} done on ${fmtDate(get("imaging_date"))}${get("imaging_finding") ? " showed " + get("imaging_finding") : ""}` : ""} />
@@ -1330,6 +1424,9 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
           <h3>Is there anything else about your thyroid condition or symptoms that you would like your doctor to know?</h3>
           <p style={{ color: "#666", fontSize: 14 }}>This field is optional.</p>
           <textarea value={get("additional_notes", "")} onChange={e => set("additional_notes", e.target.value)} rows={5} style={{ width: "100%", padding: "10px 12px", border: "1.5px solid #d0d7e8", borderRadius: 8, fontSize: 14, resize: "vertical", boxSizing: "border-box" }} placeholder="Type any additional information here..." />
+          <p style={{ fontWeight: 600, fontSize: 14, marginTop: 20, marginBottom: 4 }}>Want to add any more reports, images, or documents?</p>
+          <p style={{ color: "#666", fontSize: 13, marginBottom: 8 }}>Anything not covered by the questions above — old reports, discharge summaries, referral letters, etc.</p>
+          <AdditionalDocumentsUploader patientId={patientId} episodeId={episodeId} category="other" />
         </div>
       );
 
@@ -1351,12 +1448,26 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
 
   // ─── Reusable lab page renderer ───────────────────────────────────────────
   function renderLabPage(id, question, testName, key, defaultUnit, unitOptions) {
+    const handleExtract = (extracted) => {
+      if (extracted.value != null) set(`${key}_value`, extracted.value);
+      if (extracted.unit != null && unitOptions.length > 1) set(`${key}_unit`, extracted.unit);
+      if (extracted.date != null) set(`${key}_date`, extracted.date);
+      if (extracted.refLow != null) set(`${key}_ref_low`, extracted.refLow);
+      if (extracted.refHigh != null) set(`${key}_ref_high`, extracted.refHigh);
+    };
     return (
       <div>
         <h3>{question}</h3>
         <HyperYesNoUnsure value={get(`${key}_status`)} onChange={v => set(`${key}_status`, v)} />
         {get(`${key}_status`) === "yes" && (
           <HyperSectionCard title={`${testName} result`}>
+            <LabReportUpload
+              patientId={patientId} episodeId={episodeId} fieldLabel={testName}
+              category="blood_report"
+              reports={get(`${key}_reports`, [])}
+              onReportsChange={v => set(`${key}_reports`, v)}
+              onExtract={handleExtract}
+            />
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
               <HyperField label="Most recent value">
                 <HyperInput type="number" value={get(`${key}_value`)} onChange={v => set(`${key}_value`, v)} placeholder="numeric" />

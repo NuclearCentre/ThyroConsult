@@ -2,6 +2,22 @@ import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Logo, Alert, Spinner } from '../components/common/index';
+import { patientAPI } from '../api';
+
+// Kept identical to PatientPortal.js's LANGUAGES / RegisterPage.js's
+// REGISTRATION_LANGUAGES — no shared constants module exists yet between
+// these three files, so this must be updated by hand in all three if the
+// language list ever changes. See translationService.js's LANGUAGE_NAMES
+// for the backend counterpart.
+const LOGIN_LANGUAGES = [
+  ['en', 'English'], ['hi', 'हिन्दी (Hindi)'], ['gu', 'ગુજરાતી (Gujarati)'],
+  ['mr', 'मराठी (Marathi)'], ['ta', 'தமிழ் (Tamil)'], ['te', 'తెలుగు (Telugu)'],
+  ['kn', 'ಕನ್ನಡ (Kannada)'], ['ml', 'മലയാളം (Malayalam)'],
+  ['bn', 'বাংলা (Bengali)'], ['pa', 'ਪੰਜਾਬੀ (Punjabi)'],
+  ['or', 'ଓଡ଼ିଆ (Odia)'], ['as', 'অসমীয়া (Assamese)'], ['ne', 'नेपाली (Nepali)'],
+  ['mnib', 'মৈতৈলোন্ (Manipuri — Bengali script)'],
+  ['mnim', 'ꯃꯤꯇꯩꯂꯣꯟ (Manipuri — Meitei script)'],
+];
 
 const LoginPage = () => {
   const [role, setRole] = useState('patient');
@@ -10,6 +26,15 @@ const LoginPage = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  // Login-screen language picker: we don't know who's logging in until
+  // after they submit, so this can't show their actual current
+  // preference. languageTouched tracks whether they consciously picked
+  // something this session — only synced to their profile if true, so
+  // an untouched default never silently overwrites an existing saved
+  // preference (e.g. a patient who already has Hindi set, logging in
+  // without touching this dropdown, must NOT get reset to English).
+  const [preferredLanguage, setPreferredLanguage] = useState('en');
+  const [languageTouched, setLanguageTouched] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
 
@@ -18,7 +43,15 @@ const LoginPage = () => {
     setError(''); setLoading(true);
     try {
       const user = await login(identifier, password, role);
-      if (user.role === 'patient') navigate('/patient/dashboard');
+      if (user.role === 'patient') {
+        if (languageTouched) {
+          // Best-effort — a failure here shouldn't block a successful
+          // login. By this point login() has already set tokens, so
+          // this call is authenticated as this patient.
+          patientAPI.updateLanguage(preferredLanguage).catch(() => {});
+        }
+        navigate('/patient/dashboard');
+      }
       else if (user.role === 'doctor') navigate('/doctor/dashboard');
       else navigate('/admin/dashboard');
     } catch (err) {
@@ -45,6 +78,42 @@ const LoginPage = () => {
             </button>
           ))}
         </div>
+
+        {/* Language picker — patient-only, per the platform rule that
+            physician and admin portals stay English-only, always.
+            Untouched = leave whatever's already saved on their profile
+            alone (see languageTouched above). Styled to match the role
+            tabs strip immediately above: light grey pill container,
+            white/surface background for the control itself, light blue
+            on hover. */}
+        {role === 'patient' && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            background: 'var(--gray-100)', borderRadius: 'var(--radius-md)',
+            padding: 4, marginBottom: 28,
+          }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 500, color: 'var(--text-tertiary)', paddingLeft: 8, whiteSpace: 'nowrap' }}>
+              <span aria-hidden="true">🌐</span> Choose language
+            </span>
+            <select
+              value={preferredLanguage}
+              onChange={e => { setPreferredLanguage(e.target.value); setLanguageTouched(true); }}
+              aria-label="Choose language"
+              style={{
+                flex: 1, border: 'none', borderRadius: 8, padding: '8px 10px',
+                fontSize: 13, fontWeight: 500, color: 'var(--teal-600)',
+                background: 'var(--surface)', boxShadow: 'var(--shadow-sm)',
+                cursor: 'pointer', transition: 'background 0.15s',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'var(--blue-50)'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'var(--surface)'; }}
+            >
+              {LOGIN_LANGUAGES.map(([code, label]) => (
+                <option key={code} value={code}>{label}</option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {/* Form */}
         <div className="card" style={{ padding: 28 }}>

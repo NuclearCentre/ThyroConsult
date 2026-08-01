@@ -2,20 +2,15 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Webcam from 'react-webcam';
 import SignaturePad from 'react-signature-canvas';
-import { authAPI, doctorAPI, patientAPI, appointmentAPI } from '../../api';
+import { authAPI, doctorAPI, appointmentAPI } from '../../api';
 import { Logo, SecureBadge, Alert, Spinner } from '../../components/common/index';
-import ConditionSelection from '../../components/ConditionSelection';
-import CoreQuestionnaire from '../../components/CoreQuestionnaire';
-import { HypoQuestionnaire, HyperQuestionnaire } from '../../components/ConditionQuestionnaires';
-import TcQuestionnaire from '../../components/TcQuestionnaire';
-// ^ TcQuestionnaire now imported from its own file — ConditionQuestionnaires.js
-// still exports an older, much smaller TcQuestionnaire stub (~270 lines) under
-// the same name; the real one lives standalone (1493 lines, same
-// self-contained chatbot pattern as Hyper/Nodule, matches migration 010's
-// "TcQuestionnaire_REVISED.js" reference). That old stub in
-// ConditionQuestionnaires.js should probably be removed to prevent this
-// mistake happening again — flagging rather than deleting it myself.
-import NoduleQuestionnaire from '../../components/NoduleQuestionnaire';
+// Condition selection, Core/Hypo/Hyper/TC/Nodule questionnaires, and report
+// upload no longer render inside this wizard — payment reorder (see session
+// notes): registration now ends at Payment (Step 6, right after Choose
+// doctor). Condition selection + questionnaires + report upload all happen
+// AFTER registration_complete flips TRUE, via the existing "+ Add Condition"
+// flow on the patient Dashboard (already built, already has its own
+// resume mechanism) — not as wizard steps here.
 import { loadRazorpayScript } from '../../utils/loadRazorpay';
 // Needs: npm install country-state-city --save
 // Static offline dataset (no API key, no external network call at runtime) —
@@ -23,24 +18,32 @@ import { loadRazorpayScript } from '../../utils/loadRazorpay';
 // dialing code for the phone-number country-code selector below.
 import { Country, State, City } from 'country-state-city';
 
-// ── Steps now include 5.5 (condition), 5.6 (core Q), 5.7 (condition Q)
-// These are sub-steps rendered inside the same step bar position
-// The step bar shows 7 steps; 5.5/5.6/5.7 are sub-steps within step 6
+// Payment reorder: registration wizard ends at Payment, right after
+// Choose doctor. Condition selection, questionnaires, and report upload
+// happen post-registration via the Dashboard's "+ Add Condition" flow —
+// see import comment above.
+// Kept identical to PatientPortal.js's LANGUAGES list — no shared
+// constants module exists between the two pages, so this must be
+// updated by hand in both places if the language list ever changes.
+// See translationService.js's LANGUAGE_NAMES for the backend counterpart.
+const REGISTRATION_LANGUAGES = [
+  ['en', 'English'], ['hi', 'हिन्दी (Hindi)'], ['gu', 'ગુજરાતી (Gujarati)'],
+  ['mr', 'मराठी (Marathi)'], ['ta', 'தமிழ் (Tamil)'], ['te', 'తెలుగు (Telugu)'],
+  ['kn', 'ಕನ್ನಡ (Kannada)'], ['ml', 'മലയാളം (Malayalam)'],
+  ['bn', 'বাংলা (Bengali)'], ['pa', 'ਪੰਜਾਬੀ (Punjabi)'],
+  ['or', 'ଓଡ଼ିଆ (Odia)'], ['as', 'অসমীয়া (Assamese)'], ['ne', 'नेपाली (Nepali)'],
+  ['mnib', 'মৈতৈলোন্ (Manipuri — Bengali script)'],
+  ['mnim', 'ꯃꯤꯇꯩꯂꯣꯟ (Manipuri — Meitei script)'],
+];
+
 const STEPS = [
   'Personal info',
   'Verify contacts',
   'E-consent',
   'Live photo',
   'Choose doctor',
-  'Questionnaire',  // covers steps 5.5, 5.6, 5.7
-  'Upload reports',
-  'Payment'
+  'Payment',
 ];
-
-// Sub-steps within the questionnaire phase
-const SUB_STEP_CONDITION_SELECT = '5.5';
-const SUB_STEP_CORE_Q           = '5.6';
-const SUB_STEP_CONDITION_Q      = '5.7';
 
 const CONSENT_TEXT = {
   treatment: `I, the undersigned, hereby consent to receive thyroid online opinion services from the licensed physicians at ThyroConsult. I understand that online opinions will be provided via this secure, encrypted platform. I acknowledge that I have been fully informed of the nature of the online opinion service, including its risks, benefits, and available alternatives. I understand my case will be documented and that records will be maintained securely in accordance with applicable medical record laws.`,
@@ -51,7 +54,6 @@ const CONSENT_TEXT = {
 const RegisterPage = () => {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
-  const [subStep, setSubStep] = useState(null); // null | '5.5' | '5.6' | '5.7'
   const [patientId, setPatientId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -62,13 +64,9 @@ const RegisterPage = () => {
   const webcamRef = useRef(null);
   const sigPadRef = useRef(null);
 
-  // ── Condition / questionnaire state ─────────────────────
-  const [selectedCondition, setSelectedCondition] = useState(null);
-  const [episodeId, setEpisodeId] = useState(null);
-  const [patientGender, setPatientGender] = useState('');
-
   // Step 1 form state
   const [form, setForm] = useState({
+    preferredLanguage: 'en',
     firstName: '', middleName: '', lastName: '',
     guardianName: '', guardianRelation: '',
     dob: '', age: { yy: '', mm: '', dd: '' }, dobAutoCalculated: false,
@@ -101,12 +99,6 @@ const RegisterPage = () => {
   const [doctors, setDoctors] = useState([]);
   const [selectedDoctor, setSelectedDoctor] = useState(null);
 
-  // Step 7 documents
-  const [documents, setDocuments] = useState([]);
-
-  // Step 8 payment
-  const [paymentData, setPaymentData] = useState(null);
-
   // ── DOB ↔ Age auto-calculation ────────────────────────
   const handleDOBChange = (dob) => {
     const d = new Date(dob);
@@ -118,7 +110,6 @@ const RegisterPage = () => {
       if (dd < 0) { mm--; dd += new Date(now.getFullYear(), now.getMonth(), 0).getDate(); }
       if (mm < 0) { yy--; mm += 12; }
       setForm(f => ({ ...f, dob, dobAutoCalculated: false, age: { yy: String(yy), mm: String(mm), dd: String(dd) } }));
-      setPatientGender(form.gender);
     } else {
       setForm(f => ({ ...f, dob }));
     }
@@ -149,6 +140,7 @@ const RegisterPage = () => {
     setLoading(true); setError('');
     try {
       const res = await authAPI.registerStep1({
+        preferredLanguage: form.preferredLanguage,
         firstName: form.firstName, middleName: form.middleName, lastName: form.lastName,
         guardianName: form.guardianName, guardianRelation: form.guardianRelation,
         dob: form.dob, dobAutoCalculated: form.dobAutoCalculated,
@@ -161,12 +153,11 @@ const RegisterPage = () => {
         password: form.password,
       });
       setPatientId(res.patientId);
-      setPatientGender(form.gender);
       // Registration Step 1 now issues a token pair (see authController.js
       // registerPatientStep1) — store it so every subsequent call in this
-      // wizard that hits a verifyToken-protected route (document upload at
-      // Step 7, booking at Step 8) actually carries a valid Authorization
-      // header instead of 401'ing with no refresh token to fall back on.
+      // wizard that hits a verifyToken-protected route (booking/payment at
+      // Step 6) actually carries a valid Authorization header instead of
+      // 401'ing with no refresh token to fall back on.
       authAPI.setTokens(res.accessToken, res.refreshToken);
       setStep(2);
     } catch (err) { setError(err.response?.data?.error || 'Registration failed'); }
@@ -286,64 +277,15 @@ const RegisterPage = () => {
     setLoading(true); setError('');
     try {
       await authAPI.selectDoctor(patientId, selectedDoctor);
-      // After doctor selection → go to condition selection (Step 5.5)
+      // After doctor selection → straight to Payment (Step 6). Condition
+      // selection + questionnaires + report upload happen post-registration
+      // via the Dashboard's "+ Add Condition" flow instead.
       setStep(6);
-      setSubStep(SUB_STEP_CONDITION_SELECT);
     } catch (err) { setError(err.response?.data?.error || 'Failed to select doctor'); }
     finally { setLoading(false); }
   };
 
-  // ── Step 5.5: Condition selected ─────────────────────
-  const handleConditionSelected = ({ condition, episodeId: eid }) => {
-    setSelectedCondition(condition);
-    setEpisodeId(eid);
-    setSubStep(SUB_STEP_CORE_Q);
-  };
-
-  // ── Step 5.6: Core questionnaire complete ────────────
-  const handleCoreQComplete = () => {
-    setSubStep(SUB_STEP_CONDITION_Q);
-  };
-
-  // ── Step 5.7: Condition questionnaire complete ────────
-  const handleConditionQComplete = () => {
-    setSubStep(null);
-    setStep(7); // Upload reports
-  };
-
-  // ── Nodule-specific: TSH branch can switch to Hypo/Hyper mid-flow ──
-  // NoduleQuestionnaire calls onComplete({ switchToHypo: true, data })
-  // or ({ switchToHyper: true, data }) instead of finishing normally —
-  // same pattern as Hyper's C2b RAI->Hypo switch. Stay on the condition
-  // questionnaire sub-step, just swap which questionnaire renders.
-  const handleNoduleComplete = (result) => {
-    if (result?.switchToHypo) { setSelectedCondition('hypothyroidism'); return; }
-    if (result?.switchToHyper) { setSelectedCondition('hyperthyroidism'); return; }
-    handleConditionQComplete();
-  };
-
-  // ── Step 7: Upload document ──────────────────────────
-  // NOTE: patientAPI.uploadDocument takes a single FormData and has no
-  // upload-progress support (api/index.js uses plain fetch, not XHR, so
-  // there's no progress event to hook). Progress now just jumps 0->100
-  // on completion instead of animating — a UX downgrade from what this
-  // code assumed, flagging rather than faking progress events.
-  const handleFileUpload = async (file, category) => {
-    const key = `${Date.now()}`;
-    setDocuments(prev => [...prev, { key, name: file.name, category, status: 'uploading', progress: 0 }]);
-    try {
-      const formData = new FormData();
-      formData.append('document', file);
-      formData.append('patientId', patientId);
-      formData.append('category', category);
-      await patientAPI.uploadDocument(formData);
-      setDocuments(prev => prev.map(d => d.key === key ? { ...d, status: 'done', progress: 100 } : d));
-    } catch {
-      setDocuments(prev => prev.map(d => d.key === key ? { ...d, status: 'error' } : d));
-    }
-  };
-
-  // ── Step 8: Razorpay ─────────────────────────────────
+  // ── Step 6: Razorpay ──────────────────────────────────
   const initiatePayment = async () => {
     setLoading(true); setError('');
     try {
@@ -403,18 +345,6 @@ const RegisterPage = () => {
 
   const allVerified = verification.mobile && verification.email;
 
-  // ── Which step number to highlight in progress bar ───
-  // Sub-steps all show as step 6 in the bar
-  const barStep = subStep ? 6 : step;
-
-  // ── Condition label for display ──────────────────────
-  const conditionLabel = {
-    hypothyroidism: 'Hypothyroidism',
-    hyperthyroidism: 'Hyperthyroidism / Graves\'',
-    thyroid_cancer: 'Thyroid Cancer',
-    nodule: 'Thyroid Nodule',
-  }[selectedCondition] || '';
-
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>
       {/* ── Header ── */}
@@ -432,7 +362,7 @@ const RegisterPage = () => {
         <div className="step-bar">
           {STEPS.map((label, i) => {
             const n = i + 1;
-            const state = n < barStep ? 'done' : n === barStep ? 'active' : 'pending';
+            const state = n < step ? 'done' : n === step ? 'active' : 'pending';
             return (
               <div key={n} className={`step-item ${state}`}>
                 <div className="step-circle">{state === 'done' ? '✓' : n}</div>
@@ -442,37 +372,51 @@ const RegisterPage = () => {
           })}
         </div>
 
-        {/* ── Sub-step indicator (for questionnaire phase) ── */}
-        {subStep && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, padding: '8px 14px', background: 'var(--blue-50)', borderRadius: 8, border: '1px solid var(--blue-200)' }}>
-            <span style={{ fontSize: 12, color: 'var(--blue-700)', fontWeight: 500 }}>
-              {subStep === SUB_STEP_CONDITION_SELECT && '📋 Step 6a — Select your condition'}
-              {subStep === SUB_STEP_CORE_Q && `📝 Step 6b — General health questionnaire${conditionLabel ? ` · ${conditionLabel}` : ''}`}
-              {subStep === SUB_STEP_CONDITION_Q && `🔬 Step 6c — ${conditionLabel} specific questions`}
-            </span>
-            <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-              {[SUB_STEP_CONDITION_SELECT, SUB_STEP_CORE_Q, SUB_STEP_CONDITION_Q].map((s, i) => (
-                <div key={s} style={{
-                  width: 8, height: 8, borderRadius: '50%',
-                  background: subStep === s ? 'var(--blue-600)' :
-                    [SUB_STEP_CONDITION_SELECT, SUB_STEP_CORE_Q, SUB_STEP_CONDITION_Q].indexOf(subStep) > i
-                      ? 'var(--teal-400)' : 'var(--border-md)'
-                }} />
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* Error alert moved to the bottom of the page — see below */}
 
         {/* ═══════════════════════════════════════════════════
             STEP 1 — Personal info (unchanged)
         ═══════════════════════════════════════════════════ */}
-        {step === 1 && !subStep && (
+        {step === 1 && (
           <div className="card">
             <div style={{ marginBottom: 20 }}>
               <h3>Personal information</h3>
               <p style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>All fields marked <span style={{ color: 'var(--red-400)' }}>*</span> are required</p>
+            </div>
+
+            {/* ── Preferred language — asked upfront, before any other
+                field, since it's the one choice that shapes the rest of
+                the patient's experience (their doctor's opinion gets
+                translated into whatever they pick here). Placement
+                mirrors CoWIN/Ayushman Bharat-style government health
+                portals, which ask this before anything else for exactly
+                the same reason. Styled to match LoginPage.js's picker —
+                light grey pill, white control, blue on hover. ── */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              background: 'var(--gray-100)', borderRadius: 'var(--radius-md)',
+              padding: 4, marginBottom: 20,
+            }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 500, color: 'var(--text-tertiary)', paddingLeft: 8, whiteSpace: 'nowrap' }}>
+                <span aria-hidden="true">🌐</span> Choose language
+              </span>
+              <select
+                value={form.preferredLanguage}
+                onChange={fld('preferredLanguage')}
+                aria-label="Choose language"
+                style={{
+                  flex: 1, border: 'none', borderRadius: 8, padding: '8px 10px',
+                  fontSize: 13, fontWeight: 500, color: 'var(--teal-600)',
+                  background: 'var(--surface)', boxShadow: 'var(--shadow-sm)',
+                  cursor: 'pointer', transition: 'background 0.15s',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'var(--blue-50)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'var(--surface)'; }}
+              >
+                {REGISTRATION_LANGUAGES.map(([code, label]) => (
+                  <option key={code} value={code}>{label}</option>
+                ))}
+              </select>
             </div>
 
             <div className="form-grid-2">
@@ -633,7 +577,7 @@ const RegisterPage = () => {
         {/* ═══════════════════════════════════════════════════
             STEP 2 — Verify contacts
         ═══════════════════════════════════════════════════ */}
-        {step === 2 && !subStep && (
+        {step === 2 && (
           <div className="card">
             <h3 style={{ marginBottom: 6 }}>Verify your contact details</h3>
             <p style={{ color: 'var(--text-tertiary)', fontSize: 13, marginBottom: 24 }}>Mobile and email must be verified to continue <span style={{ color: 'var(--red-400)' }}>*</span></p>
@@ -738,7 +682,7 @@ const RegisterPage = () => {
         {/* ═══════════════════════════════════════════════════
             STEP 3 — E-consent (unchanged)
         ═══════════════════════════════════════════════════ */}
-        {step === 3 && !subStep && (
+        {step === 3 && (
           <div className="card">
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
               <h3>Electronic consent form</h3>
@@ -777,7 +721,7 @@ const RegisterPage = () => {
         {/* ═══════════════════════════════════════════════════
             STEP 4 — Live photo (unchanged)
         ═══════════════════════════════════════════════════ */}
-        {step === 4 && !subStep && (
+        {step === 4 && (
           <div className="card">
             <h3 style={{ marginBottom: 4 }}>Live photo for medical record <span style={{ color: 'var(--red-400)', fontSize: 18 }}>*</span></h3>
             <p style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 20 }}>A live camera photo is required. Upload from device is not permitted.</p>
@@ -821,7 +765,7 @@ const RegisterPage = () => {
         {/* ═══════════════════════════════════════════════════
             STEP 5 — Choose doctor (unchanged)
         ═══════════════════════════════════════════════════ */}
-        {step === 5 && !subStep && (
+        {step === 5 && (
           <div className="card">
             <h3 style={{ marginBottom: 20 }}>Select your doctor</h3>
             {doctors.length === 0 ? <div style={{ textAlign: 'center', padding: 24 }}><Spinner size={24} /></div> : (
@@ -855,129 +799,13 @@ const RegisterPage = () => {
         )}
 
         {/* ═══════════════════════════════════════════════════
-            STEP 5.5 — Condition selection (NEW)
+            STEP 6 — Payment (moved up — was step 8, now right
+            after Choose doctor). Questionnaire + report upload
+            steps removed from this wizard entirely; they now
+            happen post-registration via the Dashboard's
+            "+ Add Condition" flow.
         ═══════════════════════════════════════════════════ */}
-        {step === 6 && subStep === SUB_STEP_CONDITION_SELECT && (
-          <ConditionSelection
-            patientId={patientId}
-            doctorId={selectedDoctor}
-            onComplete={handleConditionSelected}
-            onBack={() => { setSubStep(null); setStep(5); }}
-          />
-        )}
-
-        {/* ═══════════════════════════════════════════════════
-            STEP 5.6 — Core questionnaire (NEW)
-        ═══════════════════════════════════════════════════ */}
-        {step === 6 && subStep === SUB_STEP_CORE_Q && episodeId && (
-          <CoreQuestionnaire
-            patientId={patientId}
-            episodeId={episodeId}
-            condition={selectedCondition}
-            patientGender={patientGender}
-            patientDob={form.dob}
-            onComplete={handleCoreQComplete}
-            onBack={() => setSubStep(SUB_STEP_CONDITION_SELECT)}
-          />
-        )}
-
-        {/* ═══════════════════════════════════════════════════
-            STEP 5.7 — Condition-specific questionnaire (NEW)
-        ═══════════════════════════════════════════════════ */}
-        {step === 6 && subStep === SUB_STEP_CONDITION_Q && episodeId && (
-          <>
-            {selectedCondition === 'hypothyroidism' && (
-              <HypoQuestionnaire
-                patientId={patientId}
-                episodeId={episodeId}
-                onComplete={handleConditionQComplete}
-                onBack={() => setSubStep(SUB_STEP_CORE_Q)}
-              />
-            )}
-            {selectedCondition === 'hyperthyroidism' && (
-              <HyperQuestionnaire
-                patientId={patientId}
-                episodeId={episodeId}
-                patientGender={patientGender}
-                onComplete={handleConditionQComplete}
-                onBack={() => setSubStep(SUB_STEP_CORE_Q)}
-              />
-            )}
-            {selectedCondition === 'thyroid_cancer' && (
-              // Same gap as Nodule below: maritalStatus/hysterectomyDone
-              // aren't tracked in RegisterPage's state, so they pass through
-              // as undefined -> component's internal defaults apply.
-              <TcQuestionnaire
-                patientId={patientId}
-                episodeId={episodeId}
-                patientDob={form.dob}
-                patientGender={patientGender}
-                onComplete={handleConditionQComplete}
-                onBack={() => setSubStep(SUB_STEP_CORE_Q)}
-              />
-            )}
-            {selectedCondition === 'nodule' && (
-              // NOTE: maritalStatus/hysterectomyDone aren't tracked anywhere
-              // in RegisterPage's state today — Nodule uses them to decide
-              // whether to show B4/B5/J4c, so they'll fall back to the
-              // component's internal defaults (effectively "unmarried/no
-              // hysterectomy") until this page collects them. patientDob is
-              // available from Step 1 and passed through.
-              <NoduleQuestionnaire
-                patientId={patientId}
-                episodeId={episodeId}
-                patientDob={form.dob}
-                patientGender={patientGender}
-                onComplete={handleNoduleComplete}
-                onBack={() => setSubStep(SUB_STEP_CORE_Q)}
-              />
-            )}
-          </>
-        )}
-
-        {/* ═══════════════════════════════════════════════════
-            STEP 7 — Upload reports (was step 6)
-        ═══════════════════════════════════════════════════ */}
-        {step === 7 && !subStep && (
-          <div className="card">
-            <h3 style={{ marginBottom: 6 }}>Upload medical reports</h3>
-            <p style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 20 }}>PDF, Word, JPG, PNG · Max 5 MB per file · Reports are encrypted on upload</p>
-
-            {['blood_report', 'scan_usg', 'prescription', 'biopsy', 'other'].map(cat => {
-              const labels = { blood_report: '🩸 Blood reports', scan_usg: '📡 Scan / USG / RAI scan', prescription: '💊 Prescriptions', biopsy: '🔬 Biopsy / FNAC / Histopathology', other: '📄 Other' };
-              return (
-                <div key={cat} style={{ marginBottom: 14, padding: 14, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)' }}>
-                  <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 10 }}>{labels[cat]}</div>
-                  <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '16px', border: '1px dashed var(--border-md)', borderRadius: 'var(--radius-md)', cursor: 'pointer', background: 'var(--gray-50)' }}>
-                    <input type="file" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" style={{ display: 'none' }} onChange={e => Array.from(e.target.files).forEach(f => handleFileUpload(f, cat))} />
-                    <span style={{ fontSize: 22, marginBottom: 4 }}>☁</span>
-                    <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Click to upload or drag & drop</span>
-                    <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>PDF, DOCX, JPG, PNG · max 5 MB</span>
-                  </label>
-                  {documents.filter(d => d.category === cat).map(doc => (
-                    <div key={doc.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 8, marginTop: 8, fontSize: 12 }}>
-                      <span>📄</span>
-                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.name}</span>
-                      {doc.status === 'uploading' && <span style={{ fontSize: 11, color: 'var(--teal-600)' }}>{doc.progress}%</span>}
-                      {doc.status === 'done' && <span style={{ color: 'var(--teal-600)' }}>✓</span>}
-                      {doc.status === 'error' && <span style={{ color: 'var(--red-600)' }}>✗</span>}
-                    </div>
-                  ))}
-                </div>
-              );
-            })}
-
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
-              <button className="btn btn-secondary" onClick={() => { setStep(6); setSubStep(SUB_STEP_CONDITION_Q); }}>← Back to questionnaire</button>
-              <button className="btn btn-primary btn-lg" onClick={() => setStep(8)}>Continue to payment →</button>
-            </div>
-          </div>
-        )}
-
-        {/* ═══════════════════════════════════════════════════
-            STEP 8 — Payment (was step 7)
-        ═══════════════════════════════════════════════════ */}
-        {step === 8 && !subStep && (
+        {step === 6 && (
           <div className="card">
             <h3 style={{ marginBottom: 20 }}>Online opinion fee payment</h3>
             {doctors.find(d => d.id === selectedDoctor) && (() => {
@@ -1010,12 +838,12 @@ const RegisterPage = () => {
               );
             })()}
             <div style={{ display: 'flex', justifyContent: 'flex-start', marginTop: 16 }}>
-              <button className="btn btn-secondary" onClick={() => setStep(7)}>← Back</button>
+              <button className="btn btn-secondary" onClick={() => setStep(5)}>← Back</button>
             </div>
           </div>
         )}
 
-        {error && !subStep && (
+        {error && (
           <div style={{ marginTop: 20 }}>
             <Alert type="error" onClose={() => setError('')}>{error}</Alert>
           </div>

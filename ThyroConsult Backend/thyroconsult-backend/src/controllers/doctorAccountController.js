@@ -213,48 +213,19 @@ const getDoctorPatientView = async (req, res) => {
   }
 };
 
-// POST /consultations/:id/notes — save doctor notes
-// NOTE: route path and `consultations` table name left unchanged here —
-// same flagged-as-possibly-legacy table as elsewhere this session.
-// Renaming the URL is a breaking API change needing a matching frontend
-// update; only the JS-facing names below were purged.
-const saveOpinionNotes = async (req, res) => {
-  const {
-    chiefComplaint, history, examinationNotes,
-    diagnosis, treatmentPlan, doctorNotes, followUpNotes,
-  } = req.body;
-
-  try {
-    await query(
-      `UPDATE consultations SET
-       chief_complaint = $1, history = $2, examination_notes = $3,
-       diagnosis = $4, treatment_plan = $5, doctor_notes = $6, follow_up_notes = $7,
-       status = 'completed', completed_at = NOW()
-       WHERE id = $8 AND doctor_id = $9`,
-      [
-        chiefComplaint ? encryptPHI(chiefComplaint) : null,
-        history ? encryptPHI(history) : null,
-        examinationNotes ? encryptPHI(examinationNotes) : null,
-        diagnosis ? encryptPHI(diagnosis) : null,
-        treatmentPlan ? encryptPHI(treatmentPlan) : null,
-        doctorNotes ? encryptPHI(doctorNotes) : null,
-        followUpNotes ? encryptPHI(followUpNotes) : null,
-        req.params.id,
-        req.user.id,
-      ]
-    );
-
-    logger.audit('OPINION_NOTES_SAVED', {
-      userId: req.user.id, userRole: 'doctor',
-      ip: req.ip, resourceId: req.params.id, phiAccessed: true,
-    });
-
-    res.json({ message: 'Opinion notes saved' });
-  } catch (err) {
-    logger.error('Save notes error', { error: err.message });
-    res.status(500).json({ error: 'Failed to save notes' });
-  }
-};
+// saveOpinionNotes / POST /consultations/:id/notes — REMOVED.
+// Confirmed via src/routes/index.js: this had no route anywhere, so it was
+// dead code. It also belonged to a workflow that no longer matches the
+// platform — chief complaint, history, examination notes, diagnosis, etc.
+// were fields for a doctor to type up live consultation notes after seeing
+// a patient in person. That model is gone: the patient fills in everything
+// themselves via the structured questionnaire (Core + condition-specific)
+// at intake, along with uploaded investigation/imaging reports, and the
+// physician's only write action is against the `opinions` table
+// (clinical_summary/impression/advice/investigations/remarks), handled
+// entirely by opinionController.js's episode-based flow
+// (saveDraftOpinion/submitOpinion). The legacy `consultations` table this
+// function wrote to is not read anywhere in the current codebase.
 
 // ============================================================
 // APPOINTMENT CONTROLLER
@@ -286,13 +257,17 @@ const bookAppointment = async (req, res) => {
       );
       const appointmentId = appt.rows[0].id;
 
-      // Create opinion record
-      const opinionNum = `OPN-${new Date().getFullYear()}-${String(await getNextOpinionNum(client)).padStart(4, '0')}`;
-      await client.query(
-        `INSERT INTO consultations(appointment_id, patient_id, doctor_id, opinion_number)
-         VALUES($1,$2,$3,$4)`,
-        [appointmentId, patientId, doctorId, opinionNum]
-      );
+      // NOTE: previously also inserted a row into the legacy `consultations`
+      // table here (appointment_id, patient_id, doctor_id, opinion_number),
+      // generated via an `opinion_seq` sequence. Removed — this was the
+      // actual booking/payment blocker (same stale `consultations` table
+      // already found broken elsewhere this session, see getPatientOpinions
+      // fix). The real opinion record is created later by
+      // opinionController.js against the `opinions` table, keyed on
+      // episode_id — it never reads `consultations`, `opinion_number`, or
+      // `opinion_seq`. That insert was dead weight that could throw and
+      // roll back this entire transaction, killing the Razorpay order
+      // along with it.
 
       // Razorpay order — GST intentionally not charged: doctors are exempt
       // from charging GST on online-opinion services.
@@ -348,11 +323,6 @@ const bookAppointment = async (req, res) => {
   }
 };
 
-const getNextOpinionNum = async (client) => {
-  const r = await client.query("SELECT nextval('opinion_seq') AS n");
-  return r.rows[0].n;
-};
-
 // ============================================================
 // PAYMENT CONTROLLER
 // ============================================================
@@ -386,11 +356,17 @@ const razorpayWebhook = async (req, res) => {
         [orderId]
       );
 
-      // Update registration step
+      // Update registration step — payment reorder: Payment now sits right
+      // after "Choose doctor" (registration_step=5, set by selectDoctor),
+      // so the gate moves from 6 to 5, and the resulting step is 6
+      // (Payment complete) instead of 7. Condition selection/questionnaire/
+      // report upload no longer exist as wizard steps, so there's no
+      // later step to defer this to — payment success is registration
+      // completion, full stop.
       await query(
-        `UPDATE patients SET registration_step = 7, registration_complete = TRUE
+        `UPDATE patients SET registration_step = 6, registration_complete = TRUE
          FROM payments p WHERE p.patient_id = patients.id AND p.razorpay_order_id = $1
-         AND patients.registration_step = 6`,
+         AND patients.registration_step = 5`,
         [orderId]
       );
 
@@ -442,10 +418,13 @@ const verifyPayment = async (req, res) => {
        FROM payments p WHERE p.appointment_id = a.id AND p.razorpay_order_id = $1`,
       [razorpayOrderId]
     );
+    // Same payment-reorder change as razorpayWebhook above — gate on
+    // registration_step=5 ("Choose doctor" done, Payment is next), land
+    // on 6 ("Payment" done = registration complete).
     await query(
-      `UPDATE patients SET registration_step = 7, registration_complete = TRUE
+      `UPDATE patients SET registration_step = 6, registration_complete = TRUE
        FROM payments p WHERE p.patient_id = patients.id AND p.razorpay_order_id = $1
-       AND patients.registration_step = 6`,
+       AND patients.registration_step = 5`,
       [razorpayOrderId]
     );
 
@@ -458,7 +437,7 @@ const verifyPayment = async (req, res) => {
 };
 
 // downloadInvoice REMOVED — confirmed dead code. No route in
-// src/routes/index.js references doctorController.downloadInvoice;
+// src/routes/index.js references doctorAccountController.downloadInvoice;
 // receiptController.downloadOpinionReceipt is the only live receipt/
 // invoice handler.
 
@@ -573,7 +552,7 @@ const updateAppointment = async (req, res) => {
 
 module.exports = {
   listDoctors, getDoctorProfile, getDoctorAppointments, getWeeklyOpinionStats,
-  getDoctorPatientView, saveOpinionNotes,
+  getDoctorPatientView,
   bookAppointment,
   updateProfile, getAppointmentDetail, updateAppointment,
   razorpayWebhook, verifyPayment,
