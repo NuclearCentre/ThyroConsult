@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer, Legend } from 'recharts';
-import { patientAPI, receiptAPI } from '../../api';
+import { patientAPI, receiptAPI, paymentAPI, conditionAPI } from '../../api';
 import { PatientSidebar } from '../../components/common/Sidebar';
 import { Badge, StatusBadge, EmptyState, Spinner, SectionHeader, SecureBadge } from '../../components/common/index';
 import { useAuth } from '../../context/AuthContext';
 import ConditionSelection from '../../components/ConditionSelection';
+import SelectDoctor from '../../components/SelectDoctor';
+import { loadRazorpayScript } from '../../utils/loadRazorpay';
 import { HypoQuestionnaire } from '../../components/HypoQuestionnaire';
 import HyperQuestionnaire from '../../components/HyperQuestionnaire';
 // TcQuestionnaire comes from its own standalone file — the old, much
@@ -32,17 +34,30 @@ const CONDITION_COLOURS = {
 };
 
 // ─── Add Condition Flow (modal overlay) ───────────────────
-const SUB = { SELECT: 'select', CONDITION_Q: 'condition_q', DONE: 'done' };
+const SUB = { SELECT: 'select', DOCTOR: 'doctor', PAYMENT: 'payment', CONDITION_Q: 'condition_q', DONE: 'done' };
+
+const CONDITION_LABELS_FOR_PAYMENT = {
+  hypothyroidism: 'Hypothyroidism',
+  hyperthyroidism: 'Hyperthyroidism',
+  thyroid_cancer: 'Thyroid Cancer',
+  nodule: 'Thyroid Nodule',
+};
 
 const AddConditionFlow = ({ patient, resumeEpisode, onClose, onDone }) => {
   // resumeEpisode = { id, condition } when opened via "Resume" on an
-  // existing in-progress episode — skips SELECT entirely and drops the
-  // patient straight back into their questionnaire, at whatever page it
-  // autosaved to. Undefined/null for a genuine "+ Add condition" click,
-  // which starts at SELECT exactly as before.
+  // existing in-progress episode — skips straight to the questionnaire,
+  // since a resumed episode has necessarily already cleared Select
+  // Doctor + Payment the first time through. Undefined/null for a
+  // genuine "+ Add condition" click, which now starts at SELECT and
+  // must go through DOCTOR and PAYMENT before reaching the questionnaire
+  // — this is the actual fix: this modal used to skip straight from
+  // ConditionSelection to the questionnaire, which is what let patients
+  // through without seeing Select Doctor or Payment at all.
   const [sub, setSub]             = useState(resumeEpisode ? SUB.CONDITION_Q : SUB.SELECT);
   const [condition, setCondition] = useState(resumeEpisode?.condition || '');
   const [episodeId, setEpisodeId] = useState(resumeEpisode?.id || null);
+  const [paying, setPaying]       = useState(false);
+  const [paymentError, setPaymentError] = useState('');
 
   const ConditionQComponent =
     condition === 'hypothyroidism'  ? HypoQuestionnaire  :
@@ -63,6 +78,88 @@ const AddConditionFlow = ({ patient, resumeEpisode, onClose, onDone }) => {
     onDone();
   };
 
+  // ── Select Doctor step ──
+  // ConditionSelection already created the episode with a provisional
+  // doctor (patient's registration-time default, or none). Re-calling
+  // selectCondition here with the doctor the patient actually chose
+  // overwrites primary_doctor_id on the episode — its existing
+  // ON CONFLICT...COALESCE logic only fills in a doctor if one isn't
+  // already set, so this explicit re-call is what makes the patient's
+  // choice here actually stick.
+  const handleDoctorSelected = async (chosenDoctorId) => {
+    try {
+      await conditionAPI.selectCondition({ condition, doctorId: chosenDoctorId });
+      setSub(SUB.PAYMENT);
+    } catch (err) {
+      console.error('Failed to assign chosen doctor to episode:', err);
+      setPaymentError('Could not confirm your doctor choice. Please try again.');
+    }
+  };
+
+  // ── Payment step ──
+  // Uses the 'initial' scenario (paymentController.resolvePayment) —
+  // this is a brand-new episode with no questionnaire content yet, gated
+  // before the questionnaire is reachable at all. Distinct from the
+  // S1/S2/S3 follow-up payments handled elsewhere in the dashboard.
+  const handlePay = async () => {
+    setPaying(true);
+    setPaymentError('');
+    try {
+      await loadRazorpayScript();
+      const order = await paymentAPI.createOrder({
+        episodeId,
+        scenario: 'initial',
+        conditionType: condition,
+      });
+
+      // DEV-ONLY bypass fired server-side (paymentController.createOrder,
+      // NODE_ENV !== 'production') — payment is already marked paid and
+      // the episode already unlocked, nothing to check out. Skip straight
+      // to the questionnaire rather than opening a Razorpay modal against
+      // a fake order id, which would just fail in the browser.
+      if (order.testMode) {
+        console.warn('DEV MODE: payment bypassed —', order.message);
+        setSub(SUB.CONDITION_Q);
+        return;
+      }
+
+      const options = {
+        key:      order.keyId,
+        amount:   order.amountPaise,
+        currency: 'INR',
+        name:     'ThyroConsult',
+        description: `Online opinion — ${CONDITION_LABELS_FOR_PAYMENT[condition]}`,
+        order_id: order.orderId,
+        prefill: {
+          name:    patient?.firstName,
+          email:   patient?.email,
+          contact: patient?.mobile,
+        },
+        theme: { color: '#185FA5' },
+        handler: async (response) => {
+          await paymentAPI.verifyPayment({
+            razorpayOrderId:   response.razorpay_order_id,
+            razorpayPaymentId: response.razorpay_payment_id,
+            razorpaySignature: response.razorpay_signature,
+          });
+          setSub(SUB.CONDITION_Q);
+        },
+      };
+
+      const rzp = new window.Razorpay(options);
+      rzp.on('payment.failed', () => {
+        setPaying(false);
+        setPaymentError('Payment failed. Please try again.');
+      });
+      rzp.open();
+    } catch (err) {
+      console.error('Payment error:', err);
+      setPaymentError('Could not start payment. Please try again.');
+    } finally {
+      setPaying(false);
+    }
+  };
+
   return (
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.45)', zIndex:1000, display:'flex', alignItems:'flex-start', justifyContent:'center', overflowY:'auto', padding:'40px 16px' }}>
       <div style={{ background:'var(--surface)', borderRadius:16, width:'100%', maxWidth:760, boxShadow:'0 8px 40px rgba(0,0,0,0.18)', minHeight:400 }}>
@@ -78,8 +175,31 @@ const AddConditionFlow = ({ patient, resumeEpisode, onClose, onDone }) => {
             <ConditionSelection
               patientId={patient?.id}
               doctorId={patient?.primaryDoctorId}
-              onComplete={({ condition: c, episodeId: eid }) => { setCondition(c); setEpisodeId(eid); setSub(SUB.CONDITION_Q); }}
+              onComplete={({ condition: c, episodeId: eid }) => { setCondition(c); setEpisodeId(eid); setSub(SUB.DOCTOR); }}
             />
+          )}
+          {sub === SUB.DOCTOR && (
+            <SelectDoctor
+              condition={condition}
+              onComplete={handleDoctorSelected}
+              onBack={() => setSub(SUB.SELECT)}
+            />
+          )}
+          {sub === SUB.PAYMENT && (
+            <div style={{ textAlign: 'center', padding: '32px 0' }}>
+              <div style={{ fontFamily:'var(--font-display)', fontSize:18, marginBottom: 8 }}>Payment</div>
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 24 }}>
+                Complete payment to unlock the {CONDITION_LABELS_FOR_PAYMENT[condition]} questionnaire.
+              </div>
+              {paymentError && (
+                <div style={{ padding: 10, background: '#fee2e2', color: '#991b1b', borderRadius: 6, fontSize: 13, marginBottom: 16 }}>
+                  {paymentError}
+                </div>
+              )}
+              <button className="btn btn-primary btn-lg" onClick={handlePay} disabled={paying}>
+                {paying ? 'Opening payment…' : 'Pay & continue →'}
+              </button>
+            </div>
           )}
           {sub === SUB.CONDITION_Q && episodeId && ConditionQComponent && (
             <ConditionQComponent

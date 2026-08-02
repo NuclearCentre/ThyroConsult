@@ -215,6 +215,11 @@ router.post('/payment/verify',
 router.post('/payment/webhook',
   paymentController.handleWebhook);
 
+// Patient-facing — used by the new "Select Doctor" screen to show each
+// doctor's actual fee for the chosen condition before the patient picks.
+router.get('/payment/doctor-fee',
+  verifyToken, requireRole('patient'), paymentController.getDoctorFeeForPatient);
+
 // /payment/followup/create-order and /payment/followup/verify — CORRECTION:
 // paymentController.createOrder already handles S1/S2/S3 gating itself via
 // its `scenario` body param (resolvePayment() branches on 's1'/'s2'/'s3'
@@ -408,6 +413,10 @@ router.get ('/admin/condition-fees',
   verifyToken, requireRole('admin'), paymentController.getConditionFees);
 router.put ('/admin/condition-fees/:conditionType',
   verifyToken, requireRole('admin'), sessionTimeout, paymentController.updateConditionFee);
+router.get ('/admin/doctors/:doctorId/fees',
+  verifyToken, requireRole('admin'), paymentController.getDoctorFees);
+router.put ('/admin/doctors/:doctorId/fees/:conditionType',
+  verifyToken, requireRole('admin'), sessionTimeout, paymentController.updateDoctorFee);
 // getAuditLog / exportAuditLog / getEncryptionStatus / getPaymentReport were
 // fully implemented in adminController.js but had no routes at all —
 // AdminPortal.js's audit log, security, and payment-report views have been

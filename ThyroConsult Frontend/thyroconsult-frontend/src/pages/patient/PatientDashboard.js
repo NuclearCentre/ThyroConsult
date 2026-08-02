@@ -11,6 +11,7 @@ import { patientAPI, followUpAPI, paymentAPI } from '../../api';
 import MissingReports      from '../../components/MissingReports';
 import InvestigationUpload from '../../components/InvestigationUpload';
 import FollowUpVisit       from '../../components/FollowUpVisit';
+import AddConditionFlow    from '../../components/AddConditionFlow';
 import { loadRazorpayScript } from '../../utils/loadRazorpay';
 
 const CONDITION_LABELS = {
@@ -36,6 +37,7 @@ export default function PatientDashboard({ patient }) {
   const [loading,     setLoading]     = useState(true);
   const [activeView,  setActiveView]  = useState(null); // { type, episodeId }
   const [payingFor,   setPayingFor]   = useState(null); // episodeId currently processing payment
+  const [addingCondition, setAddingCondition] = useState(false); // "+ Add Condition" flow active
 
   // ── Load all episodes ──
   const loadEpisodes = useCallback(async () => {
@@ -120,6 +122,17 @@ export default function PatientDashboard({ patient }) {
   const openView = (type, episodeId) => setActiveView({ type, episodeId });
   const closeView = () => { setActiveView(null); loadEpisodes(); };
 
+  // ── "+ Add Condition" flow — takes over the whole screen while active,
+  // same pattern as the activeView router below ──
+  if (addingCondition) {
+    return (
+      <AddConditionFlow
+        patient={patient}
+        onDone={() => { setAddingCondition(false); loadEpisodes(); }}
+      />
+    );
+  }
+
   // ── Child view router ──
   if (activeView) {
     const ep = episodes.find(e => e.id === activeView.episodeId);
@@ -138,6 +151,13 @@ export default function PatientDashboard({ patient }) {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 0', borderBottom: '0.5px solid var(--border)', marginBottom: 20 }}>
         <span style={{ fontSize: 16, fontWeight: 500 }}>ThyroConsult</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button
+            onClick={() => setAddingCondition(true)}
+            style={{ fontSize: 12, padding: '6px 12px', border: '0.5px solid var(--border-info)', borderRadius: 8, background: 'var(--bg-info)', color: 'var(--text-info)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontWeight: 500 }}
+          >
+            <i className="ti ti-plus" aria-hidden="true" />
+            Add Condition
+          </button>
           <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{patient.name}</span>
           <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#E6F1FB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 500, color: '#185FA5' }}>
             {patient.name?.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
@@ -151,6 +171,20 @@ export default function PatientDashboard({ patient }) {
       </div>
 
       {loading && <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Loading...</div>}
+
+      {!loading && activeEpisodes.length === 0 && completedEpisodes.length === 0 && (
+        <div style={{ textAlign: 'center', padding: '40px 20px', border: '1px dashed var(--border)', borderRadius: 12, marginBottom: 20 }}>
+          <div style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 16 }}>
+            You don't have any online opinions yet.
+          </div>
+          <button
+            onClick={() => setAddingCondition(true)}
+            style={{ fontSize: 13, padding: '10px 20px', border: 'none', borderRadius: 8, background: 'var(--bg-success)', color: 'var(--text-success)', cursor: 'pointer', fontWeight: 500 }}
+          >
+            + Get your first online opinion
+          </button>
+        </div>
+      )}
 
       {/* ── Active episodes ── */}
       {activeEpisodes.length > 0 && (

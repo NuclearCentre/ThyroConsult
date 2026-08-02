@@ -53,8 +53,18 @@ async function getDaysElapsed(episodeId) {
   );
 }
 
-// Fetch base fee in paise for a condition type from condition_fees table
-async function getBaseFee(conditionType) {
+// Fetch base fee in paise for a condition type, preferring a doctor-specific
+// override (doctor_fees) and falling back to the global default
+// (condition_fees) when the doctor has no custom fee set for this condition.
+async function getBaseFee(conditionType, doctorId) {
+  if (doctorId) {
+    const { rows: docRows } = await pool.query(
+      `SELECT base_fee_paise FROM doctor_fees
+       WHERE doctor_id = $1 AND condition_type = $2 AND is_active = TRUE`,
+      [doctorId, conditionType]
+    );
+    if (docRows[0]) return docRows[0].base_fee_paise;
+  }
   const { rows } = await pool.query(
     `SELECT base_fee_paise FROM condition_fees
      WHERE condition_type = $1 AND is_active = TRUE`,
@@ -66,10 +76,17 @@ async function getBaseFee(conditionType) {
 
 // Resolve payment requirement based on scenario and days elapsed.
 // Returns null if no payment needed, otherwise { type, discountPct, amountPaise }
+//   initial: always full fee — the new pre-questionnaire "Select Doctor ->
+//            Payment" step, gates a brand-new episode before any
+//            questionnaire content exists. Distinct from s1/s2/s3, which
+//            are all POST-submission follow-up scenarios.
 //   S1: ≤14 days → free (null) | >14 days → full fee
 //   S2: ≤28 days → 50% fee    | >28 days → full fee
 //   S3: always   → full fee
 function resolvePayment(scenario, daysElapsed, baseFee) {
+  if (scenario === 'initial') {
+    return { type: 'initial_full', discountPct: 0, amountPaise: baseFee };
+  }
   if (scenario === 's1') {
     if (daysElapsed !== null && daysElapsed <= 14) return null;
     return { type: 's1_full', discountPct: 0, amountPaise: baseFee };
@@ -88,7 +105,12 @@ function resolvePayment(scenario, daysElapsed, baseFee) {
 
 // Shared episode unlock — called by both webhook and verify
 async function unlockEpisode(episodeId, paymentType) {
-  if (paymentType === 's1_full') {
+  if (paymentType === 'initial_full') {
+    await pool.query(
+      `UPDATE patient_condition_episodes SET initial_payment_done = TRUE WHERE id = $1`,
+      [episodeId]
+    );
+  } else if (paymentType === 's1_full') {
     await pool.query(
       `UPDATE patient_condition_episodes SET has_missing_reports = FALSE WHERE id = $1`,
       [episodeId]
@@ -187,7 +209,7 @@ async function getGateStatus(req, res) {
     const patientId     = req.user.patientId;
 
     const { rows: epRows } = await pool.query(
-      `SELECT id, patient_id, condition, submitted_at, status,
+      `SELECT id, patient_id, condition, submitted_at, status, primary_doctor_id,
               has_missing_reports, has_advised_investigations,
               investigation_payment_done, followup_payment_done
        FROM patient_condition_episodes
@@ -201,9 +223,10 @@ async function getGateStatus(req, res) {
       ? Math.floor((Date.now() - new Date(ep.submitted_at).getTime()) / 86400000)
       : null;
 
-    // condition_fees uses short codes — translate the episode's full-word
-    // condition before looking up the fee (see CONDITION_SHORT_CODE above).
-    const baseFee = await getBaseFee(CONDITION_SHORT_CODE[ep.condition] || ep.condition);
+    // condition_fees/doctor_fees use short codes — translate the episode's
+    // full-word condition before looking up the fee (see CONDITION_SHORT_CODE
+    // above). Doctor-specific fee (if any) takes priority over the default.
+    const baseFee = await getBaseFee(CONDITION_SHORT_CODE[ep.condition] || ep.condition, ep.primary_doctor_id);
 
     // Check for existing successful payment on this episode
     const { rows: paidRows } = await pool.query(
@@ -271,21 +294,23 @@ async function createOrder(req, res) {
     const { episodeId, scenario, conditionType } = req.body;
     const patientId = req.user.patientId;
 
-    // Prevent duplicate: block if already paid for this episode
-    const { rows: existing } = await pool.query(
-      `SELECT id FROM followup_payments WHERE episode_id = $1 AND status = 'paid'`,
-      [episodeId]
+    // Fee depends on which doctor this episode is assigned to — derive it
+    // from the episode itself (server-side, trusted) rather than the
+    // request body, same as patient/episode ownership is already checked
+    // server-side elsewhere.
+    const { rows: epRows } = await pool.query(
+      `SELECT primary_doctor_id FROM patient_condition_episodes WHERE id = $1 AND patient_id = $2`,
+      [episodeId, patientId]
     );
-    if (existing[0]) {
-      return res.status(409).json({ error: 'Payment already completed for this episode' });
-    }
+    if (!epRows[0]) return res.status(404).json({ error: 'Episode not found' });
+    const doctorId = epRows[0].primary_doctor_id;
 
     const daysElapsed = await getDaysElapsed(episodeId);
     // conditionType arrives from the client here — normalize in case it's
     // sent as the full-word episode value rather than condition_fees'
     // short code (haven't yet confirmed which the frontend actually sends).
     const feeCode      = CONDITION_SHORT_CODE[conditionType] || conditionType;
-    const baseFee      = await getBaseFee(feeCode);
+    const baseFee      = await getBaseFee(feeCode, doctorId);
     const resolved     = resolvePayment(scenario, daysElapsed, baseFee);
 
     // S1 within free window — no payment needed
@@ -293,19 +318,74 @@ async function createOrder(req, res) {
       return res.json({ free: true, message: 'No payment required — within free window' });
     }
 
-    // Create Razorpay order
-    const order = await razorpay.orders.create({
-      amount:   resolved.amountPaise,
-      currency: 'INR',
-      receipt:  `ep${episodeId}_${scenario}_${Date.now()}`,
-      notes: {
-        patient_id:     String(patientId),
-        episode_id:     String(episodeId),
-        condition_type: conditionType,
-        scenario,
-        payment_type:   resolved.type,
-      },
-    });
+    // Prevent duplicate: block only if THIS specific payment type is
+    // already paid — not any payment on the episode. A flat episode-wide
+    // check would permanently block every future S1/S2/S3 follow-up
+    // payment the moment the new 'initial' payment succeeded, since they
+    // all share the same episode_id. Each payment type is its own gate.
+    const { rows: alreadyPaid } = await pool.query(
+      `SELECT id FROM followup_payments WHERE episode_id = $1 AND payment_type = $2 AND status = 'paid'`,
+      [episodeId, resolved.type]
+    );
+    if (alreadyPaid[0]) {
+      return res.status(409).json({ error: 'Payment already completed for this episode' });
+    }
+
+    // Create Razorpay order — with a DEV-ONLY fallback matching the same
+    // pattern already used in doctorAccountController.bookAppointment.
+    // Gated on NODE_ENV !== 'production' so this can never silently skip
+    // real payment collection outside local/test environments — this
+    // marks the payment as paid immediately and unlocks the episode
+    // without a real Razorpay checkout, purely for local testing where
+    // Razorpay test keys aren't configured or reachable.
+    let order;
+    let devBypass = false;
+    try {
+      order = await razorpay.orders.create({
+        amount:   resolved.amountPaise,
+        currency: 'INR',
+        receipt:  `ep${episodeId}_${scenario}_${Date.now()}`,
+        notes: {
+          patient_id:     String(patientId),
+          episode_id:     String(episodeId),
+          condition_type: conditionType,
+          scenario,
+          payment_type:   resolved.type,
+        },
+      });
+    } catch (rzpErr) {
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn('Razorpay order creation failed — using DEV bypass (NODE_ENV != production):', rzpErr.message);
+        order = { id: `DEV_ORDER_${Date.now()}` };
+        devBypass = true;
+      } else {
+        throw rzpErr;
+      }
+    }
+
+    if (devBypass) {
+      // No real checkout to redirect to — mark paid and unlock immediately.
+      const { rows: devRows } = await pool.query(
+        `INSERT INTO followup_payments
+           (patient_id, episode_id, payment_type, condition_type,
+            base_fee_paise, discount_pct, amount_paise,
+            razorpay_order_id, razorpay_payment_id, status, paid_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'paid', NOW())
+         RETURNING id`,
+        [
+          patientId, episodeId, resolved.type, conditionType,
+          baseFee, resolved.discountPct, resolved.amountPaise,
+          order.id, `DEV_PAYMENT_${Date.now()}`,
+        ]
+      );
+      await unlockEpisode(episodeId, resolved.type);
+      return res.json({
+        testMode:    true,
+        message:     'DEV MODE — payment bypassed, episode unlocked without real Razorpay checkout.',
+        paymentDbId: devRows[0].id,
+        amountPaise: resolved.amountPaise,
+      });
+    }
 
     // Save pending order to DB
     const { rows } = await pool.query(
@@ -481,6 +561,101 @@ async function updateConditionFee(req, res) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────
+// ADMIN — GET /api/admin/doctors/:doctorId/fees
+// Returns this doctor's fee overrides plus the global default for
+// comparison, per condition — so admin UI can show "using default" vs
+// "custom" at a glance.
+// ─────────────────────────────────────────────────────────────
+async function getDoctorFees(req, res) {
+  try {
+    const { doctorId } = req.params;
+    const { rows: defaults } = await pool.query(
+      `SELECT condition_type, base_fee_paise FROM condition_fees WHERE is_active = TRUE ORDER BY condition_type`
+    );
+    const { rows: overrides } = await pool.query(
+      `SELECT condition_type, base_fee_paise, updated_at FROM doctor_fees
+       WHERE doctor_id = $1 AND is_active = TRUE`,
+      [doctorId]
+    );
+    const overrideMap = Object.fromEntries(overrides.map(r => [r.condition_type, r]));
+
+    res.json(defaults.map(d => ({
+      conditionType:      d.condition_type,
+      defaultFeePaise:     d.base_fee_paise,
+      defaultFeeRupees:    Math.round(d.base_fee_paise / 100),
+      customFeePaise:      overrideMap[d.condition_type]?.base_fee_paise ?? null,
+      customFeeRupees:     overrideMap[d.condition_type] ? Math.round(overrideMap[d.condition_type].base_fee_paise / 100) : null,
+      effectiveFeePaise:   overrideMap[d.condition_type]?.base_fee_paise ?? d.base_fee_paise,
+    })));
+  } catch (err) {
+    console.error('getDoctorFees error:', err);
+    res.status(500).json({ error: 'Could not fetch doctor fees' });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// ADMIN — PUT /api/admin/doctors/:doctorId/fees/:conditionType
+// Body: { baseFeeRupees } — set a custom fee for this doctor+condition.
+// Body: { baseFeeRupees: null } — clear the override, revert to default.
+// ─────────────────────────────────────────────────────────────
+async function updateDoctorFee(req, res) {
+  try {
+    const { doctorId, conditionType } = req.params;
+    const { baseFeeRupees } = req.body;
+
+    if (baseFeeRupees === null) {
+      await pool.query(
+        `UPDATE doctor_fees SET is_active = FALSE, updated_at = NOW()
+         WHERE doctor_id = $1 AND condition_type = $2`,
+        [doctorId, conditionType]
+      );
+      return res.json({ success: true, conditionType, customFeeRupees: null, revertedToDefault: true });
+    }
+
+    if (!baseFeeRupees || Number(baseFeeRupees) <= 0) {
+      return res.status(400).json({ error: 'Fee must be a positive number' });
+    }
+    const paise = Math.round(Number(baseFeeRupees) * 100);
+
+    await pool.query(
+      `INSERT INTO doctor_fees (doctor_id, condition_type, base_fee_paise, is_active, updated_by)
+       VALUES ($1, $2, $3, TRUE, $4)
+       ON CONFLICT (doctor_id, condition_type) DO UPDATE
+         SET base_fee_paise = EXCLUDED.base_fee_paise, is_active = TRUE,
+             updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+      [doctorId, conditionType, paise, req.user.id]
+    );
+
+    res.json({ success: true, conditionType, baseFeeRupees: Number(baseFeeRupees), paise });
+  } catch (err) {
+    console.error('updateDoctorFee error:', err);
+    res.status(500).json({ error: 'Could not update doctor fee' });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// PATIENT-FACING — GET /api/payments/doctor-fee?doctorId=&conditionType=
+// Used by the new "Select Doctor" screen to show the actual price for
+// each doctor before the patient picks one. conditionType is the
+// full-word episode value (hypothyroidism etc) — normalized here same
+// as elsewhere in this file.
+// ─────────────────────────────────────────────────────────────
+async function getDoctorFeeForPatient(req, res) {
+  try {
+    const { doctorId, conditionType } = req.query;
+    if (!doctorId || !conditionType) {
+      return res.status(400).json({ error: 'doctorId and conditionType are required' });
+    }
+    const feeCode = CONDITION_SHORT_CODE[conditionType] || conditionType;
+    const baseFee = await getBaseFee(feeCode, doctorId);
+    res.json({ doctorId: Number(doctorId), conditionType, baseFeePaise: baseFee, baseFeeRupees: Math.round(baseFee / 100) });
+  } catch (err) {
+    console.error('getDoctorFeeForPatient error:', err);
+    res.status(500).json({ error: 'Could not fetch fee' });
+  }
+}
+
 module.exports = {
   getGateStatus,
   createOrder,
@@ -488,4 +663,7 @@ module.exports = {
   handleWebhook,
   getConditionFees,
   updateConditionFee,
+  getDoctorFees,
+  updateDoctorFee,
+  getDoctorFeeForPatient,
 };

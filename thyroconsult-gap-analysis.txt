@@ -1,0 +1,169 @@
+==========================================================================================
+LAB PANEL GAP ANALYSIS (canonical 6-field shape: status/value/unit/date/ref_low/ref_high)
+==========================================================================================
+
+--- TSH ---
+  hypo    : has [NONE]  -> MISSING: status, value, unit, date, ref_low, ref_high
+  hyper   : has [status, value, date, ref_low, ref_high]  -> MISSING: unit
+  tc      : has [status, value, unit, date, ref_low, ref_high]  -> OK
+  nodule  : has [status, value, date, ref_low, ref_high]  -> MISSING: unit
+
+--- FT3 ---
+  hypo    : has [NONE]  -> MISSING: status, value, unit, date, ref_low, ref_high
+  hyper   : has [status, value, unit, date, ref_low, ref_high]  -> OK
+  tc      : has [status, value, unit, date, ref_low, ref_high]  -> OK
+  nodule  : has [status, value, unit, date, ref_low, ref_high]  -> OK
+
+--- FT4 ---
+  hypo    : has [NONE]  -> MISSING: status, value, unit, date, ref_low, ref_high
+  hyper   : has [status, value, unit, date, ref_low, ref_high]  -> OK
+  tc      : has [status, value, unit, date, ref_low, ref_high]  -> OK
+  nodule  : has [status, value, unit, date, ref_low, ref_high]  -> OK
+
+--- T3 ---
+  hypo    : has [status, value, unit, date, ref_low, ref_high]  -> OK
+  hyper   : has [status, value, unit, date, ref_low, ref_high]  -> OK
+  tc      : has [status, value, unit, date, ref_low, ref_high]  -> OK
+  nodule  : has [NONE]  -> MISSING: status, value, unit, date, ref_low, ref_high
+
+--- T4 ---
+  hypo    : has [status, value, unit, date, ref_low, ref_high]  -> OK
+  hyper   : has [status, value, unit, date, ref_low, ref_high]  -> OK
+  tc      : has [status, value, unit, date, ref_low, ref_high]  -> OK
+  nodule  : has [NONE]  -> MISSING: status, value, unit, date, ref_low, ref_high
+
+--- TRAB ---
+  hypo    : has [NONE]  -> MISSING: status, value, unit, date, ref_low, ref_high
+  hyper   : has [status, value, unit, date, ref_low, ref_high]  -> OK
+  tc      : has [NONE]  -> MISSING: status, value, unit, date, ref_low, ref_high
+  nodule  : has [NONE]  -> MISSING: status, value, unit, date, ref_low, ref_high
+
+--- TSI ---
+  hypo    : has [NONE]  -> MISSING: status, value, unit, date, ref_low, ref_high
+  hyper   : has [status, value, unit, date]  -> MISSING: ref_low, ref_high
+  tc      : has [NONE]  -> MISSING: status, value, unit, date, ref_low, ref_high
+  nodule  : has [NONE]  -> MISSING: status, value, unit, date, ref_low, ref_high
+
+--- ANTITPO ---
+  hypo    : has [status, unit, ref_low, ref_high]  -> MISSING: value, date
+  hyper   : has [status, value, unit, date, ref_low, ref_high]  -> OK
+  tc      : has [status, value, unit, date, ref_low, ref_high]  -> OK
+  nodule  : has [value, date]  -> MISSING: status, unit, ref_low, ref_high
+
+--- ANTITG ---
+  hypo    : has [status, unit, ref_low, ref_high]  -> MISSING: value, date
+  hyper   : has [status, value, unit, date, ref_low, ref_high]  -> OK
+  tc      : has [status, value, unit, date, ref_low, ref_high]  -> OK
+  nodule  : has [value, date]  -> MISSING: status, unit, ref_low, ref_high
+
+--- TG ---
+  hypo    : has [NONE]  -> MISSING: status, value, unit, date, ref_low, ref_high
+  hyper   : has [NONE]  -> MISSING: status, value, unit, date, ref_low, ref_high
+  tc      : has [status, value, date]  -> MISSING: unit, ref_low, ref_high
+  nodule  : has [NONE]  -> MISSING: status, value, unit, date, ref_low, ref_high
+
+--- TGAB ---
+  hypo    : has [NONE]  -> MISSING: status, value, unit, date, ref_low, ref_high
+  hyper   : has [NONE]  -> MISSING: status, value, unit, date, ref_low, ref_high
+  tc      : has [value, date]  -> MISSING: status, unit, ref_low, ref_high
+  nodule  : has [NONE]  -> MISSING: status, value, unit, date, ref_low, ref_high
+
+==========================================================================================
+MEDICATION FIELD GAP ANALYSIS (canonical quartet: name/dose/frequency/since)
+==========================================================================================
+
+--- anaemia ---
+  hypo    : name=anaemia_med_name, freq=anaemia_med_times  -> MISSING: dose, since
+  hyper   : (nothing found)  -> MISSING: name, dose, freq, since
+  tc      : (nothing found)  -> MISSING: name, dose, freq, since
+  nodule  : (nothing found)  -> MISSING: name, dose, freq, since
+
+--- atd ---
+  hypo    : (nothing found)  -> MISSING: name, dose, freq, since
+  hyper   : dose=atd_dose_mg, freq=atd_frequency  -> MISSING: name, since
+  tc      : (nothing found)  -> MISSING: name, dose, freq, since
+  nodule  : (nothing found)  -> MISSING: name, dose, freq, since
+
+--- beta_blocker ---
+  hypo    : (nothing found)  -> MISSING: name, dose, freq, since
+  hyper   : name=beta_blocker_name, dose=beta_blocker_dose, freq=beta_blocker_freq, since=beta_blocker_since_date  -> OK
+  tc      : (nothing found)  -> MISSING: name, dose, freq, since
+  nodule  : (nothing found)  -> MISSING: name, dose, freq, since
+
+--- current ---
+  hypo    : (nothing found)  -> MISSING: name, dose, freq, since
+  hyper   : (nothing found)  -> MISSING: name, dose, freq, since
+  tc      : (nothing found)  -> MISSING: name, dose, freq, since
+  nodule  : name=current_med_name, dose=current_med_dose  -> MISSING: freq, since
+
+--- current_med ---
+  hypo    : (nothing found)  -> MISSING: name, dose, freq, since
+  hyper   : (nothing found)  -> MISSING: name, dose, freq, since
+  tc      : (nothing found)  -> MISSING: name, dose, freq, since
+  nodule  : name=current_med_name, dose=current_med_dose, since=current_med_since_years  -> MISSING: freq
+
+--- diabetes ---
+  hypo    : name=diabetes_med_name, dose=diabetes_med_dose, freq=diabetes_med_times  -> MISSING: since
+  hyper   : since=diabetes_since_months  -> MISSING: name, dose, freq
+  tc      : since=diabetes_since_date  -> MISSING: name, dose, freq
+  nodule  : since=diabetes_since_date  -> MISSING: name, dose, freq
+
+--- dyslipidaemia ---
+  hypo    : name=dyslipidaemia_med_name, dose=dyslipidaemia_med_dose, freq=dyslipidaemia_med_times, since=dyslipidaemia_since_date  -> OK
+  hyper   : since=dyslipidaemia_since_months  -> MISSING: name, dose, freq
+  tc      : since=dyslipidaemia_since_date  -> MISSING: name, dose, freq
+  nodule  : since=dyslipidaemia_since_date  -> MISSING: name, dose, freq
+
+--- htn ---
+  hypo    : (nothing found)  -> MISSING: name, dose, freq, since
+  hyper   : (nothing found)  -> MISSING: name, dose, freq, since
+  tc      : (nothing found)  -> MISSING: name, dose, freq, since
+  nodule  : since=htn_since_date  -> MISSING: name, dose, freq
+
+--- iodine ---
+  hypo    : (nothing found)  -> MISSING: name, dose, freq, since
+  hyper   : (nothing found)  -> MISSING: name, dose, freq, since
+  tc      : (nothing found)  -> MISSING: name, dose, freq, since
+  nodule  : name=iodine_med_name  -> MISSING: dose, freq, since
+
+--- iodine_med ---
+  hypo    : (nothing found)  -> MISSING: name, dose, freq, since
+  hyper   : (nothing found)  -> MISSING: name, dose, freq, since
+  tc      : (nothing found)  -> MISSING: name, dose, freq, since
+  nodule  : name=iodine_med_name, since=iodine_med_since_date  -> MISSING: dose, freq
+
+--- levo ---
+  hypo    : name=levo_drug_name  -> MISSING: dose, freq, since
+  hyper   : (nothing found)  -> MISSING: name, dose, freq, since
+  tc      : name=levo_drug_name, since=levo_since_years  -> MISSING: dose, freq
+  nodule  : (nothing found)  -> MISSING: name, dose, freq, since
+
+--- osteoporosis ---
+  hypo    : name=osteoporosis_med_name, freq=osteoporosis_med_times  -> MISSING: dose, since
+  hyper   : (nothing found)  -> MISSING: name, dose, freq, since
+  tc      : name=osteoporosis_med_name, freq=osteoporosis_med_freq  -> MISSING: dose, since
+  nodule  : (nothing found)  -> MISSING: name, dose, freq, since
+
+--- pcos ---
+  hypo    : name=pcos_med_name, dose=pcos_med_dose, since=pcos_since_date  -> MISSING: freq
+  hyper   : since=pcos_since_months  -> MISSING: name, dose, freq
+  tc      : name=pcos_med_name, dose=pcos_med_dose, freq=pcos_med_freq, since=pcos_since_date  -> OK
+  nodule  : name=pcos_med_name, dose=pcos_med_dose, freq=pcos_med_freq, since=pcos_since_date  -> OK
+
+--- targeted_tx ---
+  hypo    : (nothing found)  -> MISSING: name, dose, freq, since
+  hyper   : (nothing found)  -> MISSING: name, dose, freq, since
+  tc      : name=targeted_tx_name, dose=targeted_tx_dose, freq=targeted_tx_freq  -> MISSING: since
+  nodule  : (nothing found)  -> MISSING: name, dose, freq, since
+
+--- thyroid ---
+  hypo    : (nothing found)  -> MISSING: name, dose, freq, since
+  hyper   : (nothing found)  -> MISSING: name, dose, freq, since
+  tc      : name=thyroid_med_name, dose=thyroid_med_dose  -> MISSING: freq, since
+  nodule  : name=thyroid_med_name, dose=thyroid_med_dose  -> MISSING: freq, since
+
+--- thyroid_med ---
+  hypo    : (nothing found)  -> MISSING: name, dose, freq, since
+  hyper   : (nothing found)  -> MISSING: name, dose, freq, since
+  tc      : name=thyroid_med_name, dose=thyroid_med_dose, since=thyroid_med_since_years  -> MISSING: freq
+  nodule  : name=thyroid_med_name, dose=thyroid_med_dose, since=thyroid_med_since_years  -> MISSING: freq

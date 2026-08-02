@@ -488,7 +488,7 @@ const HYPO_PAGE_VALIDATORS = {
   B5: (f) => !!f.pregnant,
   C1: (f) => !!f.thyroidDx && (f.thyroidDx !== 'yes' || (!!f.thyroidDxType && !!f.thyroidDxYear)),
   C2a: (f) => !!f.thyroidSurgery && (f.thyroidSurgery !== 'yes' || (!!f.thyroidSurgeryType && !!f.thyroidSurgeryYear)),
-  C2b: (f) => !!f.thyroidRai && (f.thyroidRai !== 'yes' || !!f.thyroidRaiYear),
+  C2b: (f) => !!f.thyroidRai && (f.thyroidRai !== 'yes' || (f.raiAdministrations || []).some(e => e.doseMci && e.date)),
   C3: (f) => !!f.thyroidMed && (f.thyroidMed !== 'yes' || (!!f.thyroidMedBrand && !!f.thyroidMedDose)),
   C4: (f) => !!f.familyThyroid && (f.familyThyroid !== 'yes' || (f.familyThyroidRelatives || []).length > 0),
   C5: (f) => !!f.autoimmune && (f.autoimmune !== 'yes' || Object.values(f.autoimmuneItems || {}).some(v => v?.selected)),
@@ -532,9 +532,11 @@ const HYPO_PAGE_VALIDATORS = {
     return !!item?.status && (item.status !== 'yes' || !!item.side);
   }),
   F24: (f) => !!f.macroglossia,
-  G1: (f) => !!f.onTreatment && (f.onTreatment !== 'yes' || (!!f.treatmentType && !!f.levoBrand && !!f.levoDose)),
+  F25: (f) => !!f.acidity && (f.acidity !== 'yes' || !!f.acidityOnMed),
+  G1: (f) => !(f.levoBrand || f.levoDose || f.levoDrugName) || (!!f.treatmentType && !!f.levoBrand && !!f.levoDose),
   G2: (f) => !!f.doseChanged && (f.doseChanged !== 'yes' || (!!f.doseChangedDate && !!f.doseChangedReason)),
   H1: (f) => !!f.dyslipidaemia && (f.dyslipidaemia !== 'yes' || !!f.dyslipidaemiaOnMed),
+  H6: (f) => !!f.htn && (f.htn !== 'yes' || !!f.htnOnMed),
   H2: (f) => !!f.anaemia && (f.anaemia !== 'yes' || (!!f.anaemiaType && !!f.anaemiaOnMed)),
   H3: (f) => !!f.diabetes && (f.diabetes !== 'yes' || (!!f.diabetesType && !!f.diabetesOnMed)),
   H4: (f) => !!f.pcosPmos && (f.pcosPmos !== 'yes' || (!!f.pcosPmosLabel && !!f.pcosOnMed)),
@@ -577,7 +579,7 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
     // C — Thyroid history
     thyroidDx: '', thyroidDxType: '', thyroidDxYear: '',
     thyroidSurgery: '', thyroidSurgeryType: '', thyroidSurgeryYear: '',
-    thyroidRai: '', thyroidRaiYear: '',
+    thyroidRai: '', thyroidRaiYear: '', raiAdministrations: [],
     thyroidMed: '', thyroidMedName: '', thyroidMedBrand: '', thyroidMedDose: '',
     thyroidMedTiming: '', thyroidMedCompliance: '', thyroidMedSince: {},
     thyroidMedDoseChangedDate: '', thyroidMedDoseChangedReason: '',
@@ -593,6 +595,13 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
     antitpoDone: '', antitpoValue: '', antitpoUnit: '', antitpoDate: '', antitpoRefLow: '', antitpoRefHigh: '', antitpoReports: [],
     antitgDone: '', antitgValue: '', antitgUnit: '', antitgDate: '', antitgRefLow: '', antitgRefHigh: '', antitgReports: [],
     imagingDone: '', imagingTypes: [], imagingDate: '', imagingFinding: '', imagingReport: null,
+    cbcDone: '', cbcDate: '', cbcValues: {}, cbcReports: [],
+    vitB12Done: '', vitB12Value: '', vitB12Unit: '', vitB12Date: '', vitB12RefLow: '', vitB12RefHigh: '', vitB12Reports: [],
+    vitD3Done: '', vitD3Value: '', vitD3Unit: '', vitD3Date: '', vitD3RefLow: '', vitD3RefHigh: '', vitD3Reports: [],
+    srIronDone: '', srIronValue: '', srIronUnit: '', srIronDate: '', srIronRefLow: '', srIronRefHigh: '', srIronReports: [],
+    srFerritinDone: '', srFerritinValue: '', srFerritinUnit: '', srFerritinDate: '', srFerritinRefLow: '', srFerritinRefHigh: '', srFerritinReports: [],
+    tibcDone: '', tibcValue: '', tibcUnit: '', tibcDate: '', tibcRefLow: '', tibcRefHigh: '', tibcReports: [],
+    transferrinSatDone: '', transferrinSatValue: '', transferrinSatUnit: '', transferrinSatDate: '', transferrinSatRefLow: '', transferrinSatRefHigh: '', transferrinSatReports: [],
 
     // E — Hypo specific
     hypoCauseKnown: '', hypoCause: '', hypoDuration: {},
@@ -626,6 +635,7 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
     reflexes: '', reflexesDuration: {},
     carpalItems: {},  // { pain: { present, side, duration }, numbness: {...}, tingling: {...} }
     macroglossia: '',
+    acidity: '', acidityDuration: {}, acidityOnMed: '', acidityMedName: '', acidityMedDose: '', acidityMedFreq: '', acidityMedSince: {},
 
     // G — Treatment
     onTreatment: '', treatmentType: '', levoDrugName: '', levoBrand: '',
@@ -633,11 +643,16 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
     doseChanged: '', doseChangedDate: '', doseChangedReason: '',
 
     // H — Comorbidities
-    dyslipidaemia: '', dyslipidaemiaDuration: {},
-    anaemia: '', anaemiaType: '',
+    dyslipidaemia: '', dyslipidaemiaDuration: {}, dyslipidaemiaOnMed: '', dyslipidaemiaMedName: '', dyslipidaemiaMedDose: '', dyslipidaemiaMedTimes: '', dyslipidaemiaMedSince: {},
+    anaemia: '', anaemiaType: '', anaemiaDuration: {}, anaemiaOnMed: '', anaemiaMedName: '', anaemiaMedDose: '', anaemiaMedTimes: '', anaemiaMedSince: {},
+    diabetes: '', diabetesType: '', diabetesDuration: {}, diabetesOnMed: '', diabetesMedName: '', diabetesMedDose: '', diabetesMedTimes: '', diabetesMedSince: {},
+    htn: '', htnDuration: {}, htnOnMed: '', htnMedName: '', htnMedDose: '', htnMedFreq: '', htnMedSince: {},
     pcosPmos: '', pcosPmosLabel: '', pcosDuration: {}, pcosOnMed: '',
-    pcosMedName: '', pcosMedDose: '', pcosMedTimes: '',
+    pcosMedName: '', pcosMedDose: '', pcosMedTimes: '', pcosMedSince: {},
     infertility: '',
+    osteoporosis: '', osteoporosisDEXA: '', osteoporosisDuration: {}, osteoporosisOnMed: '', osteoporosisMedName: '', osteoporosisMedDose: '', osteoporosisMedTimes: '', osteoporosisMedSince: {},
+    depressionOnMed: '', depressionMedName: '', depressionMedDose: '', depressionMedFreq: '', depressionMedSince: {},
+    familyCancer: '', familyCancerTypes: [], familyCancerRelative: '',
     additionalNotes: '',
   });
 
@@ -731,6 +746,12 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
   const showPregnancy = !isMale && !hadHysterectomy && !isPostMeno && isMarriedStatus && lmpDaysAgo >= 31;
   const showInfertility = !isMale && !hadHysterectomy && f.maritalStatus === 'married';
 
+  // Note: symptom-triggered investigations (CBC/Vit B12/Vit D3/Sr Calcium/
+  // Iron studies/Blood sugar) are now embedded directly inline within
+  // each triggering symptom screen (F1/F13/F14/F19/F20/F23) rather than
+  // shown as a separate suggestion banner pointing at a later D-module
+  // screen — see HypoInlineLab/HypoCbcPanel usage in those case blocks.
+
   // ── All pages definition ──────────────────────────────
   const allPages = [
     // ── MODULE A ──
@@ -740,7 +761,7 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
     // ── MODULE B (female only) ──
     ...(isMale ? [] : [
       { id: 'B1', module: 'B', title: 'Hysterectomy' },
-      { id: 'B2', module: 'B', title: 'Menopausal status' },
+      ...(!hadHysterectomy ? [{ id: 'B2', module: 'B', title: 'Menopausal status' }] : []),
       ...(!hadHysterectomy && !isPostMeno ? [{ id: 'B3', module: 'B', title: 'Menstrual cycle changes' }] : []),
       ...(!hadHysterectomy && !isPostMeno ? [{ id: 'B4', module: 'B', title: 'Last menstrual period (LMP)' }] : []),
       ...(showPregnancy ? [{ id: 'B5', module: 'B', title: 'Pregnancy' }] : []),
@@ -803,15 +824,17 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
     { id: 'F22', module: 'F', title: 'Delayed reflexes' },
     { id: 'F23', module: 'F', title: 'Carpal tunnel symptoms' },
     { id: 'F24', module: 'F', title: 'Tongue enlargement (macroglossia)' },
+    { id: 'F25', module: 'F', title: 'Acidity / retrosternal chest burn' },
 
     // ── MODULE G ──
     { id: 'G1', module: 'G', title: 'Current treatment' },
-    ...(f.onTreatment === 'yes' ? [{ id: 'G2', module: 'G', title: 'Dose change' }] : []),
+    ...((f.levoBrand || f.levoDose || f.levoDrugName) ? [{ id: 'G2', module: 'G', title: 'Dose change' }] : []),
 
     // ── MODULE H (unified) ──
     { id: 'H1', module: 'H', title: 'Dyslipidaemia / high cholesterol' },
     { id: 'H2', module: 'H', title: 'Anaemia' },
     { id: 'H3', module: 'H', title: 'Diabetes / high blood sugar' },
+    { id: 'H6', module: 'H', title: 'Hypertension / high blood pressure' },
     ...(!isMale ? [{ id: 'H4', module: 'H', title: 'PCOS / PMOS' }] : []),
     ...(showInfertility ? [{ id: 'H5', module: 'H', title: 'Difficulty conceiving' }] : []),
     { id: 'H7', module: 'H', title: 'Osteoporosis / osteopenia' },
@@ -856,12 +879,47 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
   // gone — no more "did the patient fill this in" check needed here,
   // matching TC/Nodule's equivalent logic.
   const dobYear = patientDob ? new Date(patientDob).getFullYear() : (f.dob ? new Date(f.dob).getFullYear() : null);
-  const yearFieldByPage = { C1: 'thyroidDxYear', C2a: 'thyroidSurgeryYear', C2b: 'thyroidRaiYear' };
+  const yearFieldByPage = { C1: 'thyroidDxYear', C2a: 'thyroidSurgeryYear' };
   const currentYearField = yearFieldByPage[page?.id];
   const yearInvalid = dobYear && currentYearField && f[currentYearField] && parseInt(f[currentYearField]) < dobYear;
 
+  // Set once handleSubmit finds an incomplete page — while true, "Next"
+  // stops advancing one page at a time and instead jumps straight to the
+  // next INCOMPLETE page, skipping every already-answered page in
+  // between. Without this, a patient sent back to fix question 5 of 40
+  // would have to click Next through pages 6-40 one at a time just to
+  // reach Submit again — this makes it a direct chain: incomplete ->
+  // incomplete -> incomplete -> Submit, exactly as asked for.
+  const [reviewMode, setReviewMode] = useState(false);
+
+  const findNextIncomplete = (afterIdx) => allPages.findIndex((p, idx) => {
+    if (idx <= afterIdx) return false;
+    const validator = HYPO_PAGE_VALIDATORS[p.id];
+    return validator ? !validator(f) : false;
+  });
+
   const goNext = () => {
     if (yearInvalid) return;
+    if (reviewMode) {
+      // Don't skip ahead if the page they're leaving is itself still
+      // incomplete — without this check, clicking Next before actually
+      // finishing the flagged page would silently jump to a DIFFERENT
+      // incomplete page instead of holding them here.
+      const leavingPage = allPages[currentPage];
+      const leavingValidator = HYPO_PAGE_VALIDATORS[leavingPage?.id];
+      if (leavingValidator && !leavingValidator(f)) {
+        setError('Please answer this question before continuing.');
+        return;
+      }
+      setError('');
+      const nextIdx = findNextIncomplete(currentPage);
+      if (nextIdx !== -1) { setCurrentPage(nextIdx); return; }
+      // No more incomplete pages ahead of where we are — re-run the full
+      // scan (there may still be incomplete pages BEHIND current, e.g. if
+      // the patient navigated backward manually) before actually submitting.
+      handleSubmit();
+      return;
+    }
     if (currentPage < totalPages - 1) setCurrentPage(p => p + 1);
     else handleSubmit();
   };
@@ -882,10 +940,12 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
       return validator ? !validator(f) : false;
     });
     if (incompleteIdx !== -1) {
+      setReviewMode(true);
       setCurrentPage(incompleteIdx);
       setError('Please answer this question before submitting — some questions were left incomplete.');
       return;
     }
+    setReviewMode(false);
     setSaving(true); setError('');
     try {
       await conditionAPI.saveHypoQ(patientId, episodeId, { ...mapFormToDb(f), _draft: false });
@@ -1007,9 +1067,9 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
         <>
           <div style={{ fontSize: 16, fontWeight: 500, marginBottom: 16 }}>What is your menopausal status?</div>
           <HypoRadioGroup value={f.menopauseStatus} onChange={set('menopauseStatus')} options={[
-            ['pre', 'Pre-menopausal'],
+            ['pre', 'Pre-menopausal (in menstruating age)'],
             ['peri', 'Peri-menopausal'],
-            ['post', 'Post-menopausal'],
+            ['post', 'Post-menopausal (menstruation stopped)'],
           ]} />
           {f.menopauseStatus === 'post' && (
             <HypoSubBlock>
@@ -1131,16 +1191,37 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
         </>
       );
 
-      // ── C2b: RAI ──
+      // ── C2b: RAI (repeatable — patient may have received it more than once) ──
       case 'C2b': return (
         <>
           <div style={{ fontSize: 16, fontWeight: 500, marginBottom: 16 }}>Have you received radioiodine (RAI) therapy in the past?</div>
           <HypoRadioGroup value={f.thyroidRai} onChange={set('thyroidRai')} options={[['no', 'No'], ['unsure', 'Unsure'], ['yes', 'Yes']]} />
           {f.thyroidRai === 'yes' && (
             <HypoSubBlock>
-              <HypoField label="Year of RAI therapy">
-                <HypoYearInput value={f.thyroidRaiYear} onChange={set('thyroidRaiYear')} dob={f.dob} />
-              </HypoField>
+              {(f.raiAdministrations || []).map((entry, i) => (
+                <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-end', marginBottom: 8 }}>
+                  <HypoField label={`Dose ${i + 1} (mCi)`}>
+                    <HypoTextInput type="number" min="0" step="0.1" value={entry.doseMci}
+                      onChange={val => set('raiAdministrations')((f.raiAdministrations || []).map((e, j) => j === i ? { ...e, doseMci: val } : e))} />
+                  </HypoField>
+                  <HypoField label="Date">
+                    <HypoDateInput value={entry.date}
+                      onChange={val => set('raiAdministrations')((f.raiAdministrations || []).map((e, j) => j === i ? { ...e, date: val } : e))} />
+                  </HypoField>
+                  <button type="button" onClick={() => set('raiAdministrations')((f.raiAdministrations || []).filter((_, j) => j !== i))}
+                    style={{ background: 'none', border: 'none', color: 'var(--red-500)', cursor: 'pointer', fontSize: 13, paddingBottom: 8 }}>
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <button type="button"
+                onClick={() => set('raiAdministrations')([...(f.raiAdministrations || []), { doseMci: '', date: '' }])}
+                style={{ fontSize: 13, color: 'var(--teal-600)', background: 'none', border: '1px dashed var(--teal-300)', borderRadius: 6, padding: '6px 12px', cursor: 'pointer', marginTop: 4 }}>
+                + Add {(f.raiAdministrations || []).length ? 'another' : ''} RAI dose
+              </button>
+              {(f.raiAdministrations || []).some(e => e.doseMci && e.date) && (
+                <HypoOutputBox text={`H/o RAI therapy — ${(f.raiAdministrations || []).filter(e => e.doseMci && e.date).map(e => `${e.doseMci} mCi (${new Date(e.date).toLocaleDateString('en-IN')})`).join(', ')}`} />
+              )}
             </HypoSubBlock>
           )}
         </>
@@ -1349,6 +1430,7 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
         </>
       );
 
+      // ── D8: CBC (full panel) ──
       // ── D10: Imaging ──
       case 'D10': return (
         <>
@@ -1462,6 +1544,27 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
             <HypoRadioGroup value={f.fatigueSeverity} onChange={set('fatigueSeverity')} horizontal
               options={[['mild', 'Mild'], ['moderate', 'Moderate'], ['severe', 'Severe']]} />
           </HypoField>
+          <div style={{ fontSize: 12, fontWeight: 600, margin: '16px 0 8px', color: 'var(--text-secondary)' }}>
+            Recommended investigations for this symptom
+          </div>
+          <HypoCbcPanel f={f} set={set} patientId={patientId} episodeId={episodeId} />
+          <HypoInlineLab label="Vitamin B12" field="vitB12" unit="pg/mL" f={f} set={set} />
+          <HypoInlineLab label="Vitamin D3 (25-OH)" field="vitD3" unit="ng/mL" f={f} set={set} />
+          <HypoInlineLab label="Serum Calcium" field="srCalcium" unit="mg/dL" f={f} set={set} />
+          {(() => {
+            const hb = parseFloat(f.cbcValues?.haemoglobin?.value);
+            return !isNaN(hb) && hb < 10 ? (
+              <>
+                <div style={{ fontSize: 12, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '8px 10px', margin: '8px 0' }}>
+                  Haemoglobin below 10 — iron studies recommended.
+                </div>
+                <HypoInlineLab label="Serum Iron" field="srIron" unit="mcg/dL" f={f} set={set} />
+                <HypoInlineLab label="Serum Ferritin" field="srFerritin" unit="ng/mL" f={f} set={set} />
+                <HypoInlineLab label="TIBC" field="tibc" unit="mcg/dL" f={f} set={set} />
+                <HypoInlineLab label="Transferrin Saturation" field="transferrinSat" unit="%" f={f} set={set} />
+              </>
+            ) : null;
+          })()}
         </>}
         output={f.fatigue === 'yes' && f.fatigueSeverity
           ? `${f.fatigueSeverity.charAt(0).toUpperCase() + f.fatigueSeverity.slice(1)} tiredness ${formatDuration(f.fatigueDuration)}`
@@ -1667,6 +1770,13 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
       case 'F13': return <HypoSymptomScreen id="F13"
         question="Do you experience muscle cramps or aches?"
         statusKey="cramps" durationKey="crampsDuration" f={f} set={set}
+        extra={<>
+          <div style={{ fontSize: 12, fontWeight: 600, margin: '4px 0 8px', color: 'var(--text-secondary)' }}>
+            Recommended investigations for this symptom
+          </div>
+          <HypoInlineLab label="Vitamin D3 (25-OH)" field="vitD3" unit="ng/mL" f={f} set={set} />
+          <HypoInlineLab label="Serum Calcium" field="srCalcium" unit="mg/dL" f={f} set={set} />
+        </>}
         output={f.cramps === 'yes' ? `Muscle cramps ${formatDuration(f.crampsDuration)}` : ''} />;
 
       case 'F14': return (
@@ -1680,6 +1790,13 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
                   options={[['proximal', 'Proximal (upper arms / thighs)'], ['generalised', 'Generalised']]} />
               </HypoField>
               <HypoDurationPicker minDate={f.dob} value={f.weaknessDuration} onChange={set('weaknessDuration')} label="Since when" />
+              <div style={{ fontSize: 12, fontWeight: 600, margin: '16px 0 8px', color: 'var(--text-secondary)' }}>
+                Recommended investigations for this symptom
+              </div>
+              <HypoCbcPanel f={f} set={set} patientId={patientId} episodeId={episodeId} />
+              <HypoInlineLab label="Vitamin B12" field="vitB12" unit="pg/mL" f={f} set={set} />
+              <HypoInlineLab label="Vitamin D3 (25-OH)" field="vitD3" unit="ng/mL" f={f} set={set} />
+              <HypoInlineLab label="Serum Calcium" field="srCalcium" unit="mg/dL" f={f} set={set} />
               {f.weaknessLocation && <HypoOutputBox text={`Weakness in ${f.weaknessLocation === 'proximal' ? 'both thigh / upper arm muscles' : 'generalised muscle weakness'} ${formatDuration(f.weaknessDuration)}`} />}
             </HypoSubBlock>
           )}
@@ -1758,6 +1875,12 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
                 ]} />
               </HypoField>
               <HypoDurationPicker minDate={f.dob} value={f.giddinessDuration} onChange={set('giddinessDuration')} label="Since when" />
+              <div style={{ fontSize: 12, fontWeight: 600, margin: '16px 0 8px', color: 'var(--text-secondary)' }}>
+                Recommended investigations for this symptom
+              </div>
+              <HypoCbcPanel f={f} set={set} patientId={patientId} episodeId={episodeId} />
+              <HypoInlineLab label="Blood Sugar — Fasting" field="fbs" unit="mg/dL" f={f} set={set} />
+              <HypoInlineLab label="Blood Sugar — Post-Prandial" field="ppbs" unit="mg/dL" f={f} set={set} />
               {f.giddinessFreq && <HypoOutputBox text={`Postural giddiness (${f.giddinessFreq.replace('_', ' ')}) ${formatDuration(f.giddinessDuration)}`} />}
             </HypoSubBlock>
           )}
@@ -1789,6 +1912,12 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
                   ? `Only one black-out episode on ${new Date(f.blackoutLastDate).toLocaleDateString('en-IN')}`
                   : `Multiple episodes of black-outs (${f.blackoutCount}) with last one on ${new Date(f.blackoutLastDate).toLocaleDateString('en-IN')}`} />
               )}
+              <div style={{ fontSize: 12, fontWeight: 600, margin: '16px 0 8px', color: 'var(--text-secondary)' }}>
+                Recommended investigations for this symptom
+              </div>
+              <HypoCbcPanel f={f} set={set} patientId={patientId} episodeId={episodeId} />
+              <HypoInlineLab label="Blood Sugar — Fasting" field="fbs" unit="mg/dL" f={f} set={set} />
+              <HypoInlineLab label="Blood Sugar — Post-Prandial" field="ppbs" unit="mg/dL" f={f} set={set} />
             </HypoSubBlock>
           )}
         </>
@@ -1850,6 +1979,15 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
               )}
             </div>
           ))}
+          {['numbness', 'tingling'].some(t => (f.carpalItems || {})[t]?.status === 'yes') && (
+            <>
+              <div style={{ fontSize: 12, fontWeight: 600, margin: '16px 0 8px', color: 'var(--text-secondary)' }}>
+                Recommended investigations for this symptom
+              </div>
+              <HypoCbcPanel f={f} set={set} patientId={patientId} episodeId={episodeId} />
+              <HypoInlineLab label="Vitamin B12" field="vitB12" unit="pg/mL" f={f} set={set} />
+            </>
+          )}
           {Object.entries(f.carpalItems || {}).filter(([, v]) => v?.status === 'yes').length > 0 && (
             <HypoOutputBox text={Object.entries(f.carpalItems || {}).filter(([, v]) => v?.status === 'yes')
               .map(([k, v]) => `${k.charAt(0).toUpperCase() + k.slice(1)} in ${v.side || '?'} wrist ${formatDuration(v.duration)}`).join('. ')} />
@@ -1866,46 +2004,71 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
         </>
       );
 
+      // ── F25: Acidity / retrosternal chest burn ──
+      case 'F25': return (
+        <>
+          <div style={{ fontSize: 16, fontWeight: 500, marginBottom: 16 }}>Do you experience acidity or a burning sensation behind your chest (retrosternal burn)?</div>
+          <HypoRadioGroup value={f.acidity} onChange={set('acidity')} options={[['no', 'No'], ['unsure', 'Unsure'], ['yes', 'Yes']]} />
+          {f.acidity === 'yes' && (
+            <HypoSubBlock>
+              <HypoDurationPicker minDate={f.dob} value={f.acidityDuration} onChange={set('acidityDuration')} label="Since when" />
+              <HypoField label="Taking any medication for this?">
+                <HypoRadioGroup value={f.acidityOnMed} onChange={set('acidityOnMed')} horizontal options={[['no','No'],['unsure','Unsure'],['yes','Yes']]} />
+              </HypoField>
+              {f.acidityOnMed === 'yes' && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
+                  <HypoField label="Medicine name"><HypoTextInput value={f.acidityMedName} onChange={set('acidityMedName')} placeholder="e.g. Pantoprazole" /></HypoField>
+                  <HypoField label="Dose (mg)"><HypoTextInput type="number" min="0" value={f.acidityMedDose} onChange={set('acidityMedDose')} /></HypoField>
+                  <HypoField label="Times per day"><HypoTextInput type="number" min="1" max="4" value={f.acidityMedFreq} onChange={set('acidityMedFreq')} /></HypoField>
+                </div>
+              )}
+              {f.acidityOnMed === 'yes' && (
+                <HypoDurationPicker minDate={f.dob} value={f.acidityMedSince} onChange={set('acidityMedSince')} label="Taking medication since" />
+              )}
+              <HypoOutputBox text={`Acidity / retrosternal burn ${formatDuration(f.acidityDuration)}${f.acidityOnMed === 'yes' && f.acidityMedName ? `. On Tab. ${f.acidityMedName}${f.acidityMedDose ? ` (${f.acidityMedDose} mg)` : ''}${f.acidityMedFreq ? ` — ${f.acidityMedFreq} times a day` : ''}.` : ''}`} />
+            </HypoSubBlock>
+          )}
+        </>
+      );
+
       // ── G1: Treatment ──
       case 'G1': return (
         <>
-          <div style={{ fontSize: 16, fontWeight: 500, marginBottom: 16 }}>Are you currently on treatment for hypothyroidism?</div>
-          <HypoRadioGroup value={f.onTreatment} onChange={set('onTreatment')} options={[['no', 'No'], ['yes', 'Yes']]} />
-          {f.onTreatment === 'yes' && (
-            <HypoSubBlock>
-              <HypoField label="Treatment type">
-                <HypoRadioGroup value={f.treatmentType} onChange={set('treatmentType')} options={[
-                  ['levo_only', 'Levothyroxine only'],
-                  ['lio_only', 'Liothyronine only'],
-                  ['combination', 'Combination'],
-                  ['other', 'Other'],
-                ]} />
-              </HypoField>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
-                <HypoField label="Drug name"><HypoTextInput value={f.levoDrugName} onChange={set('levoDrugName')} placeholder="e.g. Levothyroxine" /></HypoField>
-                <HypoField label="Brand name"><HypoTextInput value={f.levoBrand} onChange={set('levoBrand')} placeholder="e.g. Thyronorm, Eltroxin" /></HypoField>
-                <HypoField label="Current dose (mcg)"><HypoTextInput type="number" min="0" value={f.levoDose} onChange={set('levoDose')} /></HypoField>
-              </div>
-              <HypoField label="Timing">
-                <HypoRadioGroup value={f.levoTiming} onChange={set('levoTiming')} horizontal options={[
-                  ['before_breakfast', 'Before breakfast'],
-                  ['after_breakfast', 'After breakfast'],
-                  ['bedtime', 'Bedtime'],
-                ]} />
-              </HypoField>
-              <HypoField label="Compliance">
-                <HypoRadioGroup value={f.levoCompliance} onChange={set('levoCompliance')} horizontal options={[
-                  ['regular', 'Regular'],
-                  ['irregular', 'Irregular'],
-                  ['skips_sometimes', 'Skips sometimes'],
-                ]} />
-              </HypoField>
-              <HypoDurationPicker minDate={f.dob} value={f.levoSince} onChange={set('levoSince')} label="Treatment started" />
-              {f.levoBrand && f.levoDose && (
-                <HypoOutputBox text={`On Tab. ${f.levoBrand} — ${f.levoDose} mcg ${formatDuration(f.levoSince)}`} />
-              )}
-            </HypoSubBlock>
-          )}
+          <div style={{ fontSize: 16, fontWeight: 500, marginBottom: 4 }}>Current thyroid medication</div>
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 16 }}>Leave blank if you are not currently taking any medication for hypothyroidism.</div>
+          <HypoSubBlock>
+            <HypoField label="Treatment type">
+              <HypoRadioGroup value={f.treatmentType} onChange={set('treatmentType')} options={[
+                ['levo_only', 'Levothyroxine only'],
+                ['lio_only', 'Liothyronine only'],
+                ['combination', 'Combination'],
+                ['other', 'Other'],
+              ]} />
+            </HypoField>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+              <HypoField label="Drug name"><HypoTextInput value={f.levoDrugName} onChange={set('levoDrugName')} placeholder="e.g. Levothyroxine" /></HypoField>
+              <HypoField label="Brand name"><HypoTextInput value={f.levoBrand} onChange={set('levoBrand')} placeholder="e.g. Thyronorm, Eltroxin" /></HypoField>
+              <HypoField label="Current dose (mcg)"><HypoTextInput type="number" min="0" value={f.levoDose} onChange={set('levoDose')} /></HypoField>
+            </div>
+            <HypoField label="Timing">
+              <HypoRadioGroup value={f.levoTiming} onChange={set('levoTiming')} horizontal options={[
+                ['before_breakfast', 'Before breakfast'],
+                ['after_breakfast', 'After breakfast'],
+                ['bedtime', 'Bedtime'],
+              ]} />
+            </HypoField>
+            <HypoField label="Compliance">
+              <HypoRadioGroup value={f.levoCompliance} onChange={set('levoCompliance')} horizontal options={[
+                ['regular', 'Regular'],
+                ['irregular', 'Irregular'],
+                ['skips_sometimes', 'Skips sometimes'],
+              ]} />
+            </HypoField>
+            <HypoDurationPicker minDate={f.dob} value={f.levoSince} onChange={set('levoSince')} label="Treatment started" />
+            {f.levoBrand && f.levoDose && (
+              <HypoOutputBox text={`On Tab. ${f.levoBrand} — ${f.levoDose} mcg ${formatDuration(f.levoSince)}`} />
+            )}
+          </HypoSubBlock>
         </>
       );
 
@@ -1957,11 +2120,14 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
                 <HypoRadioGroup value={f.dyslipidaemiaOnMed} onChange={set('dyslipidaemiaOnMed')} horizontal options={[['no','No'],['unsure','Unsure'],['yes','Yes']]} />
               </HypoField>
               {f.dyslipidaemiaOnMed === 'yes' && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
                   <HypoField label="Medicine name"><HypoTextInput value={f.dyslipidaemiaMedName} onChange={set('dyslipidaemiaMedName')} placeholder="e.g. Atorvastatin" /></HypoField>
                   <HypoField label="Dose (mg)"><HypoTextInput type="number" value={f.dyslipidaemiaMedDose} onChange={set('dyslipidaemiaMedDose')} /></HypoField>
                   <HypoField label="Times per day"><HypoTextInput type="number" min="1" max="4" value={f.dyslipidaemiaMedTimes} onChange={set('dyslipidaemiaMedTimes')} /></HypoField>
                 </div>
+              )}
+              {f.dyslipidaemiaOnMed === 'yes' && (
+                <HypoDurationPicker minDate={f.dob} value={f.dyslipidaemiaMedSince} onChange={set('dyslipidaemiaMedSince')} label="Taking medication since" />
               )}
               <HypoOutputBox text={f.dyslipidaemia === 'yes' ? `Dyslipidaemia / Hypercholesterolaemia ${formatDuration(f.dyslipidaemiaDuration)}${f.dyslipidaemiaOnMed === 'yes' && f.dyslipidaemiaMedName ? `. On Tab. ${f.dyslipidaemiaMedName}${f.dyslipidaemiaMedDose ? ` (${f.dyslipidaemiaMedDose} mg)` : ''}${f.dyslipidaemiaMedTimes ? ` — ${f.dyslipidaemiaMedTimes} times a day` : ''}.` : ''}` : ''} />
             </HypoSubBlock>
@@ -1989,12 +2155,16 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
                 <HypoRadioGroup value={f.anaemiaOnMed} onChange={set('anaemiaOnMed')} horizontal options={[['no','No'],['unsure','Unsure'],['yes','Yes']]} />
               </HypoField>
               {f.anaemiaOnMed === 'yes' && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
                   <HypoField label="Medicine name"><HypoTextInput value={f.anaemiaMedName} onChange={set('anaemiaMedName')} placeholder="e.g. Autrin, Folvite" /></HypoField>
+                  <HypoField label="Dose (mg)"><HypoTextInput type="number" value={f.anaemiaMedDose} onChange={set('anaemiaMedDose')} /></HypoField>
                   <HypoField label="Times per day"><HypoTextInput type="number" min="1" max="4" value={f.anaemiaMedTimes} onChange={set('anaemiaMedTimes')} /></HypoField>
                 </div>
               )}
-              <HypoOutputBox text={f.anaemiaType ? `K/c/o ${f.anaemiaType.replace(/_/g,' ')} anaemia${f.anaemiaOnMed === 'yes' && f.anaemiaMedName ? `. On ${f.anaemiaMedName}.` : ''}` : ''} />
+              {f.anaemiaOnMed === 'yes' && (
+                <HypoDurationPicker minDate={f.dob} value={f.anaemiaMedSince} onChange={set('anaemiaMedSince')} label="Taking medication since" />
+              )}
+              <HypoOutputBox text={f.anaemiaType ? `K/c/o ${f.anaemiaType.replace(/_/g,' ')} anaemia${f.anaemiaOnMed === 'yes' && f.anaemiaMedName ? `. On ${f.anaemiaMedName}${f.anaemiaMedDose ? ` (${f.anaemiaMedDose} mg)` : ''}.` : ''}` : ''} />
             </HypoSubBlock>
           )}
         </>
@@ -2018,11 +2188,14 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
                 <HypoRadioGroup value={f.diabetesOnMed} onChange={set('diabetesOnMed')} horizontal options={[['no','No'],['unsure','Unsure'],['yes','Yes']]} />
               </HypoField>
               {f.diabetesOnMed === 'yes' && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
                   <HypoField label="Medicine name"><HypoTextInput value={f.diabetesMedName} onChange={set('diabetesMedName')} placeholder="e.g. Metformin" /></HypoField>
                   <HypoField label="Dose (mg)"><HypoTextInput type="number" value={f.diabetesMedDose} onChange={set('diabetesMedDose')} /></HypoField>
                   <HypoField label="Times per day"><HypoTextInput type="number" min="1" max="4" value={f.diabetesMedTimes} onChange={set('diabetesMedTimes')} /></HypoField>
                 </div>
+              )}
+              {f.diabetesOnMed === 'yes' && (
+                <HypoDurationPicker minDate={f.dob} value={f.diabetesMedSince} onChange={set('diabetesMedSince')} label="Taking medication since" />
               )}
               <HypoOutputBox text={f.diabetesType ? `K/c/o ${f.diabetesType.replace(/_/g,' ')} ${formatDuration(f.diabetesDuration)}${f.diabetesOnMed === 'yes' && f.diabetesMedName ? `. On Tab. ${f.diabetesMedName}${f.diabetesMedDose ? ` (${f.diabetesMedDose} mg)` : ''}${f.diabetesMedTimes ? ` — ${f.diabetesMedTimes} times a day` : ''}.` : ''}` : ''} />
             </HypoSubBlock>
@@ -2048,11 +2221,14 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
                   options={[['no', 'No'], ['unsure', 'Unsure'], ['yes', 'Yes']]} />
               </HypoField>
               {f.pcosOnMed === 'yes' && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
                   <HypoField label="Medicine name"><HypoTextInput value={f.pcosMedName} onChange={set('pcosMedName')} placeholder="e.g. Metformin" /></HypoField>
                   <HypoField label="Dose (mg)"><HypoTextInput type="number" min="0" value={f.pcosMedDose} onChange={set('pcosMedDose')} /></HypoField>
                   <HypoField label="Times per day"><HypoTextInput type="number" min="1" max="6" value={f.pcosMedTimes} onChange={set('pcosMedTimes')} /></HypoField>
                 </div>
+              )}
+              {f.pcosOnMed === 'yes' && (
+                <HypoDurationPicker minDate={f.dob} value={f.pcosMedSince} onChange={set('pcosMedSince')} label="Taking medication since" />
               )}
               {f.pcosPmosLabel && (
                 <HypoOutputBox text={`K/c/o ${f.pcosPmosLabel.toUpperCase()} ${formatDuration(f.pcosDuration)}${
@@ -2073,6 +2249,33 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
         </>
       );
 
+      // ── H6: Hypertension ──
+      case 'H6': return (
+        <>
+          <div style={{ fontSize: 16, fontWeight: 500, marginBottom: 16 }}>Have you been diagnosed with hypertension (high blood pressure)?</div>
+          <HypoRadioGroup value={f.htn} onChange={set('htn')} options={[['no', 'No'], ['unsure', 'Unsure'], ['yes', 'Yes']]} />
+          {f.htn === 'yes' && (
+            <HypoSubBlock>
+              <HypoDurationPicker minDate={f.dob} value={f.htnDuration} onChange={set('htnDuration')} label="Since when" />
+              <HypoField label="On medication for blood pressure?">
+                <HypoRadioGroup value={f.htnOnMed} onChange={set('htnOnMed')} horizontal options={[['no','No'],['unsure','Unsure'],['yes','Yes']]} />
+              </HypoField>
+              {f.htnOnMed === 'yes' && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
+                  <HypoField label="Medicine name"><HypoTextInput value={f.htnMedName} onChange={set('htnMedName')} placeholder="e.g. Amlodipine, Telmisartan" /></HypoField>
+                  <HypoField label="Dose (mg)"><HypoTextInput type="number" value={f.htnMedDose} onChange={set('htnMedDose')} /></HypoField>
+                  <HypoField label="Times per day"><HypoTextInput type="number" min="1" max="4" value={f.htnMedFreq} onChange={set('htnMedFreq')} /></HypoField>
+                </div>
+              )}
+              {f.htnOnMed === 'yes' && (
+                <HypoDurationPicker minDate={f.dob} value={f.htnMedSince} onChange={set('htnMedSince')} label="Taking medication since" />
+              )}
+              <HypoOutputBox text={f.htn === 'yes' ? `Hypertension ${formatDuration(f.htnDuration)}${f.htnOnMed === 'yes' && f.htnMedName ? `. On Tab. ${f.htnMedName}${f.htnMedDose ? ` (${f.htnMedDose} mg)` : ''}${f.htnMedFreq ? ` — ${f.htnMedFreq} times a day` : ''}.` : ''}` : ''} />
+            </HypoSubBlock>
+          )}
+        </>
+      );
+
       // ── H7: Osteoporosis / osteopenia ──
       case 'H7': return (
         <>
@@ -2087,10 +2290,14 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
                 <HypoRadioGroup value={f.osteoporosisOnMed} onChange={set('osteoporosisOnMed')} horizontal options={[['no','No'],['unsure','Unsure'],['yes','Yes']]} />
               </HypoField>
               {f.osteoporosisOnMed === 'yes' && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
                   <HypoField label="Medicine name"><HypoTextInput value={f.osteoporosisMedName} onChange={set('osteoporosisMedName')} placeholder="e.g. Alendronate, Calcium + Vit D" /></HypoField>
+                  <HypoField label="Dose (mg)"><HypoTextInput type="number" value={f.osteoporosisMedDose} onChange={set('osteoporosisMedDose')} /></HypoField>
                   <HypoField label="Times per day"><HypoTextInput type="number" min="1" max="4" value={f.osteoporosisMedTimes} onChange={set('osteoporosisMedTimes')} /></HypoField>
                 </div>
+              )}
+              {f.osteoporosisOnMed === 'yes' && (
+                <HypoDurationPicker minDate={f.dob} value={f.osteoporosisMedSince} onChange={set('osteoporosisMedSince')} label="Taking medication since" />
               )}
               <HypoOutputBox text={`K/c/o Osteoporosis${f.osteoporosisDEXA === 'yes' ? ' — DEXA confirmed' : ''}${f.osteoporosisOnMed === 'yes' ? `. On bone-protection medication${f.osteoporosisMedName ? ': ' + f.osteoporosisMedName : ''}.` : ''}`} />
             </HypoSubBlock>
@@ -2272,9 +2479,250 @@ const HypoLabScreen = ({ patientId, episodeId, label, field, unit, unitOptions, 
   );
 };
 
+// ─── CBC panel — click a component to expand its value/unit/ref-range fields ───
+const CBC_SIMPLE_COMPONENTS = [
+  ['haemoglobin', 'Haemoglobin', 'g/dL'],
+  ['rbcCount', 'RBC count', 'million/µL'],
+  ['haematocrit', 'Haematocrit (PCV)', '%'],
+  ['mcv', 'MCV', 'fL'],
+  ['mch', 'MCH', 'pg'],
+  ['mchc', 'MCHC', 'g/dL'],
+  ['rdw', 'RDW', '%'],
+  ['wbcTotal', 'WBC (total count)', 'cells/µL'],
+  ['plateletCount', 'Platelet count', 'lakh/µL'],
+];
+const CBC_DIFF_COMPONENTS = [
+  ['diffNeutrophils', 'Neutrophils'],
+  ['diffLymphocytes', 'Lymphocytes'],
+  ['diffMonocytes', 'Monocytes'],
+  ['diffEosinophils', 'Eosinophils'],
+  ['diffBasophils', 'Basophils'],
+];
+
+const HypoCbcPanel = ({ f, set, patientId, episodeId }) => {
+  const cbc = f.cbcValues || {};
+  const setComponent = (key, patch) => set('cbcValues')({ ...cbc, [key]: { ...(cbc[key] || {}), ...patch } });
+
+  return (
+    <HypoSubBlock>
+      <LabReportUpload
+        patientId={patientId} episodeId={episodeId} fieldLabel="CBC"
+        category="blood_report"
+        reports={f.cbcReports || []}
+        onReportsChange={set('cbcReports')}
+        onExtract={(extracted) => {
+          // Auto-fill maps whatever the extraction service recognizes onto
+          // the matching component; anything it can't identify is left for
+          // manual entry below.
+          if (extracted.cbc) {
+            set('cbcValues')({ ...cbc, ...extracted.cbc });
+          }
+          if (extracted.date != null) set('cbcDate')(extracted.date);
+        }}
+      />
+      <HypoField label="Date of test"><HypoDateInput value={f.cbcDate} onChange={set('cbcDate')} /></HypoField>
+      <div style={{ fontSize: 11, color: 'var(--text-tertiary)', margin: '10px 0 6px' }}>All CBC components — enter what you have, leave the rest blank:</div>
+
+      {CBC_SIMPLE_COMPONENTS.map(([key, label, defaultUnit]) => {
+        const v = cbc[key] || {};
+        return (
+          <div key={key} style={{ border: '1px solid var(--border)', borderRadius: 8, marginBottom: 8, padding: '10px 12px' }}>
+            <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>{label}</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8 }}>
+              <HypoField label="Value"><HypoTextInput type="number" step="0.01" value={v.value} onChange={val => setComponent(key, { value: val })} /></HypoField>
+              <HypoField label="Unit"><HypoTextInput value={v.unit || ''} onChange={val => setComponent(key, { unit: val })} placeholder={defaultUnit} /></HypoField>
+              <HypoField label="Ref low"><HypoTextInput type="number" step="0.01" value={v.refLow} onChange={val => setComponent(key, { refLow: val })} /></HypoField>
+              <HypoField label="Ref high"><HypoTextInput type="number" step="0.01" value={v.refHigh} onChange={val => setComponent(key, { refHigh: val })} /></HypoField>
+            </div>
+          </div>
+        );
+      })}
+
+      <div style={{ fontSize: 12, fontWeight: 600, margin: '14px 0 6px', color: 'var(--text-secondary)' }}>WBC Differential</div>
+      {CBC_DIFF_COMPONENTS.map(([key, label]) => {
+        const v = cbc[key] || {};
+        return (
+          <div key={key} style={{ border: '1px solid var(--border)', borderRadius: 8, marginBottom: 8, padding: '10px 12px' }}>
+            <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>{label}</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
+              <HypoField label="Percentage (%)"><HypoTextInput type="number" step="0.1" value={v.pctValue} onChange={val => setComponent(key, { pctValue: val })} /></HypoField>
+              <HypoField label="Ref low (%)"><HypoTextInput type="number" step="0.1" value={v.pctRefLow} onChange={val => setComponent(key, { pctRefLow: val })} /></HypoField>
+              <HypoField label="Ref high (%)"><HypoTextInput type="number" step="0.1" value={v.pctRefHigh} onChange={val => setComponent(key, { pctRefHigh: val })} /></HypoField>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8 }}>
+              <HypoField label="Absolute count"><HypoTextInput type="number" step="1" value={v.countValue} onChange={val => setComponent(key, { countValue: val })} /></HypoField>
+              <HypoField label="Unit"><HypoTextInput value={v.countUnit || ''} onChange={val => setComponent(key, { countUnit: val })} placeholder="cells/µL" /></HypoField>
+              <HypoField label="Ref low"><HypoTextInput type="number" step="1" value={v.countRefLow} onChange={val => setComponent(key, { countRefLow: val })} /></HypoField>
+              <HypoField label="Ref high"><HypoTextInput type="number" step="1" value={v.countRefHigh} onChange={val => setComponent(key, { countRefHigh: val })} /></HypoField>
+            </div>
+          </div>
+        );
+      })}
+    </HypoSubBlock>
+  );
+};
+
+// ─── Reusable inline single-value lab box — used both at its own D-module
+// screen (TSH/T3/etc still work that way) and embedded directly inside a
+// triggering symptom screen (F1/F13/F14/F19/F20/F23). Reads/writes the
+// SAME shared f.<field>* state either way, so a value entered once shows
+// up pre-filled everywhere else it's needed — no separate copies. ───
+const HypoInlineLab = ({ label, field, f, set, unit }) => {
+  const val = f[`${field}Value`];
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 8, marginBottom: 8, padding: '10px 12px' }}>
+      <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>{label}</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: 8 }}>
+        <HypoField label="Value"><HypoTextInput type="number" step="0.01" value={val} onChange={set(`${field}Value`)} /></HypoField>
+        <HypoField label="Unit"><HypoTextInput value={f[`${field}Unit`] || ''} onChange={set(`${field}Unit`)} placeholder={unit} /></HypoField>
+        <HypoField label="Date"><HypoDateInput value={f[`${field}Date`]} onChange={set(`${field}Date`)} /></HypoField>
+        <HypoField label="Ref low"><HypoTextInput type="number" step="0.01" value={f[`${field}RefLow`]} onChange={set(`${field}RefLow`)} /></HypoField>
+        <HypoField label="Ref high"><HypoTextInput type="number" step="0.01" value={f[`${field}RefHigh`]} onChange={set(`${field}RefHigh`)} /></HypoField>
+      </div>
+    </div>
+  );
+};
+
 // ─── DB mapping helpers ───────────────────────────────────
 function mapFormToDb(f) {
+  // ── CBC panel: value/unit/ref_low/ref_high per component, shared date+status ──
+  const cbc = f.cbcValues || {};
+  const cbcSimple = (key) => ({
+    value: cbc[key]?.value ?? null,
+    unit: cbc[key]?.unit ?? null,
+    ref_low: cbc[key]?.refLow ?? null,
+    ref_high: cbc[key]?.refHigh ?? null,
+  });
+  const cbcDiff = (key) => ({
+    pct_value: cbc[key]?.pctValue ?? null,
+    pct_ref_low: cbc[key]?.pctRefLow ?? null,
+    pct_ref_high: cbc[key]?.pctRefHigh ?? null,
+    count_value: cbc[key]?.countValue ?? null,
+    count_unit: cbc[key]?.countUnit ?? null,
+    count_ref_low: cbc[key]?.countRefLow ?? null,
+    count_ref_high: cbc[key]?.countRefHigh ?? null,
+  });
+  const hb = cbcSimple('haemoglobin'), rbc = cbcSimple('rbcCount'), hct = cbcSimple('haematocrit'),
+    mcv = cbcSimple('mcv'), mch = cbcSimple('mch'), mchc = cbcSimple('mchc'), rdw = cbcSimple('rdw'),
+    wbc = cbcSimple('wbcTotal'), plt = cbcSimple('plateletCount');
+  const neut = cbcDiff('diffNeutrophils'), lymph = cbcDiff('diffLymphocytes'), mono = cbcDiff('diffMonocytes'),
+    eos = cbcDiff('diffEosinophils'), baso = cbcDiff('diffBasophils');
+
   return {
+    // ═══ MODULE A ═══
+    marital_status: f.maritalStatus || null,
+    occupation: f.occupation || null,
+    occupation_other: f.occupationOther || null,
+
+    // ═══ MODULE B (reproductive — was fully dropped before; now wired) ═══
+    hysterectomy_status: f.hysterectomy || null,
+    hysterectomy_date_precision: f.hysterectomyDate?.date ? 'full' : (f.hysterectomyDate?.years ? 'year_only' : null),
+    hysterectomy_date: f.hysterectomyDate?.date || null,
+    hysterectomy_year: f.hysterectomyDate?.years || null,
+    hysterectomy_month: f.hysterectomyDate?.months || null,
+    hysterectomy_reason: f.hysterectomyReason || null,
+    hysterectomy_reason_other: f.hysterectomyOther || null,
+    menopause_status: f.menopauseStatus || null,
+    menopause_years_ago: f.menopauseYears || null,
+    menstrual_change_status: f.menstrualChange || null,
+    menstrual_pattern: (f.menstrualChangeTypes || []).find(t => ['regular', 'irregular', 'skips_sometimes'].includes(t)) || null,
+    menstrual_flow: (f.menstrualChangeTypes || []).filter(t => ['heavy', 'scanty', 'absent', 'prolonged'].includes(t)),
+    menstrual_since_date: f.menstrualChangeDuration?.date || null,
+    menstrual_years: f.menstrualChangeDuration?.years || null,
+    menstrual_months: f.menstrualChangeDuration?.months || null,
+    lmp_date: f.lmpDate || null,
+    pregnancy_status: f.pregnant || null,
+    edd_date: f.pregnant === 'yes' && f.lmpDate ? calcEDD(f.lmpDate) : null,
+
+    // ═══ MODULE C — previously entirely dropped, now wired ═══
+    thyroid_dx_status: f.thyroidDx || null,
+    thyroid_dx_type: f.thyroidDxType || null,
+    thyroid_dx_year: f.thyroidDxYear || null,
+    thyroid_surgery_status: f.thyroidSurgery || null,
+    thyroid_surgery_type: f.thyroidSurgeryType || null,
+    thyroid_surgery_year: f.thyroidSurgeryYear || null,
+    // RAI — repeatable, replaces the old single thyroidRaiYear field
+    rai_administrations: (f.raiAdministrations || []).length ? f.raiAdministrations : null,
+    thyroid_med_status: f.thyroidMed || null,
+    thyroid_med_name: f.thyroidMedName || null,
+    thyroid_med_brand: f.thyroidMedBrand || null,
+    thyroid_med_dose: f.thyroidMedDose || null,
+    thyroid_med_timing: f.thyroidMedTiming || null,
+    thyroid_med_compliance: f.thyroidMedCompliance || null,
+    thyroid_med_since_years: f.thyroidMedSince?.years || null,
+    thyroid_med_since_months: f.thyroidMedSince?.months || null,
+    family_thyroid_status: f.familyThyroid || null,
+    family_thyroid_relations: (f.familyThyroidRelatives || []).length ? f.familyThyroidRelatives : null,
+    // DB only holds one condition value per episode (pre-existing schema
+    // limitation, not something this pass redesigns) — using the first
+    // selected relative's condition as the representative value.
+    family_thyroid_condition: f.familyThyroidRelatives?.length
+      ? (f.familyThyroidConditions || {})[f.familyThyroidRelatives[0]] || null : null,
+    autoimmune_status: f.autoimmune || null,
+    autoimmune_conditions: Object.entries(f.autoimmuneItems || {}).filter(([, v]) => v?.selected).map(([k]) => k),
+    autoimmune_other: (f.autoimmuneItems || {})['Other']?.detail || null,
+
+    // ═══ MODULE D — lab panel ═══
+    tsh_status: f.tshDone || null, tsh_value: f.tshValue || null, tsh_unit: f.tshUnit || null,
+    tsh_date: f.tshDate || null, tsh_ref_low: f.tshRefLow || null, tsh_ref_high: f.tshRefHigh || null,
+    t3_status: f.t3Done || null, t3_value: f.t3Value || null, t3_unit: f.t3Unit || null,
+    t3_date: f.t3Date || null, t3_ref_low: f.t3RefLow || null, t3_ref_high: f.t3RefHigh || null,
+    ft3_status: f.ft3Done || null, ft3_value: f.ft3Value || null, ft3_unit: f.ft3Unit || null,
+    ft3_date: f.ft3Date || null, ft3_ref_low: f.ft3RefLow || null, ft3_ref_high: f.ft3RefHigh || null,
+    t4_status: f.t4Done || null, t4_value: f.t4Value || null, t4_unit: f.t4Unit || null,
+    t4_date: f.t4Date || null, t4_ref_low: f.t4RefLow || null, t4_ref_high: f.t4RefHigh || null,
+    ft4_status: f.ft4Done || null, ft4_value: f.ft4Value || null, ft4_unit: f.ft4Unit || null,
+    ft4_date: f.ft4Date || null, ft4_ref_low: f.ft4RefLow || null, ft4_ref_high: f.ft4RefHigh || null,
+    antitpo_status: f.antitpoDone || null, antitpo_value: f.antitpoValue || null, antitpo_unit: f.antitpoUnit || null,
+    antitpo_date: f.antitpoDate || null, antitpo_ref_low: f.antitpoRefLow || null, antitpo_ref_high: f.antitpoRefHigh || null,
+    antitg_status: f.antitgDone || null, antitg_value: f.antitgValue || null, antitg_unit: f.antitgUnit || null,
+    antitg_date: f.antitgDate || null, antitg_ref_low: f.antitgRefLow || null, antitg_ref_high: f.antitgRefHigh || null,
+    // New investigations — status inferred from whether a value was
+    // entered (these are now purely symptom-triggered inline entries,
+    // no separate "tested/not tested" gate question)
+    vit_b12_status: f.vitB12Value ? 'tested' : null, vit_b12_value: f.vitB12Value || null, vit_b12_unit: f.vitB12Unit || null,
+    vit_b12_date: f.vitB12Date || null, vit_b12_ref_low: f.vitB12RefLow || null, vit_b12_ref_high: f.vitB12RefHigh || null,
+    vit_d3_status: f.vitD3Value ? 'tested' : null, vit_d3_value: f.vitD3Value || null, vit_d3_unit: f.vitD3Unit || null,
+    vit_d3_date: f.vitD3Date || null, vit_d3_ref_low: f.vitD3RefLow || null, vit_d3_ref_high: f.vitD3RefHigh || null,
+    sr_iron_status: f.srIronValue ? 'tested' : null, sr_iron_value: f.srIronValue || null, sr_iron_unit: f.srIronUnit || null,
+    sr_iron_date: f.srIronDate || null, sr_iron_ref_low: f.srIronRefLow || null, sr_iron_ref_high: f.srIronRefHigh || null,
+    sr_ferritin_status: f.srFerritinValue ? 'tested' : null, sr_ferritin_value: f.srFerritinValue || null, sr_ferritin_unit: f.srFerritinUnit || null,
+    sr_ferritin_date: f.srFerritinDate || null, sr_ferritin_ref_low: f.srFerritinRefLow || null, sr_ferritin_ref_high: f.srFerritinRefHigh || null,
+    tibc_status: f.tibcValue ? 'tested' : null, tibc_value: f.tibcValue || null, tibc_unit: f.tibcUnit || null,
+    tibc_date: f.tibcDate || null, tibc_ref_low: f.tibcRefLow || null, tibc_ref_high: f.tibcRefHigh || null,
+    transferrin_sat_status: f.transferrinSatValue ? 'tested' : null, transferrin_sat_value: f.transferrinSatValue || null, transferrin_sat_unit: f.transferrinSatUnit || null,
+    transferrin_sat_date: f.transferrinSatDate || null, transferrin_sat_ref_low: f.transferrinSatRefLow || null, transferrin_sat_ref_high: f.transferrinSatRefHigh || null,
+    sr_calcium_status: f.srCalciumValue ? 'tested' : null, sr_calcium_value: f.srCalciumValue || null, sr_calcium_unit: f.srCalciumUnit || null,
+    sr_calcium_date: f.srCalciumDate || null, sr_calcium_ref_low: f.srCalciumRefLow || null, sr_calcium_ref_high: f.srCalciumRefHigh || null,
+    fbs_status: f.fbsValue ? 'tested' : null, fbs_value: f.fbsValue || null, fbs_unit: f.fbsUnit || null,
+    fbs_date: f.fbsDate || null, fbs_ref_low: f.fbsRefLow || null, fbs_ref_high: f.fbsRefHigh || null,
+    ppbs_status: f.ppbsValue ? 'tested' : null, ppbs_value: f.ppbsValue || null, ppbs_unit: f.ppbsUnit || null,
+    ppbs_date: f.ppbsDate || null, ppbs_ref_low: f.ppbsRefLow || null, ppbs_ref_high: f.ppbsRefHigh || null,
+    // CBC panel
+    cbc_status: Object.values(f.cbcValues || {}).some(c => c?.value || c?.pctValue) ? 'tested' : null,
+    cbc_date: f.cbcDate || null,
+    cbc_haemoglobin_value: hb.value, cbc_haemoglobin_unit: hb.unit, cbc_haemoglobin_ref_low: hb.ref_low, cbc_haemoglobin_ref_high: hb.ref_high,
+    cbc_rbc_count_value: rbc.value, cbc_rbc_count_unit: rbc.unit, cbc_rbc_count_ref_low: rbc.ref_low, cbc_rbc_count_ref_high: rbc.ref_high,
+    cbc_haematocrit_value: hct.value, cbc_haematocrit_unit: hct.unit, cbc_haematocrit_ref_low: hct.ref_low, cbc_haematocrit_ref_high: hct.ref_high,
+    cbc_mcv_value: mcv.value, cbc_mcv_unit: mcv.unit, cbc_mcv_ref_low: mcv.ref_low, cbc_mcv_ref_high: mcv.ref_high,
+    cbc_mch_value: mch.value, cbc_mch_unit: mch.unit, cbc_mch_ref_low: mch.ref_low, cbc_mch_ref_high: mch.ref_high,
+    cbc_mchc_value: mchc.value, cbc_mchc_unit: mchc.unit, cbc_mchc_ref_low: mchc.ref_low, cbc_mchc_ref_high: mchc.ref_high,
+    cbc_rdw_value: rdw.value, cbc_rdw_unit: rdw.unit, cbc_rdw_ref_low: rdw.ref_low, cbc_rdw_ref_high: rdw.ref_high,
+    cbc_wbc_total_value: wbc.value, cbc_wbc_total_unit: wbc.unit, cbc_wbc_total_ref_low: wbc.ref_low, cbc_wbc_total_ref_high: wbc.ref_high,
+    cbc_platelet_count_value: plt.value, cbc_platelet_count_unit: plt.unit, cbc_platelet_count_ref_low: plt.ref_low, cbc_platelet_count_ref_high: plt.ref_high,
+    cbc_diff_neutrophils_pct_value: neut.pct_value, cbc_diff_neutrophils_pct_ref_low: neut.pct_ref_low, cbc_diff_neutrophils_pct_ref_high: neut.pct_ref_high,
+    cbc_diff_neutrophils_count_value: neut.count_value, cbc_diff_neutrophils_count_unit: neut.count_unit, cbc_diff_neutrophils_count_ref_low: neut.count_ref_low, cbc_diff_neutrophils_count_ref_high: neut.count_ref_high,
+    cbc_diff_lymphocytes_pct_value: lymph.pct_value, cbc_diff_lymphocytes_pct_ref_low: lymph.pct_ref_low, cbc_diff_lymphocytes_pct_ref_high: lymph.pct_ref_high,
+    cbc_diff_lymphocytes_count_value: lymph.count_value, cbc_diff_lymphocytes_count_unit: lymph.count_unit, cbc_diff_lymphocytes_count_ref_low: lymph.count_ref_low, cbc_diff_lymphocytes_count_ref_high: lymph.count_ref_high,
+    cbc_diff_monocytes_pct_value: mono.pct_value, cbc_diff_monocytes_pct_ref_low: mono.pct_ref_low, cbc_diff_monocytes_pct_ref_high: mono.pct_ref_high,
+    cbc_diff_monocytes_count_value: mono.count_value, cbc_diff_monocytes_count_unit: mono.count_unit, cbc_diff_monocytes_count_ref_low: mono.count_ref_low, cbc_diff_monocytes_count_ref_high: mono.count_ref_high,
+    cbc_diff_eosinophils_pct_value: eos.pct_value, cbc_diff_eosinophils_pct_ref_low: eos.pct_ref_low, cbc_diff_eosinophils_pct_ref_high: eos.pct_ref_high,
+    cbc_diff_eosinophils_count_value: eos.count_value, cbc_diff_eosinophils_count_unit: eos.count_unit, cbc_diff_eosinophils_count_ref_low: eos.count_ref_low, cbc_diff_eosinophils_count_ref_high: eos.count_ref_high,
+    cbc_diff_basophils_pct_value: baso.pct_value, cbc_diff_basophils_pct_ref_low: baso.pct_ref_low, cbc_diff_basophils_pct_ref_high: baso.pct_ref_high,
+    cbc_diff_basophils_count_value: baso.count_value, cbc_diff_basophils_count_unit: baso.count_unit, cbc_diff_basophils_count_ref_low: baso.count_ref_low, cbc_diff_basophils_count_ref_high: baso.count_ref_high,
+    imaging_finding: f.imagingFinding || null,
+
+    // ═══ MODULE E ═══
     hypo_cause_known: f.hypoCauseKnown === 'yes',
     cause: f.hypoCause || null,
     hypo_duration_date: f.hypoDuration?.date || null,
@@ -2286,6 +2734,8 @@ function mapFormToDb(f) {
     hashimotos_confirmed: f.hashimotos === 'yes',
     hashimotos_anti_tpo: f.hashimotosAntiTpo || null,
     hashimotos_anti_tg: f.hashimotosAntiTg || null,
+
+    // ═══ MODULE F — symptoms (existing, unchanged) + NEW Acidity ═══
     sym_fatigue_status: f.fatigue || null,
     sym_fatigue_since_date: f.fatigueDuration?.date || null,
     sym_fatigue_years: f.fatigueDuration?.years || null,
@@ -2341,9 +2791,9 @@ function mapFormToDb(f) {
     sym_pedal_oedema_months: f.pedalOedemaDuration?.months || null,
     sym_pedal_oedema_days: f.pedalOedemaDuration?.days || null,
     sym_hair_status: f.hair || null,
-    sym_hair_data: f.hairItems && Object.keys(f.hairItems).length ? JSON.stringify(f.hairItems) : null,
+    sym_hair_data: f.hairItems && Object.keys(f.hairItems).length ? f.hairItems : null,
     sym_nail_status: f.nails || null,
-    sym_nail_data: f.nailItems && Object.keys(f.nailItems).length ? JSON.stringify(f.nailItems) : null,
+    sym_nail_data: f.nailItems && Object.keys(f.nailItems).length ? f.nailItems : null,
     sym_hoarseness_status: f.hoarseness || null,
     sym_hoarseness_since_date: f.hoarsenessDuration?.date || null,
     sym_hoarseness_years: f.hoarsenessDuration?.years || null,
@@ -2380,6 +2830,21 @@ function mapFormToDb(f) {
     sym_depression_days: f.depressionDuration?.days || null,
     sym_depression_seen_doctor: f.depressionSeenDoctor === 'yes',
     sym_depression_diagnosed: f.depressionDiagnosed === 'yes',
+    // Depression comorbidity/medication (separate columns from the sym_depression_*
+    // symptom question above — this is "are you on treatment for it")
+    depression_status: f.depression || null,
+    depression_diagnosed: f.depressionDiagnosed === 'yes',
+    depression_since_date: f.depressionDuration?.date || null,
+    depression_years: f.depressionDuration?.years || null,
+    depression_months: f.depressionDuration?.months || null,
+    depression_days: f.depressionDuration?.days || null,
+    depression_on_med: f.depressionOnMed || null,
+    depression_med_name: f.depressionMedName || null,
+    depression_med_dose: f.depressionMedDose || null,
+    depression_med_freq: f.depressionMedFreq || null,
+    depression_med_since_date: f.depressionMedSince?.date || null,
+    depression_med_since_years: f.depressionMedSince?.years || null,
+    depression_med_since_months: f.depressionMedSince?.months || null,
     sym_hypersomnia_status: f.hypersomnia || null,
     sym_hypersomnia_since_date: f.hypersomniaDuration?.date || null,
     sym_hypersomnia_years: f.hypersomniaDuration?.years || null,
@@ -2413,9 +2878,24 @@ function mapFormToDb(f) {
     sym_reflexes_years: f.reflexesDuration?.years || null,
     sym_reflexes_months: f.reflexesDuration?.months || null,
     sym_reflexes_days: f.reflexesDuration?.days || null,
-    sym_carpal_data: f.carpalItems && Object.keys(f.carpalItems).length ? JSON.stringify(f.carpalItems) : null,
+    sym_carpal_data: f.carpalItems && Object.keys(f.carpalItems).length ? f.carpalItems : null,
     sym_macroglossia_status: f.macroglossia || null,
-    on_treatment: f.onTreatment === 'yes',
+    // Acidity / retrosternal chest burn — new symptom
+    acidity_status: f.acidity || null,
+    acidity_since_date: f.acidityDuration?.date || null,
+    acidity_years: f.acidityDuration?.years || null,
+    acidity_months: f.acidityDuration?.months || null,
+    acidity_days: f.acidityDuration?.days || null,
+    acidity_on_med: f.acidityOnMed || null,
+    acidity_med_name: f.acidityMedName || null,
+    acidity_med_dose: f.acidityMedDose || null,
+    acidity_med_freq: f.acidityMedFreq || null,
+    acidity_med_since_date: f.acidityMedSince?.date || null,
+    acidity_med_since_years: f.acidityMedSince?.years || null,
+    acidity_med_since_months: f.acidityMedSince?.months || null,
+
+    // ═══ MODULE G — current treatment (unchanged) ═══
+    on_treatment: !!(f.levoBrand || f.levoDose || f.levoDrugName),
     treatment_type: f.treatmentType || null,
     levo_drug_name: f.levoDrugName || null,
     levo_brand: f.levoBrand || null,
@@ -2428,30 +2908,204 @@ function mapFormToDb(f) {
     dose_changed_status: f.doseChanged || null,
     dose_last_changed_date: f.doseChangedDate || null,
     dose_change_reason_type: f.doseChangedReason || null,
-    has_dyslipidaemia: f.dyslipidaemia === 'yes',
+
+    // ═══ MODULE H — comorbidities, now full name/dose/freq/since quartet ═══
+    dyslipidaemia_status: f.dyslipidaemia || null,
     dyslipidaemia_since_date: f.dyslipidaemiaDuration?.date || null,
     dyslipidaemia_years: f.dyslipidaemiaDuration?.years || null,
     dyslipidaemia_months: f.dyslipidaemiaDuration?.months || null,
     dyslipidaemia_days: f.dyslipidaemiaDuration?.days || null,
-    has_anaemia: f.anaemia === 'yes',
+    dyslipidaemia_on_med: f.dyslipidaemiaOnMed || null,
+    dyslipidaemia_med_name: f.dyslipidaemiaMedName || null,
+    dyslipidaemia_med_dose: f.dyslipidaemiaMedDose || null,
+    dyslipidaemia_med_freq: f.dyslipidaemiaMedTimes || null,
+    dyslipidaemia_med_since_date: f.dyslipidaemiaMedSince?.date || null,
+    dyslipidaemia_med_since_years: f.dyslipidaemiaMedSince?.years || null,
+    dyslipidaemia_med_since_months: f.dyslipidaemiaMedSince?.months || null,
+
+    anaemia_status: f.anaemia || null,
     anaemia_type: f.anaemiaType || null,
-    has_pcos: f.pcosPmos === 'yes',
+    anaemia_since_date: f.anaemiaDuration?.date || null,
+    anaemia_years: f.anaemiaDuration?.years || null,
+    anaemia_months: f.anaemiaDuration?.months || null,
+    anaemia_days: f.anaemiaDuration?.days || null,
+    anaemia_on_med: f.anaemiaOnMed || null,
+    anaemia_med_name: f.anaemiaMedName || null,
+    anaemia_med_dose: f.anaemiaMedDose || null,
+    anaemia_med_freq: f.anaemiaMedTimes || null,
+    anaemia_med_since_date: f.anaemiaMedSince?.date || null,
+    anaemia_med_since_years: f.anaemiaMedSince?.years || null,
+    anaemia_med_since_months: f.anaemiaMedSince?.months || null,
+
+    diabetes_status: f.diabetes || null,
+    diabetes_type: f.diabetesType || null,
+    diabetes_since_date: f.diabetesDuration?.date || null,
+    diabetes_years: f.diabetesDuration?.years || null,
+    diabetes_months: f.diabetesDuration?.months || null,
+    diabetes_days: f.diabetesDuration?.days || null,
+    diabetes_on_med: f.diabetesOnMed || null,
+    diabetes_med_name: f.diabetesMedName || null,
+    diabetes_med_dose: f.diabetesMedDose || null,
+    diabetes_med_freq: f.diabetesMedTimes || null,
+    diabetes_med_since_date: f.diabetesMedSince?.date || null,
+    diabetes_med_since_years: f.diabetesMedSince?.years || null,
+    diabetes_med_since_months: f.diabetesMedSince?.months || null,
+
+    // Hypertension — new comorbidity (H6)
+    htn_status: f.htn || null,
+    htn_since_date: f.htnDuration?.date || null,
+    htn_years: f.htnDuration?.years || null,
+    htn_months: f.htnDuration?.months || null,
+    htn_days: f.htnDuration?.days || null,
+    htn_on_med: f.htnOnMed || null,
+    htn_med_name: f.htnMedName || null,
+    htn_med_dose: f.htnMedDose || null,
+    htn_med_freq: f.htnMedFreq || null,
+    htn_med_since_date: f.htnMedSince?.date || null,
+    htn_med_since_years: f.htnMedSince?.years || null,
+    htn_med_since_months: f.htnMedSince?.months || null,
+
+    pcos_status: f.pcosPmos || null,
     pcos_pmos_label: f.pcosPmosLabel || null,
     pcos_since_date: f.pcosDuration?.date || null,
     pcos_years: f.pcosDuration?.years || null,
     pcos_months: f.pcosDuration?.months || null,
     pcos_days: f.pcosDuration?.days || null,
-    pcos_on_medication: f.pcosOnMed || null,
+    pcos_on_med: f.pcosOnMed || null,
     pcos_med_name: f.pcosMedName || null,
     pcos_med_dose: f.pcosMedDose || null,
-    pcos_med_times_per_day: f.pcosMedTimes || null,
+    pcos_med_freq: f.pcosMedTimes || null,
+    pcos_med_since_date: f.pcosMedSince?.date || null,
+    pcos_med_since_years: f.pcosMedSince?.years || null,
+    pcos_med_since_months: f.pcosMedSince?.months || null,
+
     has_infertility: f.infertility === 'yes',
+
+    osteoporosis_status: f.osteoporosis || null,
+    osteoporosis_dexa: f.osteoporosisDEXA || null,
+    osteoporosis_since_date: f.osteoporosisDuration?.date || null,
+    osteoporosis_years: f.osteoporosisDuration?.years || null,
+    osteoporosis_months: f.osteoporosisDuration?.months || null,
+    osteoporosis_days: f.osteoporosisDuration?.days || null,
+    osteoporosis_on_med: f.osteoporosisOnMed || null,
+    osteoporosis_med_name: f.osteoporosisMedName || null,
+    osteoporosis_med_dose: f.osteoporosisMedDose || null,
+    osteoporosis_med_freq: f.osteoporosisMedTimes || null,
+    osteoporosis_med_since_date: f.osteoporosisMedSince?.date || null,
+    osteoporosis_med_since_years: f.osteoporosisMedSince?.years || null,
+    osteoporosis_med_since_months: f.osteoporosisMedSince?.months || null,
+
+    family_cancer_status: f.familyCancer || null,
+    family_cancer_types: f.familyCancerTypes?.length ? f.familyCancerTypes : null,
+    family_cancer_relative: f.familyCancerRelative || null,
+
     additional_notes: f.additionalNotes || null,
   };
 }
 
 function mapDbToForm(r) {
+  const cbcSimpleBack = (prefix) => ({
+    value: r[`cbc_${prefix}_value`], unit: r[`cbc_${prefix}_unit`],
+    refLow: r[`cbc_${prefix}_ref_low`], refHigh: r[`cbc_${prefix}_ref_high`],
+  });
+  const cbcDiffBack = (prefix) => ({
+    pctValue: r[`cbc_diff_${prefix}_pct_value`], pctRefLow: r[`cbc_diff_${prefix}_pct_ref_low`],
+    pctRefHigh: r[`cbc_diff_${prefix}_pct_ref_high`], countValue: r[`cbc_diff_${prefix}_count_value`],
+    countUnit: r[`cbc_diff_${prefix}_count_unit`], countRefLow: r[`cbc_diff_${prefix}_count_ref_low`],
+    countRefHigh: r[`cbc_diff_${prefix}_count_ref_high`],
+  });
+
   return {
+    // Module A
+    maritalStatus: r.marital_status || '',
+    occupation: r.occupation || '',
+    occupationOther: r.occupation_other || '',
+
+    // Module B
+    hysterectomy: r.hysterectomy_status || '',
+    hysterectomyDate: { date: r.hysterectomy_date, years: r.hysterectomy_year, months: r.hysterectomy_month },
+    hysterectomyReason: r.hysterectomy_reason || '',
+    hysterectomyOther: r.hysterectomy_reason_other || '',
+    menopauseStatus: r.menopause_status || '',
+    menopauseYears: r.menopause_years_ago || '',
+    menstrualChange: r.menstrual_change_status || '',
+    menstrualChangeTypes: [
+      ...(r.menstrual_pattern ? [r.menstrual_pattern] : []),
+      ...(r.menstrual_flow || []),
+    ],
+    menstrualChangeDuration: { date: r.menstrual_since_date, years: r.menstrual_years, months: r.menstrual_months },
+    lmpDate: r.lmp_date || '',
+    pregnant: r.pregnancy_status || '',
+
+    // Module C
+    thyroidDx: r.thyroid_dx_status || '',
+    thyroidDxType: r.thyroid_dx_type || '',
+    thyroidDxYear: r.thyroid_dx_year || '',
+    thyroidSurgery: r.thyroid_surgery_status || '',
+    thyroidSurgeryType: r.thyroid_surgery_type || '',
+    thyroidSurgeryYear: r.thyroid_surgery_year || '',
+    raiAdministrations: r.rai_administrations || [],
+    thyroidMed: r.thyroid_med_status || '',
+    thyroidMedName: r.thyroid_med_name || '',
+    thyroidMedBrand: r.thyroid_med_brand || '',
+    thyroidMedDose: r.thyroid_med_dose || '',
+    thyroidMedTiming: r.thyroid_med_timing || '',
+    thyroidMedCompliance: r.thyroid_med_compliance || '',
+    thyroidMedSince: { years: r.thyroid_med_since_years, months: r.thyroid_med_since_months },
+    familyThyroid: r.family_thyroid_status || '',
+    familyThyroidRelatives: r.family_thyroid_relations || [],
+    familyThyroidConditions: r.family_thyroid_relations?.length && r.family_thyroid_condition
+      ? { [r.family_thyroid_relations[0]]: r.family_thyroid_condition } : {},
+    autoimmune: r.autoimmune_status || '',
+    autoimmuneItems: (r.autoimmune_conditions || []).reduce((acc, cond) => ({ ...acc, [cond]: { selected: true } }), {}),
+
+    // Module D — labs
+    tshDone: r.tsh_status || '', tshValue: r.tsh_value || '', tshUnit: r.tsh_unit || '',
+    tshDate: r.tsh_date || '', tshRefLow: r.tsh_ref_low || '', tshRefHigh: r.tsh_ref_high || '',
+    t3Done: r.t3_status || '', t3Value: r.t3_value || '', t3Unit: r.t3_unit || '',
+    t3Date: r.t3_date || '', t3RefLow: r.t3_ref_low || '', t3RefHigh: r.t3_ref_high || '',
+    ft3Done: r.ft3_status || '', ft3Value: r.ft3_value || '', ft3Unit: r.ft3_unit || '',
+    ft3Date: r.ft3_date || '', ft3RefLow: r.ft3_ref_low || '', ft3RefHigh: r.ft3_ref_high || '',
+    t4Done: r.t4_status || '', t4Value: r.t4_value || '', t4Unit: r.t4_unit || '',
+    t4Date: r.t4_date || '', t4RefLow: r.t4_ref_low || '', t4RefHigh: r.t4_ref_high || '',
+    ft4Done: r.ft4_status || '', ft4Value: r.ft4_value || '', ft4Unit: r.ft4_unit || '',
+    ft4Date: r.ft4_date || '', ft4RefLow: r.ft4_ref_low || '', ft4RefHigh: r.ft4_ref_high || '',
+    antitpoDone: r.antitpo_status || '', antitpoValue: r.antitpo_value || '', antitpoUnit: r.antitpo_unit || '',
+    antitpoDate: r.antitpo_date || '', antitpoRefLow: r.antitpo_ref_low || '', antitpoRefHigh: r.antitpo_ref_high || '',
+    antitgDone: r.antitg_status || '', antitgValue: r.antitg_value || '', antitgUnit: r.antitg_unit || '',
+    antitgDate: r.antitg_date || '', antitgRefLow: r.antitg_ref_low || '', antitgRefHigh: r.antitg_ref_high || '',
+    vitB12Done: r.vit_b12_status || '', vitB12Value: r.vit_b12_value || '', vitB12Unit: r.vit_b12_unit || '',
+    vitB12Date: r.vit_b12_date || '', vitB12RefLow: r.vit_b12_ref_low || '', vitB12RefHigh: r.vit_b12_ref_high || '',
+    vitD3Done: r.vit_d3_status || '', vitD3Value: r.vit_d3_value || '', vitD3Unit: r.vit_d3_unit || '',
+    vitD3Date: r.vit_d3_date || '', vitD3RefLow: r.vit_d3_ref_low || '', vitD3RefHigh: r.vit_d3_ref_high || '',
+    srIronDone: r.sr_iron_status || '', srIronValue: r.sr_iron_value || '', srIronUnit: r.sr_iron_unit || '',
+    srIronDate: r.sr_iron_date || '', srIronRefLow: r.sr_iron_ref_low || '', srIronRefHigh: r.sr_iron_ref_high || '',
+    srFerritinDone: r.sr_ferritin_status || '', srFerritinValue: r.sr_ferritin_value || '', srFerritinUnit: r.sr_ferritin_unit || '',
+    srFerritinDate: r.sr_ferritin_date || '', srFerritinRefLow: r.sr_ferritin_ref_low || '', srFerritinRefHigh: r.sr_ferritin_ref_high || '',
+    tibcDone: r.tibc_status || '', tibcValue: r.tibc_value || '', tibcUnit: r.tibc_unit || '',
+    tibcDate: r.tibc_date || '', tibcRefLow: r.tibc_ref_low || '', tibcRefHigh: r.tibc_ref_high || '',
+    transferrinSatDone: r.transferrin_sat_status || '', transferrinSatValue: r.transferrin_sat_value || '', transferrinSatUnit: r.transferrin_sat_unit || '',
+    transferrinSatDate: r.transferrin_sat_date || '', transferrinSatRefLow: r.transferrin_sat_ref_low || '', transferrinSatRefHigh: r.transferrin_sat_ref_high || '',
+    srCalciumValue: r.sr_calcium_value || '', srCalciumUnit: r.sr_calcium_unit || '',
+    srCalciumDate: r.sr_calcium_date || '', srCalciumRefLow: r.sr_calcium_ref_low || '', srCalciumRefHigh: r.sr_calcium_ref_high || '',
+    fbsValue: r.fbs_value || '', fbsUnit: r.fbs_unit || '',
+    fbsDate: r.fbs_date || '', fbsRefLow: r.fbs_ref_low || '', fbsRefHigh: r.fbs_ref_high || '',
+    ppbsValue: r.ppbs_value || '', ppbsUnit: r.ppbs_unit || '',
+    ppbsDate: r.ppbs_date || '', ppbsRefLow: r.ppbs_ref_low || '', ppbsRefHigh: r.ppbs_ref_high || '',
+    cbcDone: r.cbc_status || '',
+    cbcDate: r.cbc_date || '',
+    cbcValues: {
+      haemoglobin: cbcSimpleBack('haemoglobin'), rbcCount: cbcSimpleBack('rbc_count'),
+      haematocrit: cbcSimpleBack('haematocrit'), mcv: cbcSimpleBack('mcv'), mch: cbcSimpleBack('mch'),
+      mchc: cbcSimpleBack('mchc'), rdw: cbcSimpleBack('rdw'), wbcTotal: cbcSimpleBack('wbc_total'),
+      plateletCount: cbcSimpleBack('platelet_count'),
+      diffNeutrophils: cbcDiffBack('neutrophils'), diffLymphocytes: cbcDiffBack('lymphocytes'),
+      diffMonocytes: cbcDiffBack('monocytes'), diffEosinophils: cbcDiffBack('eosinophils'),
+      diffBasophils: cbcDiffBack('basophils'),
+    },
+    imagingFinding: r.imaging_finding || '',
+
+    // Module E
     hypoCauseKnown: r.hypo_cause_known ? 'yes' : 'no',
     hypoCause: r.cause || '',
     hypoDuration: { date: r.hypo_duration_date, years: r.hypo_duration_years, months: r.hypo_duration_months, days: r.hypo_duration_days },
@@ -2460,9 +3114,91 @@ function mapDbToForm(r) {
     hashimotos: r.hashimotos_confirmed ? 'yes' : 'no',
     hashimotosAntiTpo: r.hashimotos_anti_tpo || '',
     hashimotosAntiTg: r.hashimotos_anti_tg || '',
+
+    // Module F — symptoms
     fatigue: r.sym_fatigue_status || '',
     fatigueDuration: { date: r.sym_fatigue_since_date, years: r.sym_fatigue_years, months: r.sym_fatigue_months, days: r.sym_fatigue_days },
     fatigueSeverity: r.sym_fatigue_severity || '',
+    weightChange: r.sym_weight_status || '',
+    weightDirection: r.sym_weight_direction || '',
+    weightKg: r.sym_weight_kg_val || '',
+    weightDuration: { date: r.sym_weight_since_date, years: r.sym_weight_years, months: r.sym_weight_months, days: r.sym_weight_days },
+    appetite: r.sym_appetite_status || '',
+    cold: r.sym_cold_status || '',
+    coldDuration: { date: r.sym_cold_since_date, years: r.sym_cold_years, months: r.sym_cold_months, days: r.sym_cold_days },
+    coldImpact: r.sym_cold_impact ? 'yes' : 'no',
+    bowel: r.sym_bowel_status || '',
+    bowelType: r.sym_bowel_type || '',
+    bowelDuration: { date: r.sym_bowel_since_date, years: r.sym_bowel_years, months: r.sym_bowel_months, days: r.sym_bowel_days },
+    abdominal: r.sym_abdominal_status || '',
+    abdominalTypes: r.sym_abdominal_types || [],
+    abdominalDuration: { date: r.sym_abdominal_since_date, years: r.sym_abdominal_years, months: r.sym_abdominal_months, days: r.sym_abdominal_days },
+    skin: r.sym_skin_status || '',
+    skinTypes: r.sym_skin_types || [],
+    skinDuration: { date: r.sym_skin_since_date, years: r.sym_skin_years, months: r.sym_skin_months, days: r.sym_skin_days },
+    periorbital: r.sym_periorbital_status || '',
+    periorbitalDuration: { date: r.sym_periorbital_since_date, years: r.sym_periorbital_years, months: r.sym_periorbital_months, days: r.sym_periorbital_days },
+    facialOedema: r.sym_facial_oedema_status || '',
+    facialOedemaDuration: { date: r.sym_facial_oedema_since_date, years: r.sym_facial_oedema_years, months: r.sym_facial_oedema_months, days: r.sym_facial_oedema_days },
+    pedalOedema: r.sym_pedal_oedema_status || '',
+    pedalOedemaType: r.sym_pedal_oedema_type || '',
+    pedalOedemaDuration: { date: r.sym_pedal_oedema_since_date, years: r.sym_pedal_oedema_years, months: r.sym_pedal_oedema_months, days: r.sym_pedal_oedema_days },
+    hair: r.sym_hair_status || '',
+    hairItems: r.sym_hair_data || {},
+    nails: r.sym_nail_status || '',
+    nailItems: r.sym_nail_data || {},
+    hoarseness: r.sym_hoarseness_status || '',
+    hoarsenessDuration: { date: r.sym_hoarseness_since_date, years: r.sym_hoarseness_years, months: r.sym_hoarseness_months, days: r.sym_hoarseness_days },
+    hoarsenessPattern: r.sym_hoarseness_pattern || '',
+    cramps: r.sym_cramp_status || '',
+    crampsDuration: { date: r.sym_cramp_since_date, years: r.sym_cramp_years, months: r.sym_cramp_months, days: r.sym_cramp_days },
+    weakness: r.sym_weakness_status || '',
+    weaknessLocation: r.sym_weakness_location || '',
+    weaknessDuration: { date: r.sym_weakness_since_date, years: r.sym_weakness_years, months: r.sym_weakness_months, days: r.sym_weakness_days },
+    concentration: r.sym_concentration_status || '',
+    concentrationDuration: { date: r.sym_concentration_since_date, years: r.sym_concentration_years, months: r.sym_concentration_months, days: r.sym_concentration_days },
+    concentrationImpact: r.sym_concentration_impact ? 'yes' : 'no',
+    memory: r.sym_memory_status || '',
+    memoryDuration: { date: r.sym_memory_since_date, years: r.sym_memory_years, months: r.sym_memory_months, days: r.sym_memory_days },
+    memoryImpact: r.sym_memory_impact ? 'yes' : 'no',
+    depression: r.sym_depression_status || '',
+    depressionDuration: { date: r.sym_depression_since_date, years: r.sym_depression_years, months: r.sym_depression_months, days: r.sym_depression_days },
+    depressionSeenDoctor: r.sym_depression_seen_doctor ? 'yes' : 'no',
+    depressionDiagnosed: r.sym_depression_diagnosed ? 'yes' : 'no',
+    depressionOnMed: r.depression_on_med || '',
+    depressionMedName: r.depression_med_name || '',
+    depressionMedDose: r.depression_med_dose || '',
+    depressionMedFreq: r.depression_med_freq || '',
+    depressionMedSince: { date: r.depression_med_since_date, years: r.depression_med_since_years, months: r.depression_med_since_months },
+    hypersomnia: r.sym_hypersomnia_status || '',
+    hypersomniaDuration: { date: r.sym_hypersomnia_since_date, years: r.sym_hypersomnia_years, months: r.sym_hypersomnia_months, days: r.sym_hypersomnia_days },
+    bradycardia: r.sym_bradycardia_status || '',
+    bradycardiaPulse: r.sym_bradycardia_pulse_bpm || '',
+    bradycardiaDuration: { date: r.sym_bradycardia_since_date, years: r.sym_bradycardia_years, months: r.sym_bradycardia_months, days: r.sym_bradycardia_days },
+    giddiness: r.sym_giddiness_status || '',
+    giddinessFreq: r.sym_giddiness_freq || '',
+    giddinessDuration: { date: r.sym_giddiness_since_date, years: r.sym_giddiness_years, months: r.sym_giddiness_months, days: r.sym_giddiness_days },
+    blackout: r.sym_blackout_status || '',
+    blackoutCount: r.sym_blackout_count || '',
+    blackoutLastDate: r.sym_blackout_last_date || '',
+    blackoutAssessed: r.sym_blackout_assessed ? 'yes' : 'no',
+    blackoutDx: r.sym_blackout_dx || '',
+    hearing: r.sym_hearing_status || '',
+    hearingType: r.sym_hearing_type || '',
+    hearingDuration: { date: r.sym_hearing_since_date, years: r.sym_hearing_years, months: r.sym_hearing_months, days: r.sym_hearing_days },
+    reflexes: r.sym_reflexes_status || '',
+    reflexesDuration: { date: r.sym_reflexes_since_date, years: r.sym_reflexes_years, months: r.sym_reflexes_months, days: r.sym_reflexes_days },
+    carpalItems: r.sym_carpal_data || {},
+    macroglossia: r.sym_macroglossia_status || '',
+    acidity: r.acidity_status || '',
+    acidityDuration: { date: r.acidity_since_date, years: r.acidity_years, months: r.acidity_months, days: r.acidity_days },
+    acidityOnMed: r.acidity_on_med || '',
+    acidityMedName: r.acidity_med_name || '',
+    acidityMedDose: r.acidity_med_dose || '',
+    acidityMedFreq: r.acidity_med_freq || '',
+    acidityMedSince: { date: r.acidity_med_since_date, years: r.acidity_med_since_years, months: r.acidity_med_since_months },
+
+    // Module G
     onTreatment: r.on_treatment ? 'yes' : 'no',
     treatmentType: r.treatment_type || '',
     levoDrugName: r.levo_drug_name || '',
@@ -2474,16 +3210,66 @@ function mapDbToForm(r) {
     doseChanged: r.dose_changed_status || '',
     doseChangedDate: r.dose_last_changed_date || '',
     doseChangedReason: r.dose_change_reason_type || '',
-    dyslipidaemia: r.has_dyslipidaemia ? 'yes' : 'no',
-    anaemia: r.has_anaemia ? 'yes' : 'no',
+
+    // Module H — comorbidities
+    dyslipidaemia: r.dyslipidaemia_status || '',
+    dyslipidaemiaDuration: { date: r.dyslipidaemia_since_date, years: r.dyslipidaemia_years, months: r.dyslipidaemia_months, days: r.dyslipidaemia_days },
+    dyslipidaemiaOnMed: r.dyslipidaemia_on_med || '',
+    dyslipidaemiaMedName: r.dyslipidaemia_med_name || '',
+    dyslipidaemiaMedDose: r.dyslipidaemia_med_dose || '',
+    dyslipidaemiaMedTimes: r.dyslipidaemia_med_freq || '',
+    dyslipidaemiaMedSince: { date: r.dyslipidaemia_med_since_date, years: r.dyslipidaemia_med_since_years, months: r.dyslipidaemia_med_since_months },
+
+    anaemia: r.anaemia_status || '',
     anaemiaType: r.anaemia_type || '',
-    pcosPmos: r.has_pcos ? 'yes' : 'no',
+    anaemiaDuration: { date: r.anaemia_since_date, years: r.anaemia_years, months: r.anaemia_months, days: r.anaemia_days },
+    anaemiaOnMed: r.anaemia_on_med || '',
+    anaemiaMedName: r.anaemia_med_name || '',
+    anaemiaMedDose: r.anaemia_med_dose || '',
+    anaemiaMedTimes: r.anaemia_med_freq || '',
+    anaemiaMedSince: { date: r.anaemia_med_since_date, years: r.anaemia_med_since_years, months: r.anaemia_med_since_months },
+
+    diabetes: r.diabetes_status || '',
+    diabetesType: r.diabetes_type || '',
+    diabetesDuration: { date: r.diabetes_since_date, years: r.diabetes_years, months: r.diabetes_months, days: r.diabetes_days },
+    diabetesOnMed: r.diabetes_on_med || '',
+    diabetesMedName: r.diabetes_med_name || '',
+    diabetesMedDose: r.diabetes_med_dose || '',
+    diabetesMedTimes: r.diabetes_med_freq || '',
+    diabetesMedSince: { date: r.diabetes_med_since_date, years: r.diabetes_med_since_years, months: r.diabetes_med_since_months },
+
+    htn: r.htn_status || '',
+    htnDuration: { date: r.htn_since_date, years: r.htn_years, months: r.htn_months, days: r.htn_days },
+    htnOnMed: r.htn_on_med || '',
+    htnMedName: r.htn_med_name || '',
+    htnMedDose: r.htn_med_dose || '',
+    htnMedFreq: r.htn_med_freq || '',
+    htnMedSince: { date: r.htn_med_since_date, years: r.htn_med_since_years, months: r.htn_med_since_months },
+
+    pcosPmos: r.pcos_status || '',
     pcosPmosLabel: r.pcos_pmos_label || '',
-    pcosOnMed: r.pcos_on_medication || '',
+    pcosDuration: { date: r.pcos_since_date, years: r.pcos_years, months: r.pcos_months, days: r.pcos_days },
+    pcosOnMed: r.pcos_on_med || '',
     pcosMedName: r.pcos_med_name || '',
     pcosMedDose: r.pcos_med_dose || '',
-    pcosMedTimes: r.pcos_med_times_per_day || '',
+    pcosMedTimes: r.pcos_med_freq || '',
+    pcosMedSince: { date: r.pcos_med_since_date, years: r.pcos_med_since_years, months: r.pcos_med_since_months },
+
     infertility: r.has_infertility ? 'yes' : 'no',
+
+    osteoporosis: r.osteoporosis_status || '',
+    osteoporosisDEXA: r.osteoporosis_dexa || '',
+    osteoporosisDuration: { date: r.osteoporosis_since_date, years: r.osteoporosis_years, months: r.osteoporosis_months, days: r.osteoporosis_days },
+    osteoporosisOnMed: r.osteoporosis_on_med || '',
+    osteoporosisMedName: r.osteoporosis_med_name || '',
+    osteoporosisMedDose: r.osteoporosis_med_dose || '',
+    osteoporosisMedTimes: r.osteoporosis_med_freq || '',
+    osteoporosisMedSince: { date: r.osteoporosis_med_since_date, years: r.osteoporosis_med_since_years, months: r.osteoporosis_med_since_months },
+
+    familyCancer: r.family_cancer_status || '',
+    familyCancerTypes: r.family_cancer_types || [],
+    familyCancerRelative: r.family_cancer_relative || '',
+
     additionalNotes: r.additional_notes || '',
   };
 }
