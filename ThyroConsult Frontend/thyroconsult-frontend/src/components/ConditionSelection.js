@@ -106,12 +106,6 @@ const ConditionSelection = ({ patientId, doctorId, onComplete, onBack }) => {
 
       {error && <Alert type="error" message={error} style={{ marginBottom: 16 }} />}
 
-      {/* ── Important notice ── */}
-      <div style={{ padding: '10px 14px', background: '#fffde7', border: '1px solid #f9d923', borderRadius: 8, marginBottom: 20, fontSize: 12, color: '#7a6000', display: 'flex', gap: 8 }}>
-        <span>ℹ️</span>
-        <span>If you have more than one condition, select the one you are seeking an online opinion for today. You can register for other conditions later from your dashboard.</span>
-      </div>
-
       {/* ── Condition cards ── */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 24 }}>
         {CONDITIONS.map(cond => (

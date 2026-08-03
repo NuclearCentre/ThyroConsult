@@ -92,7 +92,15 @@ const AddConditionFlow = ({ patient, resumeEpisode, onClose, onDone }) => {
       setSub(SUB.PAYMENT);
     } catch (err) {
       console.error('Failed to assign chosen doctor to episode:', err);
-      setPaymentError('Could not confirm your doctor choice. Please try again.');
+      // Previously set paymentError here, but that's only ever rendered
+      // inside the PAYMENT sub-step — since sub never advances past
+      // DOCTOR on this path, the message was invisible, and SelectDoctor's
+      // own "Continue to payment" button had no way to know the call
+      // failed, so it stayed stuck showing its spinner forever. Re-throw
+      // instead so SelectDoctor (still mounted, with its own always-
+      // visible error banner) can catch and display it, and reset its
+      // own button state.
+      throw err;
     }
   };
 
@@ -154,7 +162,17 @@ const AddConditionFlow = ({ patient, resumeEpisode, onClose, onDone }) => {
       rzp.open();
     } catch (err) {
       console.error('Payment error:', err);
-      setPaymentError('Could not start payment. Please try again.');
+      // A 409 here means this episode's initial payment was already
+      // completed — most likely reached via a stale "My Conditions" list
+      // that didn't show the already-submitted condition, so the patient
+      // clicked "+ Add condition" again for the same one. Surface that
+      // plainly instead of a generic "please try again", which just
+      // invites pointlessly retrying an already-paid order.
+      if (err?.response?.status === 409) {
+        setPaymentError('This condition has already been paid for and submitted — check "My Conditions" on your dashboard. If you don\'t see it there, please refresh the page.');
+      } else {
+        setPaymentError(err?.response?.data?.error || 'Could not start payment. Please try again.');
+      }
     } finally {
       setPaying(false);
     }
@@ -254,18 +272,23 @@ const EpisodeStatusModal = ({ episodeId, onClose }) => {
 };
 
 // ─── My Conditions page ────────────────────────────────────
-const MyConditions = ({ patient, onAddCondition, onResumeCondition }) => {
+const MyConditions = ({ patient, onAddCondition, onResumeCondition, conditionsRefreshKey }) => {
   const [episodes, setEpisodes] = useState([]);
   const [loading, setLoading]   = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [statusEpisodeId, setStatusEpisodeId] = useState(null);
 
-  useEffect(() => {
+  const loadEpisodes = () => {
     if (!patient?.id) return;
+    setLoading(true);
+    setLoadError('');
     patientAPI.getEpisodes(patient.id)
       .then(eps => setEpisodes(eps || []))
-      .catch(() => {})
+      .catch(() => setLoadError('Could not load your conditions. Please try again — do not add a condition again without checking first.'))
       .finally(() => setLoading(false));
-  }, [patient]);
+  };
+
+  useEffect(loadEpisodes, [patient, conditionsRefreshKey]);
 
   if (loading) return <div style={{ display:'flex', justifyContent:'center', padding:32 }}><Spinner /></div>;
 
@@ -274,7 +297,14 @@ const MyConditions = ({ patient, onAddCondition, onResumeCondition }) => {
       <SectionHeader title="My conditions" subtitle="Each condition has its own questionnaire and treatment history"
         action={<button className="btn btn-primary btn-sm" onClick={onAddCondition}>+ Add condition</button>}
       />
-      {episodes.length === 0 ? (
+      {loadError ? (
+        <div className="card" style={{ textAlign:'center', padding:'48px 24px' }}>
+          <div style={{ fontSize:40, marginBottom:12 }}>⚠️</div>
+          <div style={{ fontFamily:'var(--font-display)', fontSize:17, marginBottom:6, color: 'var(--red-700, #991b1b)' }}>Could not load your conditions</div>
+          <div style={{ fontSize:13, color:'var(--text-secondary)', marginBottom:20 }}>{loadError}</div>
+          <button className="btn btn-secondary" onClick={loadEpisodes}>Retry</button>
+        </div>
+      ) : episodes.length === 0 ? (
         <div className="card" style={{ textAlign:'center', padding:'48px 24px' }}>
           <div style={{ fontSize:40, marginBottom:12 }}>🩺</div>
           <div style={{ fontFamily:'var(--font-display)', fontSize:17, marginBottom:6 }}>No conditions added yet</div>
@@ -382,7 +412,7 @@ const PatientLayout = ({ children, patient, onLanguageChange, keepAsDefault, onK
 );
 
 // ─── Dashboard overview ────────────────────────────────────
-const Dashboard = ({ patient, opinions, invoices, onAddCondition, onResumeCondition }) => {
+const Dashboard = ({ patient, opinions, invoices, onAddCondition, onResumeCondition, conditionsRefreshKey }) => {
   const [bloodValues, setBloodValues] = useState([]);
   useEffect(() => {
     if (patient) {
@@ -427,7 +457,7 @@ const Dashboard = ({ patient, opinions, invoices, onAddCondition, onResumeCondit
           <div className="card-title" style={{ margin:0 }}>My conditions</div>
           <button className="btn btn-primary btn-sm" onClick={onAddCondition}>+ Add condition</button>
         </div>
-        <ConditionsMiniList patientId={patient?.id} onResumeCondition={onResumeCondition} />
+        <ConditionsMiniList patientId={patient?.id} onResumeCondition={onResumeCondition} conditionsRefreshKey={conditionsRefreshKey} />
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
@@ -482,15 +512,18 @@ const ReportTrends = ({ patient }) => {
   const [selectedTest, setSelectedTest] = useState('TSH');
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     if (!patient) return;
     setLoading(true);
+    setLoadError('');
     patientAPI.getBloodValues({ testName: selectedTest })
       .then(r => setData(r.values))
-      .catch(() => {})
+      .catch(() => setLoadError('Could not load this trend. Please try again.'))
       .finally(() => setLoading(false));
-  }, [patient, selectedTest]);
+  }, [patient, selectedTest, reloadTick]);
 
   const chartData = data.map(v => ({
     date: new Date(v.report_date).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'2-digit' }),
@@ -530,6 +563,13 @@ const ReportTrends = ({ patient }) => {
         </div>
 
         {loading ? <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><Spinner size={28} /></div>
+        : loadError
+          ? (
+            <div style={{ textAlign: 'center', padding: 40 }}>
+              <div style={{ fontSize: 13, color: 'var(--red-700, #991b1b)', marginBottom: 12 }}>⚠️ {loadError}</div>
+              <button className="btn btn-secondary btn-sm" onClick={() => setReloadTick(t => t + 1)}>Retry</button>
+            </div>
+          )
         : chartData.length < 2
           ? <EmptyState icon="📊" title="Not enough data" subtitle={`Upload blood reports containing ${selectedTest} values to see the trend graph`} />
           : (
@@ -566,19 +606,31 @@ const ReportTrends = ({ patient }) => {
 
 // ─── Invoices ──────────────────────────────────────────────
 const Invoices = ({ patient, invoices }) => {
+  const [invoiceDownloadError, setInvoiceDownloadError] = useState('');
   const downloadInvoice = async (paymentId, invoiceNumber) => {
     // patientAPI.downloadInvoice never existed — the real PDF receipt
     // download is receiptAPI.downloadOpinionReceipt. getBlob() (used
     // under the hood) returns the Blob directly, not wrapped in .data.
-    const blob = await receiptAPI.downloadOpinionReceipt(paymentId);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = `${invoiceNumber}.pdf`; a.click();
+    setInvoiceDownloadError('');
+    try {
+      const blob = await receiptAPI.downloadOpinionReceipt(paymentId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = `${invoiceNumber}.pdf`; a.click();
+    } catch (err) {
+      console.error('downloadInvoice error:', err);
+      setInvoiceDownloadError('Could not download this receipt. Please try again.');
+    }
   };
 
   return (
     <>
       <SectionHeader title="Invoices" subtitle="Auto-generated after each opinion" action={<span className="badge badge-blue">Download anytime</span>} />
       <div className="card">
+        {invoiceDownloadError && (
+          <div style={{ padding: '8px 12px', background: '#fee2e2', color: '#991b1b', borderRadius: 6, fontSize: 13, marginBottom: 12 }}>
+            {invoiceDownloadError}
+          </div>
+        )}
         {invoices.length === 0 ? <EmptyState icon="🧾" title="No invoices yet" subtitle="Invoices appear here after each paid opinion" /> : (
           <table className="data-table">
             <thead>
@@ -612,18 +664,28 @@ const Invoices = ({ patient, invoices }) => {
 };
 
 // ─── Conditions mini list (used inside Dashboard card) ─────
-const ConditionsMiniList = ({ patientId, onResumeCondition }) => {
+const ConditionsMiniList = ({ patientId, onResumeCondition, conditionsRefreshKey }) => {
   const [episodes, setEpisodes] = useState([]);
   const [loading, setLoading]   = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [statusEpisodeId, setStatusEpisodeId] = useState(null);
-  useEffect(() => {
+  const loadEpisodes = () => {
     if (!patientId) return;
+    setLoading(true);
+    setLoadError('');
     patientAPI.getEpisodes(patientId)
       .then(eps => setEpisodes(eps || []))
-      .catch(() => {})
+      .catch(() => setLoadError('Could not load — please retry before adding a condition.'))
       .finally(() => setLoading(false));
-  }, [patientId]);
+  };
+  useEffect(loadEpisodes, [patientId, conditionsRefreshKey]);
   if (loading) return <Spinner size={18} />;
+  if (loadError) return (
+    <div style={{ fontSize:13, color:'var(--red-700, #991b1b)', padding:'4px 0', display: 'flex', alignItems: 'center', gap: 8 }}>
+      ⚠️ {loadError}
+      <button onClick={loadEpisodes} style={{ background: 'none', border: 'none', textDecoration: 'underline', color: 'var(--red-700, #991b1b)', cursor: 'pointer', fontSize: 13 }}>Retry</button>
+    </div>
+  );
   if (episodes.length === 0) return (
     <div style={{ fontSize:13, color:'var(--text-tertiary)', padding:'4px 0' }}>No conditions added yet. Click "+ Add condition" to begin.</div>
   );
@@ -711,10 +773,20 @@ const PatientPortal = () => {
   const [loading, setLoading] = useState(true);
   const [showAddCondition, setShowAddCondition] = useState(false);
   const [resumeTarget, setResumeTarget] = useState(null); // { id, condition } — set by "Resume" on an in-progress episode
+  // Bumped every time the Add-Condition modal closes, so ConditionsMiniList
+  // (which otherwise only fetches once on mount) knows to refetch. Without
+  // this, a just-submitted or newly-added condition simply never appeared
+  // in "My Conditions" — patients seeing nothing there would click "+ Add
+  // condition" again for the SAME condition, which (since selectCondition
+  // returns the existing episode rather than creating a duplicate) walked
+  // them straight back into Payment for an episode that was already paid,
+  // surfacing as "Could not start payment" from createOrder's 409.
+  const [conditionsRefreshKey, setConditionsRefreshKey] = useState(0);
 
   const closeAddCondition = () => {
     setShowAddCondition(false);
     setResumeTarget(null); // so the next "+ Add condition" click starts fresh at SELECT, not stuck resuming the last episode
+    setConditionsRefreshKey(k => k + 1);
   };
 
   // "Keep as default" starts TRUE — whatever was just fetched from the
@@ -789,8 +861,8 @@ const PatientPortal = () => {
         />
       )}
       <Routes>
-        <Route path="dashboard" element={<Dashboard patient={patient} opinions={opinions} invoices={invoices} onAddCondition={() => setShowAddCondition(true)} onResumeCondition={resumeCondition} />} />
-        <Route path="conditions" element={<MyConditions patient={patient} onAddCondition={() => setShowAddCondition(true)} onResumeCondition={resumeCondition} />} />
+        <Route path="dashboard" element={<Dashboard patient={patient} opinions={opinions} invoices={invoices} onAddCondition={() => setShowAddCondition(true)} onResumeCondition={resumeCondition} conditionsRefreshKey={conditionsRefreshKey} />} />
+        <Route path="conditions" element={<MyConditions patient={patient} onAddCondition={() => setShowAddCondition(true)} onResumeCondition={resumeCondition} conditionsRefreshKey={conditionsRefreshKey} />} />
         <Route path="opinions" element={
           <>
             <SectionHeader title="Opinion history" />
@@ -925,23 +997,32 @@ const DocumentsPage = ({ patientId }) => {
   const [docs, setDocs] = useState([]);
   const [category, setCategory] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [downloadError, setDownloadError] = useState('');
 
   const loadDocs = () => {
     if (!patientId) return;
     setLoading(true);
+    setLoadError('');
     patientAPI.getDocuments(category || undefined)
       .then(r => setDocs(r.documents || []))
-      .catch(() => {})
+      .catch(() => setLoadError('Could not load documents. Please try again.'))
       .finally(() => setLoading(false));
   };
 
   useEffect(loadDocs, [patientId, category]);
 
   const download = async (docId, name) => {
-    // getBlob() returns the Blob directly, not wrapped in .data.
-    const blob = await patientAPI.downloadDocument(docId);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = name; a.click();
+    setDownloadError('');
+    try {
+      // getBlob() returns the Blob directly, not wrapped in .data.
+      const blob = await patientAPI.downloadDocument(docId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = name; a.click();
+    } catch (err) {
+      console.error('document download error:', err);
+      setDownloadError('Could not download this document. Please try again.');
+    }
   };
 
   const catLabels = { blood_report:'🩸 Blood reports', scan_usg:'📡 Scan/USG', prescription:'💊 Prescriptions', biopsy:'🔬 Biopsy', other:'📄 Other' };
@@ -984,7 +1065,14 @@ const DocumentsPage = ({ patientId }) => {
           </button>
         ))}
       </div>
+      {(loadError || downloadError) && (
+        <div style={{ padding: '8px 12px', background: '#fee2e2', color: '#991b1b', borderRadius: 6, fontSize: 13, marginBottom: 12 }}>
+          {loadError || downloadError}
+          {loadError && <button onClick={loadDocs} style={{ marginLeft: 10, background: 'none', border: 'none', textDecoration: 'underline', color: '#991b1b', cursor: 'pointer', fontSize: 13 }}>Retry</button>}
+        </div>
+      )}
       {loading ? <div style={{ display:'flex', justifyContent:'center', padding:32 }}><Spinner /></div>
+      : loadError ? null
       : docs.length === 0 ? <EmptyState icon="📁" title="No documents" subtitle="Upload documents during registration or from this page" />
       : Object.entries(folders).map(([episodeKey, folder]) => (
         <div key={episodeKey} style={{ marginBottom: 20 }}>

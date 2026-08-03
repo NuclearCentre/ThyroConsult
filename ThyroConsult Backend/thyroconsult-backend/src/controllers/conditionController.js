@@ -536,8 +536,7 @@ const HYPO_Q_COLUMNS = [
   'acidity_days', 'acidity_med_dose', 'acidity_med_freq', 'acidity_med_name',
   'acidity_med_since_date', 'acidity_med_since_months', 'acidity_med_since_years',
   'acidity_months', 'acidity_on_med', 'acidity_since_date', 'acidity_status', 'acidity_years',
-  'additional_notes', 'anaemia_days', 'anaemia_med_dose', 'anaemia_med_freq', 'anaemia_med_name',
-  'anaemia_med_since_date', 'anaemia_med_since_months', 'anaemia_med_since_years',
+  'additional_notes', 'anaemia_days', 'anaemia_meds',
   'anaemia_months', 'anaemia_on_med', 'anaemia_since_date', 'anaemia_status', 'anaemia_type',
   'anaemia_years', 'anti_tg_positive', 'anti_tpo_positive', 'antitg_date', 'antitg_ref_high',
   'antitg_ref_low', 'antitg_status', 'antitg_unit', 'antitg_value', 'antitpo_date',
@@ -572,35 +571,30 @@ const HYPO_Q_COLUMNS = [
   'depression_diagnosed', 'depression_med_dose', 'depression_med_freq', 'depression_med_name',
   'depression_med_since_date', 'depression_med_since_months', 'depression_med_since_years',
   'depression_months', 'depression_on_med', 'depression_since_date', 'depression_status',
-  'depression_years', 'diabetes_days', 'diabetes_duration_months', 'diabetes_med_dose',
-  'diabetes_med_freq', 'diabetes_med_name', 'diabetes_med_since_date',
-  'diabetes_med_since_months', 'diabetes_med_since_years', 'diabetes_months', 'diabetes_on_med',
+  'depression_years', 'diabetes_days', 'diabetes_duration_months', 'diabetes_meds',
+  'diabetes_months', 'diabetes_on_med',
   'diabetes_since_date', 'diabetes_status', 'diabetes_type', 'diabetes_years',
-  'dose_change_reason_type', 'dose_last_changed_date', 'dose_last_changed_reason',
-  'dyslipidaemia_days', 'dyslipidaemia_med_dose', 'dyslipidaemia_med_freq',
-  'dyslipidaemia_med_name', 'dyslipidaemia_med_since_date', 'dyslipidaemia_med_since_months',
-  'dyslipidaemia_med_since_years', 'dyslipidaemia_med_times', 'dyslipidaemia_months',
+  'dose_change_reason_type', 'dose_changed_status', 'dose_last_changed_date', 'dose_last_changed_reason',
+  'dyslipidaemia_days', 'dyslipidaemia_meds', 'dyslipidaemia_months',
   'dyslipidaemia_on_med', 'dyslipidaemia_since_date', 'dyslipidaemia_status',
   'dyslipidaemia_years', 'edd_date', 'family_cancer_relative', 'family_cancer_status',
   'family_cancer_types', 'ft3_date', 'ft3_ref_high', 'ft3_ref_low', 'ft3_status', 'ft3_unit',
   'ft3_value', 'ft4_date', 'ft4_ref_high', 'ft4_ref_low', 'ft4_status', 'ft4_unit', 'ft4_value',
   'goitre_present', 'goitre_size', 'goitre_size_value', 'has_infertility', 'hashimotos_anti_tg',
-  'hashimotos_anti_tpo', 'hashimotos_confirmed', 'htn_days', 'htn_med_dose', 'htn_med_freq',
-  'htn_med_name', 'htn_med_since_date', 'htn_med_since_months', 'htn_med_since_years',
+  'hashimotos_anti_tpo', 'hashimotos_anti_tg_value', 'hashimotos_anti_tpo_value', 'hashimotos_confirmed',
+  'anaemia_types', 'htn_days', 'htn_meds',
   'htn_months', 'htn_on_med', 'htn_since_date', 'htn_status', 'htn_years', 'hypo_cause_known',
   'hypo_duration_date', 'hypo_duration_days', 'hypo_duration_months', 'hypo_duration_years',
   'hysterectomy_date', 'hysterectomy_date_precision', 'hysterectomy_month',
   'hysterectomy_reason', 'hysterectomy_reason_other', 'hysterectomy_status', 'hysterectomy_year',
-  'imaging_finding', 'infertility_status', 'is_subclinical', 'levo_brand', 'levo_compliance_val',
-  'levo_dose_mcg', 'levo_drug_name', 'levo_timing', 'lmp_date', 'marital_status',
+  'imaging_finding', 'infertility_status', 'is_subclinical', 'lmp_date', 'marital_status',
   'menopause_status', 'menopause_years_ago', 'menstrual_change_status', 'menstrual_flow',
   'menstrual_months', 'menstrual_pattern', 'menstrual_since_date', 'menstrual_years',
   'next_review_date', 'occupation', 'occupation_other', 'on_treatment', 'osteoporosis_days',
   'osteoporosis_dexa', 'osteoporosis_med_dose', 'osteoporosis_med_freq', 'osteoporosis_med_name',
   'osteoporosis_med_since_date', 'osteoporosis_med_since_months', 'osteoporosis_med_since_years',
   'osteoporosis_months', 'osteoporosis_on_med', 'osteoporosis_since_date', 'osteoporosis_status',
-  'osteoporosis_years', 'pcos_days', 'pcos_med_dose', 'pcos_med_freq', 'pcos_med_name',
-  'pcos_med_since_date', 'pcos_med_since_months', 'pcos_med_since_years', 'pcos_months',
+  'osteoporosis_years', 'pcos_days', 'pcos_meds', 'pcos_months',
   'pcos_on_med', 'pcos_pmos_label', 'pcos_since_date', 'pcos_status', 'pcos_years',
   'pregnancy_status', 'rai_administrations', 'review_frequency', 'sr_ferritin_date',
   'sr_ferritin_ref_high', 'sr_ferritin_ref_low', 'sr_ferritin_status', 'sr_ferritin_unit',
@@ -631,7 +625,7 @@ const HYPO_Q_COLUMNS = [
   'sym_hoarseness_since_date', 'sym_hoarseness_status', 'sym_hoarseness_years',
   'sym_hypersomnia_days', 'sym_hypersomnia_months', 'sym_hypersomnia_since_date',
   'sym_hypersomnia_status', 'sym_hypersomnia_years', 'sym_macroglossia',
-  'sym_macroglossia_status', 'sym_memory_days', 'sym_memory_impact', 'sym_memory_months',
+  'sym_macroglossia_status', 'sym_macroglossia_days', 'sym_macroglossia_months', 'sym_macroglossia_since_date', 'sym_macroglossia_years', 'sym_memory_days', 'sym_memory_impact', 'sym_memory_months',
   'sym_memory_since_date', 'sym_memory_status', 'sym_memory_years', 'sym_myxoedema',
   'sym_nail_data', 'sym_nail_status', 'sym_pedal_oedema_days', 'sym_pedal_oedema_months',
   'sym_pedal_oedema_since_date', 'sym_pedal_oedema_status', 'sym_pedal_oedema_type',
@@ -648,7 +642,11 @@ const HYPO_Q_COLUMNS = [
   'tg_ref_high', 'tg_ref_low', 'tg_status', 'tg_unit', 'tg_value', 'tgab_date', 'tgab_ref_high',
   'tgab_ref_low', 'tgab_status', 'tgab_unit', 'tgab_value', 'thyroid_med_brand',
   'thyroid_med_compliance', 'thyroid_med_dose', 'thyroid_med_name', 'thyroid_med_since_months',
-  'thyroid_med_since_years', 'thyroid_med_status', 'thyroid_med_timing', 'tibc_date',
+  'thyroid_med_since_years', 'thyroid_med_status', 'thyroid_med_timing',
+  'liothyronine_brand', 'liothyronine_name', 'liothyronine_dose', 'liothyronine_timing',
+  'liothyronine_compliance', 'liothyronine_since_years', 'liothyronine_since_months',
+  'liothyronine_dose_changed_status', 'liothyronine_dose_changed_date', 'liothyronine_dose_change_reason',
+  'sym_hearing_data', 'tibc_date',
   'tibc_ref_high', 'tibc_ref_low', 'tibc_status', 'tibc_unit', 'tibc_value', 'trab_date',
   'trab_ref_high', 'trab_ref_low', 'trab_status', 'trab_unit', 'trab_value',
   'transferrin_sat_date', 'transferrin_sat_ref_high', 'transferrin_sat_ref_low',
@@ -660,7 +658,7 @@ const HYPO_Q_COLUMNS = [
   'vit_b12_unit', 'vit_b12_value', 'vit_d3_date', 'vit_d3_ref_high', 'vit_d3_ref_low',
   'vit_d3_status', 'vit_d3_unit', 'vit_d3_value'
 ];
-const HYPO_Q_JSONB_COLUMNS = new Set(['rai_administrations', 'sym_carpal_data', 'sym_hair_data', 'sym_nail_data']);
+const HYPO_Q_JSONB_COLUMNS = new Set(['rai_administrations', 'sym_carpal_data', 'sym_hair_data', 'sym_nail_data', 'sym_hearing_data', 'anaemia_meds', 'diabetes_meds', 'dyslipidaemia_meds', 'htn_meds', 'pcos_meds', 'anaemia_types']);
 
 const saveHypoQuestionnaire = async (req, res) => {
   const patientId = req.user.patientId;
@@ -746,6 +744,7 @@ const getHypoQuestionnaire = async (req, res) => {
 // hand-edit column names here.
 // ─────────────────────────────────────────────────────────
 const HYPER_Q_COLUMNS = [
+  'anaemia_meds', 'diabetes_meds', 'dyslipidaemia_meds', 'htn_meds', 'pcos_meds',
   'acidity_days', 'acidity_med_dose', 'acidity_med_freq', 'acidity_med_name',
   'acidity_med_since_date', 'acidity_med_since_months', 'acidity_med_since_years',
   'acidity_months', 'acidity_on_med', 'acidity_since_date', 'acidity_status', 'acidity_years',
@@ -887,7 +886,7 @@ const HYPER_Q_COLUMNS = [
   'vit_d3_date', 'vit_d3_ref_high', 'vit_d3_ref_low', 'vit_d3_status', 'vit_d3_unit',
   'vit_d3_value'
 ];
-const HYPER_Q_JSONB_COLUMNS = new Set(['autoimmune_data', 'family_thyroid_data', 'rai_administrations', 'sym_af_med_data', 'sym_hair_data', 'sym_nail_data']);
+const HYPER_Q_JSONB_COLUMNS = new Set(['autoimmune_data', 'family_thyroid_data', 'rai_administrations', 'sym_af_med_data', 'sym_hair_data', 'sym_nail_data', 'anaemia_meds', 'diabetes_meds', 'dyslipidaemia_meds', 'htn_meds', 'pcos_meds']);
 
 const saveHyperQuestionnaire = async (req, res) => {
   const patientId = req.user.patientId;
@@ -973,6 +972,7 @@ const getHyperQuestionnaire = async (req, res) => {
 // hand-edit column names here.
 // ─────────────────────────────────────────────────────────
 const TC_Q_COLUMNS = [
+  'anaemia_meds', 'diabetes_meds', 'dyslipidaemia_meds', 'htn_meds', 'pcos_meds',
   'abdominal_months', 'abdominal_since_date', 'abdominal_status', 'abdominal_types',
   'abdominal_years', 'acidity_days', 'acidity_med_dose', 'acidity_med_freq', 'acidity_med_name',
   'acidity_med_since_date', 'acidity_med_since_months', 'acidity_med_since_years',
@@ -1058,7 +1058,10 @@ const TC_Q_COLUMNS = [
   'leg_oedema_since_date', 'leg_oedema_status', 'leg_oedema_type', 'leg_oedema_years',
   'levo_brand', 'levo_compliance', 'levo_dose_mcg', 'levo_drug_name', 'levo_since_months',
   'levo_since_years', 'levo_timing', 'levothyroxine_brand', 'levothyroxine_compliance',
-  'levothyroxine_dose_mcg', 'lmp_date', 'm_stage', 'macroglossia_status', 'marital_status',
+  'levothyroxine_dose_mcg', 'liothyronine_brand', 'liothyronine_name', 'liothyronine_dose',
+  'liothyronine_timing', 'liothyronine_compliance', 'liothyronine_since_years',
+  'liothyronine_since_months', 'liothyronine_dose_changed_status', 'liothyronine_dose_changed_date',
+  'liothyronine_dose_change_reason', 'lmp_date', 'm_stage', 'macroglossia_status', 'marital_status',
   'memory_months', 'memory_since_date', 'memory_status', 'memory_years', 'menopause_status',
   'menopause_years_ago', 'menstrual_change_status', 'menstrual_flow', 'menstrual_months',
   'menstrual_pattern', 'menstrual_since_date', 'menstrual_years', 'metastasis_date',
@@ -1113,7 +1116,7 @@ const TC_Q_COLUMNS = [
   'vit_d3_value', 'weight_change_status', 'weight_direction', 'weight_kg', 'weight_months',
   'weight_since_date', 'weight_years'
 ];
-const TC_Q_JSONB_COLUMNS = new Set(['rai_administrations']);
+const TC_Q_JSONB_COLUMNS = new Set(['rai_administrations', 'anaemia_meds', 'diabetes_meds', 'dyslipidaemia_meds', 'htn_meds', 'pcos_meds']);
 
 const saveTcQuestionnaire = async (req, res) => {
   const patientId = req.user.patientId;
@@ -1199,6 +1202,7 @@ const getTcQuestionnaire = async (req, res) => {
 // hand-edit column names here.
 // ─────────────────────────────────────────────────────────
 const NODULE_Q_COLUMNS = [
+  'anaemia_meds', 'diabetes_meds', 'dyslipidaemia_meds', 'htn_meds', 'pcos_meds',
   'acidity_days', 'acidity_med_dose', 'acidity_med_freq', 'acidity_med_name',
   'acidity_med_since_date', 'acidity_med_since_months', 'acidity_med_since_years',
   'acidity_months', 'acidity_on_med', 'acidity_since_date', 'acidity_status', 'acidity_years',
@@ -1323,7 +1327,7 @@ const NODULE_Q_COLUMNS = [
   'vit_d3_unit', 'vit_d3_value', 'voice_fatigue_status', 'weight_change_status',
   'weight_direction', 'weight_kg', 'weight_months', 'weight_since_date', 'weight_years'
 ];
-const NODULE_Q_JSONB_COLUMNS = new Set(['rai_administrations']);
+const NODULE_Q_JSONB_COLUMNS = new Set(['rai_administrations', 'anaemia_meds', 'diabetes_meds', 'dyslipidaemia_meds', 'htn_meds', 'pcos_meds']);
 
 const saveNoduleQuestionnaire = async (req, res) => {
   const patientId = req.user.patientId;

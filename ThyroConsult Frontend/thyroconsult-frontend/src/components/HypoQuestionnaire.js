@@ -103,6 +103,38 @@ const QuestionnaireFooter = ({ onBack, onSave, saving, onSaveAndContinue }) => (
 // ═══════════════════════════════════════════════════════════
 // HYPOTHYROIDISM QUESTIONNAIRE
 // ═══════════════════════════════════════════════════════════
+
+// ─── Thyroid medication brand → generic name + available doses ───
+// ─── Thyroid medication brand → generic name + available doses ───
+const THYROID_MED_BRANDS = {
+  'Eltroxin':    { generic: 'Thyroxine Sodium', doses: [25, 50, 100] },
+  'Thyronorm':   { generic: 'Thyroxine Sodium', doses: [12.5, 25, 37.5, 50, 62.5, 75, 88, 100, 112, 125, 137, 150, 200] },
+  'Thyrox':      { generic: 'Thyroxine Sodium', doses: [50, 62.5, 88, 100, 150] },
+  'L-Thyroid':   { generic: 'Thyroxine Sodium', doses: [25, 50, 75, 88, 150] },
+  'Thyroactiv':  { generic: 'Thyroxine Sodium', doses: [12.5, 25, 50, 75, 100] },
+  'Thyro-Fresh': { generic: 'Thyroxine Sodium', doses: [100] },
+  'Thyroford':   { generic: 'Thyroxine Sodium', doses: [50] },
+  'Tyroxil':     { generic: 'Thyroxine Sodium', doses: [25, 50, 100] },
+  'Thyine':      { generic: 'Thyroxine Sodium', doses: [75] },
+  'Lythrox':     { generic: 'Thyroxine Sodium', doses: [12.5, 25, 50, 75] },
+  'Thyronex':    { generic: 'Thyroxine Sodium', doses: [12.5, 25, 50] },
+  'Thyrocip':    { generic: 'Thyroxine Sodium', doses: [100] },
+  'Toskiv':      { generic: 'Thyroxine Sodium', doses: [100] },
+  'L-Thyrox':    { generic: 'Levothyroxine Sodium', doses: [25] },
+  'Euthyrox':    { generic: 'Levothyroxine Sodium', doses: [100] },
+  'Lethyrox':    { generic: 'Levothyroxine Sodium', doses: [50] },
+};
+
+// ─── Liothyronine (LT3) brand → generic name + available doses (mcg) ───
+const LIOTHYRONINE_BRANDS = {
+  'Thyonin':    { generic: 'Liothyronine Sodium', doses: [5, 25, 50] },
+  'Tertroxin':  { generic: 'Liothyronine Sodium', doses: [5, 25, 50] },
+  'Linorma T':  { generic: 'Liothyronine Sodium', doses: [5, 25, 50] },
+  'Thyro3':     { generic: 'Liothyronine Sodium', doses: [5, 25, 50] },
+  'Liorel':     { generic: 'Liothyronine Sodium', doses: [5, 25, 50] },
+  'Cytomel':    { generic: 'Liothyronine Sodium', doses: [5, 25, 50] },
+};
+
 // ─── Shared UI primitives ─────────────────────────────────
 const HypoField = ({ label, hint, children }) => (
   <div style={{ marginBottom: 12 }}>
@@ -112,8 +144,16 @@ const HypoField = ({ label, hint, children }) => (
   </div>
 );
 
-const HypoRadioGroup = ({ options, value, onChange, horizontal }) => (
-  <div style={{ display: 'flex', flexDirection: horizontal ? 'row' : 'column', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+// Fixed min-height applied to every option pill so screens with short vs.
+// long option labels (e.g. "No" vs "Every time I stand") don't produce
+// visibly uneven box heights as the patient navigates back and forth.
+// Text still wraps to 2 lines for long labels rather than being clipped —
+// only the minimum is fixed, so nothing is cut off.
+const HYPO_OPTION_MIN_HEIGHT = 40;
+
+const HypoRadioGroup = ({ options, value, onChange, horizontal, noMargin }) => (
+  <div data-hyporeq-type="select" data-hyporeq-filled={value ? 'true' : 'false'}
+    style={{ display: 'flex', flexDirection: horizontal ? 'row' : 'column', flexWrap: 'wrap', gap: 8, marginBottom: noMargin ? 0 : 12 }}>
     {options.map(([val, label]) => (
       <div key={val} onClick={() => onChange(val)} style={{
         display: 'flex', alignItems: 'center', gap: 8,
@@ -122,6 +162,7 @@ const HypoRadioGroup = ({ options, value, onChange, horizontal }) => (
         background: value === val ? 'var(--teal-50)' : 'var(--surface)',
         color: value === val ? 'var(--teal-700)' : 'var(--text-primary)',
         fontSize: 13, flex: horizontal ? '1 1 auto' : undefined,
+        minHeight: HYPO_OPTION_MIN_HEIGHT, boxSizing: 'border-box',
       }}>
         <div style={{
           width: 14, height: 14, borderRadius: '50%', flexShrink: 0,
@@ -138,7 +179,8 @@ const HypoRadioGroup = ({ options, value, onChange, horizontal }) => (
 );
 
 const HypoMultiSelect = ({ options, value = [], onChange }) => (
-  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+  <div data-hyporeq-type="select" data-hyporeq-filled={value.length ? 'true' : 'false'}
+    style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
     {options.map(([val, label]) => {
       const sel = value.includes(val);
       return (
@@ -148,7 +190,54 @@ const HypoMultiSelect = ({ options, value = [], onChange }) => (
           background: sel ? 'var(--teal-50)' : 'transparent',
           color: sel ? 'var(--teal-700)' : 'var(--text-secondary)',
           fontWeight: sel ? 500 : 400,
+          minHeight: HYPO_OPTION_MIN_HEIGHT, boxSizing: 'border-box',
+          display: 'flex', alignItems: 'center',
         }}>{label}</div>
+      );
+    })}
+  </div>
+);
+
+// ── Pill-style checkbox row, used for the multi-select dose grid (item 2)
+// and the investigation-selection checkboxes (item 3). Distinct from
+// HypoMultiSelect (rounded pill tags) — this is a checkbox-style grid,
+// fixed at 5 items per row per the dose-picker spec, wrapping naturally
+// for lists shorter than 5.
+const HypoCheckPillGrid = ({ options, value = [], onChange, perRow = 5 }) => (
+  <div data-hyporeq-type="select" data-hyporeq-filled={value.length ? 'true' : 'false'}
+    style={{ display: 'grid', gridTemplateColumns: `repeat(${perRow}, 1fr)`, gap: 8, marginBottom: 12 }}>
+    {options.map(([val, label]) => {
+      const sel = value.includes(val);
+      return (
+        <div key={val} onClick={() => onChange(sel ? value.filter(v => v !== val) : [...value, val])} style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center',
+          padding: '8px 6px', borderRadius: 8, cursor: 'pointer', fontSize: 13,
+          border: `1.5px solid ${sel ? 'var(--teal-400)' : 'var(--border)'}`,
+          background: sel ? 'var(--teal-50)' : 'var(--surface)',
+          color: sel ? 'var(--teal-700)' : 'var(--text-primary)',
+          minHeight: HYPO_OPTION_MIN_HEIGHT, boxSizing: 'border-box',
+        }}>{label}</div>
+      );
+    })}
+  </div>
+);
+
+// Single-select variant of the above (one dose chosen, not multiple) —
+// same 5-per-row pill grid but behaves like a radio group.
+const HypoPillSelect = ({ options, value, onChange, perRow = 5 }) => (
+  <div data-hyporeq-type="select" data-hyporeq-filled={value ? 'true' : 'false'}
+    style={{ display: 'grid', gridTemplateColumns: `repeat(${perRow}, 1fr)`, gap: 8, marginBottom: 12 }}>
+    {options.map(opt => {
+      const sel = value === opt;
+      return (
+        <div key={opt} onClick={() => onChange(opt)} style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center',
+          padding: '8px 6px', borderRadius: 8, cursor: 'pointer', fontSize: 13,
+          border: `1.5px solid ${sel ? 'var(--teal-400)' : 'var(--border)'}`,
+          background: sel ? 'var(--teal-50)' : 'var(--surface)',
+          color: sel ? 'var(--teal-700)' : 'var(--text-primary)',
+          minHeight: HYPO_OPTION_MIN_HEIGHT, boxSizing: 'border-box',
+        }}>{opt} mcg</div>
       );
     })}
   </div>
@@ -157,6 +246,7 @@ const HypoMultiSelect = ({ options, value = [], onChange }) => (
 const HypoTextInput = ({ value, onChange, placeholder, type = 'text', min, max, step, style }) => (
   <input className="form-input" type={type} value={value || ''} min={min} max={max} step={step}
     onChange={e => onChange(e.target.value)} placeholder={placeholder}
+    data-hyporeq-type="text" data-hyporeq-filled={value ? 'true' : 'false'}
     style={{ fontSize: 13, ...style }} />
 );
 
@@ -166,7 +256,8 @@ const HypoTextInput = ({ value, onChange, placeholder, type = 'text', min, max, 
 // unit pickers elsewhere in this component (see HypoLabScreen below).
 const HypoSelect = ({ value, onChange, options, placeholder = 'Select...', style }) => (
   <select className="form-input" style={{ fontSize: 13, ...style }}
-    value={value || ''} onChange={e => onChange(e.target.value)}>
+    value={value || ''} onChange={e => onChange(e.target.value)}
+    data-hyporeq-type="select" data-hyporeq-filled={value ? 'true' : 'false'}>
     <option value="">{placeholder}</option>
     {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
   </select>
@@ -199,6 +290,7 @@ const HypoDateInput = ({ value, onChange, maxDate, minDate }) => (
     onChange={e => onChange(e.target.value)}
     max={maxDate || new Date().toISOString().split('T')[0]}
     min={minDate || undefined}
+    data-hyporeq-type="date" data-hyporeq-filled={value ? 'true' : 'false'}
     style={{ fontSize: 13, width: 180 }} />
 );
 
@@ -317,6 +409,16 @@ const HypoDobField = ({ dob, ageYears, ageMonths, onChange }) => {
 // weeks-ago figure is the natural fallback here rather than years).
 const HypoLmpField = ({ lmpDate, lmpApproxWeeks, lmpUnknown, onChange }) => {
   const [showYearGrid, setShowYearGrid] = useState(false);
+  // Default to today's date on first render if nothing's been entered yet
+  // — the patient adjusts it if it's wrong, rather than starting from 3
+  // blank dropdowns every time.
+  useEffect(() => {
+    if (!lmpDate && !lmpUnknown) {
+      onChange({ lmpDate: new Date().toISOString().split('T')[0], lmpApproxWeeks: '', lmpUnknown: false });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const parsed = lmpDate ? new Date(lmpDate + 'T00:00:00') : null;
   const day = parsed ? parsed.getDate() : '';
   const month = parsed ? parsed.getMonth() : '';
@@ -335,30 +437,17 @@ const HypoLmpField = ({ lmpDate, lmpApproxWeeks, lmpUnknown, onChange }) => {
     const approx = new Date();
     approx.setDate(approx.getDate() - weeks * 7);
     onChange({
-      lmpDate: weeks > 0 ? approx.toISOString().split('T')[0] : '',
+      lmpDate: weeks > 0 ? approx.toISOString().split('T')[0] : lmpDate,
       lmpApproxWeeks: val, lmpUnknown: true,
     });
   };
 
-  if (lmpUnknown) {
-    return (
-      <div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <input type="number" min="0" max="52" value={lmpApproxWeeks} onChange={e => setApproxWeeks(e.target.value)}
-            placeholder="e.g. 6" style={{ width: 90, padding: '8px 10px', fontSize: 13, borderRadius: 6, border: '1px solid var(--border)' }} />
-          <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>weeks ago (approximately)</span>
-        </div>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-tertiary)', marginTop: 10, cursor: 'pointer' }}>
-          <input type="checkbox" checked={false} onChange={() => onChange({ lmpDate: '', lmpApproxWeeks: '', lmpUnknown: false })} />
-          I actually know the exact date
-        </label>
-      </div>
-    );
-  }
-
   return (
     <div>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+      {/* Exact date — always visible, dimmed (not hidden) once "Can't
+          remember" is checked so the patient can still see/toggle back
+          to it without losing their place. */}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', opacity: lmpUnknown ? 0.4 : 1, pointerEvents: lmpUnknown ? 'none' : 'auto', transition: 'opacity 0.15s' }}>
         <select value={day} onChange={e => setDatePart(parseInt(e.target.value), month === '' ? 0 : month, year || new Date().getFullYear())}
           style={{ padding: '8px 6px', fontSize: 13, borderRadius: 6, border: '1px solid var(--border)' }}>
           <option value="">Day</option>
@@ -379,17 +468,30 @@ const HypoLmpField = ({ lmpDate, lmpApproxWeeks, lmpUnknown, onChange }) => {
           )}
         </div>
       </div>
-      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-tertiary)', marginTop: 10, cursor: 'pointer' }}>
-        <input type="checkbox" checked={false} onChange={() => onChange({ lmpDate: '', lmpApproxWeeks: '', lmpUnknown: true })} />
+
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-tertiary)', margin: '10px 0', cursor: 'pointer' }}>
+        <input type="checkbox" checked={!!lmpUnknown} onChange={e => {
+          if (e.target.checked) onChange({ lmpDate, lmpApproxWeeks, lmpUnknown: true });
+          else onChange({ lmpDate: lmpDate || new Date().toISOString().split('T')[0], lmpApproxWeeks: '', lmpUnknown: false });
+        }} />
         Can't remember exactly
       </label>
+
+      {lmpUnknown && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <input type="number" min="0" max="52" value={lmpApproxWeeks} onChange={e => setApproxWeeks(e.target.value)}
+            placeholder="e.g. 6" style={{ width: 90, padding: '8px 10px', fontSize: 13, borderRadius: 6, border: '1px solid var(--border)' }} />
+          <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>weeks ago (approximately)</span>
+        </div>
+      )}
     </div>
   );
 };
 
 const HypoDurationPicker = ({ value = {}, onChange, label = 'Since when?', minDate }) => (
   <HypoField label={label}>
-    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+    <div data-hyporeq-type="duration" data-hyporeq-filled={(value.date || value.years || value.months) ? 'true' : 'false'}
+      style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
       <div>
         <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 3 }}>Date (if known)</div>
         <HypoDateInput value={value.date} onChange={v => onChange({ ...value, date: v })} minDate={minDate} />
@@ -429,6 +531,80 @@ const HypoSubBlock = ({ children }) => (
 // normally via mapFormToDb regardless of what this renders; nothing here
 // affects what data reaches the physician.
 const HypoOutputBox = () => null;
+
+const HYPOREQ_MESSAGES = {
+  select: 'Select any one',
+  date: 'Enter date',
+  duration: 'Enter duration',
+  text: 'Enter details',
+};
+
+// Scans the current page's rendered DOM (via containerRef) for the first
+// data-hyporeq-filled="false" marker — set generically by every shared
+// input primitive above (HypoRadioGroup, HypoTextInput, HypoDatePicker,
+// etc.) — and points a small animated arrow at it with a plain-language
+// hint. This works across every screen without hand-mapping which field
+// is missing on each of the ~50 pages individually: any primitive with no
+// value is, by this app's own rule that every question needs an answer,
+// the thing blocking submission.
+const HypoMissingPointer = ({ containerRef, active, pageKey }) => {
+  const [pos, setPos] = useState(null);
+  useEffect(() => {
+    if (!active || !containerRef.current) { setPos(null); return; }
+    const scan = () => {
+      if (!containerRef.current) return;
+      const el = containerRef.current.querySelector('[data-hyporeq-filled="false"]');
+      if (!el) { setPos(null); return; }
+      const elRect = el.getBoundingClientRect();
+      const containerRect = containerRef.current.getBoundingClientRect();
+      setPos({
+        top: elRect.top - containerRect.top,
+        left: elRect.left - containerRect.left,
+        type: el.getAttribute('data-hyporeq-type') || 'select',
+      });
+    };
+    scan();
+    // Re-scan shortly after in case conditional sub-fields haven't
+    // finished settling into their final layout on the first paint.
+    const t = setTimeout(scan, 60);
+    // A single scan on mount isn't enough — as the patient answers one
+    // field on a multi-field screen (e.g. Pain/Numbness/Tingling, each
+    // tracked separately), data-hyporeq-filled flips on that field but
+    // nothing here re-triggered the effect, so the arrow stayed stuck at
+    // its very first position instead of following the next actual gap.
+    // A MutationObserver catches every such change directly, regardless
+    // of what caused it (radio pick, typed value, a newly-revealed
+    // conditional sub-field, an investigation checkbox toggling on).
+    const observer = new MutationObserver(scan);
+    observer.observe(containerRef.current, {
+      attributes: true, attributeFilter: ['data-hyporeq-filled'],
+      childList: true, subtree: true,
+    });
+    return () => { clearTimeout(t); observer.disconnect(); };
+  }, [active, containerRef, pageKey]);
+
+  if (!pos) return null;
+  return (
+    <>
+      <style>{`
+        @keyframes hyporeqBounce { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(7px); } }
+        .hyporeq-arrow { animation: hyporeqBounce 0.9s ease-in-out infinite; }
+      `}</style>
+      <div style={{
+        position: 'absolute', top: Math.max(0, pos.top - 30), left: pos.left,
+        display: 'flex', alignItems: 'center', gap: 4, zIndex: 5, pointerEvents: 'none',
+      }}>
+        <div style={{
+          background: 'var(--red-600, #c0392b)', color: '#fff', fontSize: 11, fontWeight: 600,
+          padding: '3px 9px', borderRadius: 6, whiteSpace: 'nowrap',
+        }}>
+          {HYPOREQ_MESSAGES[pos.type] || 'Answer this question'}
+        </div>
+        <div className="hyporeq-arrow" style={{ fontSize: 15, color: 'var(--red-600, #c0392b)' }}>➜</div>
+      </div>
+    </>
+  );
+};
 
 const HypoSkipNote = ({ text }) => (
   <div style={{ fontSize: 11, color: 'var(--amber-700)', background: 'var(--amber-50)',
@@ -470,6 +646,17 @@ function formatDurationOver(d) {
   return parts.length ? `over last ${parts.join(' & ')}` : '';
 }
 
+// Formats a repeatable medicine list (from HypoMedList) into one joined
+// phrase for the physician output sentence, e.g. "Tab. Metformin (500 mg
+// — 2 times a day), Tab. Glimepiride (1 mg — 1 time a day)".
+function formatMedList(meds) {
+  if (!meds || !meds.length) return '';
+  return meds
+    .filter(m => m.name)
+    .map(m => `Tab. ${m.name}${m.dose ? ` (${m.dose} mg)` : ''}${m.freq ? ` — ${m.freq} time${m.freq > 1 ? 's' : ''} a day` : ''}`)
+    .join(', ');
+}
+
 // ─── Page completeness — every question needs an answer, and a "yes"
 // answer needs its follow-up detail(s) too (so the physician never gets a
 // "yes" with nothing behind it — e.g. "yes, diabetic" with no type/
@@ -489,7 +676,27 @@ const HYPO_PAGE_VALIDATORS = {
   C1: (f) => !!f.thyroidDx && (f.thyroidDx !== 'yes' || (!!f.thyroidDxType && !!f.thyroidDxYear)),
   C2a: (f) => !!f.thyroidSurgery && (f.thyroidSurgery !== 'yes' || (!!f.thyroidSurgeryType && !!f.thyroidSurgeryYear)),
   C2b: (f) => !!f.thyroidRai && (f.thyroidRai !== 'yes' || (f.raiAdministrations || []).some(e => e.doseMci && e.date)),
-  C3: (f) => !!f.thyroidMed && (f.thyroidMed !== 'yes' || (!!f.thyroidMedBrand && !!f.thyroidMedDose)),
+  C3: (f) => {
+    if (!f.thyroidMed) return false;
+    if (f.thyroidMed !== 'yes') return true;
+    if (!f.treatmentType) return false;
+    const lt4Ok = !!f.thyroidMedBrand && !!f.thyroidMedDose;
+    const lt3Ok = !!f.liothyronineBrand && !!f.liothyronineDose;
+    const otherOk = !!f.thyroidMedName && !!f.thyroidMedDose;
+    const medOk =
+      f.treatmentType === 'levo_only' ? lt4Ok :
+      f.treatmentType === 'lio_only' ? lt3Ok :
+      f.treatmentType === 'combination' ? (lt4Ok && lt3Ok) :
+      f.treatmentType === 'other' ? otherOk : false;
+    if (!medOk) return false;
+    const lt4DcOk = !!f.doseChanged && (f.doseChanged !== 'yes' || !!(f.doseChangedDate && f.doseChangedReason));
+    const lt3DcOk = !!f.liothyronineDoseChanged && (f.liothyronineDoseChanged !== 'yes' || !!(f.liothyronineDoseChangedDate && f.liothyronineDoseChangedReason));
+    if (f.treatmentType === 'levo_only' && !lt4DcOk) return false;
+    if (f.treatmentType === 'lio_only' && !lt3DcOk) return false;
+    if (f.treatmentType === 'combination' && !(lt4DcOk && lt3DcOk)) return false;
+    if (f.treatmentType === 'other' && !lt4DcOk) return false;
+    return true;
+  },
   C4: (f) => !!f.familyThyroid && (f.familyThyroid !== 'yes' || (f.familyThyroidRelatives || []).length > 0),
   C5: (f) => !!f.autoimmune && (f.autoimmune !== 'yes' || Object.values(f.autoimmuneItems || {}).some(v => v?.selected)),
   D1: (f) => !!f.tshDone && (f.tshDone !== 'yes' || !!f.tshValue),
@@ -501,7 +708,7 @@ const HYPO_PAGE_VALIDATORS = {
   D7: (f) => !!f.antitgDone && (f.antitgDone !== 'yes' || !!f.antitgValue),
   D10: (f) => !!f.imagingDone && (f.imagingDone !== 'yes' || ((f.imagingTypes || []).length > 0 && !!f.imagingDate)),
   E1: (f) => !!f.hypoCauseKnown && (f.hypoCauseKnown !== 'yes' || !!f.hypoCause),
-  E2: (f) => !!f.hashimotos && (f.hashimotos !== 'yes' || !!f.hashimotosAntiTpo),
+  E2: () => true,
   E3: (f) => !!f.goitre && (f.goitre !== 'yes' || !!f.goitreSize),
   F1: (f) => !!f.fatigue && (f.fatigue !== 'yes' || !!f.fatigueSeverity),
   F2: (f) => !!f.weightChange && (f.weightChange !== 'yes' || (!!f.weightDirection && !!f.weightKg)),
@@ -525,21 +732,19 @@ const HYPO_PAGE_VALIDATORS = {
   F18: (f) => !!f.bradycardia,
   F19: (f) => !!f.giddiness && (f.giddiness !== 'yes' || !!f.giddinessFreq),
   F20: (f) => !!f.blackout && (f.blackout !== 'yes' || (!!f.blackoutCount && !!f.blackoutLastDate && !!f.blackoutAssessed)),
-  F21: (f) => !!f.hearing && (f.hearing !== 'yes' || !!f.hearingType),
+  F21: (f) => !!f.hearing && (f.hearing !== 'yes' || (f.hearingTypes || []).length > 0),
   F22: (f) => !!f.reflexes,
   F23: (f) => ['pain', 'numbness', 'tingling'].every(t => {
     const item = (f.carpalItems || {})[t];
     return !!item?.status && (item.status !== 'yes' || !!item.side);
   }),
-  F24: (f) => !!f.macroglossia,
+  F24: (f) => !!f.macroglossia && (f.macroglossia !== 'yes' || !!(f.macroglossiaDuration?.date || f.macroglossiaDuration?.years || f.macroglossiaDuration?.months)),
   F25: (f) => !!f.acidity && (f.acidity !== 'yes' || !!f.acidityOnMed),
-  G1: (f) => !(f.levoBrand || f.levoDose || f.levoDrugName) || (!!f.treatmentType && !!f.levoBrand && !!f.levoDose),
-  G2: (f) => !!f.doseChanged && (f.doseChanged !== 'yes' || (!!f.doseChangedDate && !!f.doseChangedReason)),
   H1: (f) => !!f.dyslipidaemia && (f.dyslipidaemia !== 'yes' || !!f.dyslipidaemiaOnMed),
   H6: (f) => !!f.htn && (f.htn !== 'yes' || !!f.htnOnMed),
-  H2: (f) => !!f.anaemia && (f.anaemia !== 'yes' || (!!f.anaemiaType && !!f.anaemiaOnMed)),
+  H2: (f) => !!f.anaemia && (f.anaemia !== 'yes' || ((f.anaemiaTypes || []).length > 0 && !!f.anaemiaOnMed)),
   H3: (f) => !!f.diabetes && (f.diabetes !== 'yes' || (!!f.diabetesType && !!f.diabetesOnMed)),
-  H4: (f) => !!f.pcosPmos && (f.pcosPmos !== 'yes' || (!!f.pcosPmosLabel && !!f.pcosOnMed)),
+  H4: (f) => !!f.pcosPmos && (f.pcosPmos !== 'yes' || !!f.pcosOnMed),
   H5: (f) => !!f.infertility,
   H7: (f) => !!f.osteoporosis && (f.osteoporosis !== 'yes' || (!!f.osteoporosisDEXA && !!f.osteoporosisOnMed)),
   H8: (f) => !!f.familyCancer && (f.familyCancer !== 'yes' || (f.familyCancerTypes || []).length > 0),
@@ -560,6 +765,7 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [currentPage, setCurrentPage] = useState(0);
+  const pageContentRef = React.useRef(null);
   const [savedPageId, setSavedPageId] = useState(null); // page id restored from a previous session
   const [resumedFrom, setResumedFrom] = useState(false); // jumped to it yet?
   const [lastSavedAt, setLastSavedAt] = useState(null);
@@ -571,7 +777,7 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
 
     // B — Menstrual
     hysterectomy: '', hysterectomyDate: {}, hysterectomyReason: '', hysterectomyOther: '',
-    menopauseStatus: 'pre', menopauseYears: '',
+    menopauseStatus: '', menopauseYears: '',
     menstrualChange: '', menstrualChangeTypes: [], menstrualChangeDuration: {},
     lmpDate: '', lmpApproxWeeks: '', lmpUnknown: false,
     pregnant: '', pregnancyWeeks: '',
@@ -596,6 +802,7 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
     antitgDone: '', antitgValue: '', antitgUnit: '', antitgDate: '', antitgRefLow: '', antitgRefHigh: '', antitgReports: [],
     imagingDone: '', imagingTypes: [], imagingDate: '', imagingFinding: '', imagingReport: null,
     cbcDone: '', cbcDate: '', cbcValues: {}, cbcReports: [],
+    investigationsSelected: {},
     vitB12Done: '', vitB12Value: '', vitB12Unit: '', vitB12Date: '', vitB12RefLow: '', vitB12RefHigh: '', vitB12Reports: [],
     vitD3Done: '', vitD3Value: '', vitD3Unit: '', vitD3Date: '', vitD3RefLow: '', vitD3RefHigh: '', vitD3Reports: [],
     srIronDone: '', srIronValue: '', srIronUnit: '', srIronDate: '', srIronRefLow: '', srIronRefHigh: '', srIronReports: [],
@@ -605,7 +812,7 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
 
     // E — Hypo specific
     hypoCauseKnown: '', hypoCause: '', hypoDuration: {},
-    hashimotos: '', hashimotosAntiTpo: '', hashimotosAntiTg: '',
+    hashimotosAntiTpo: '', hashimotosAntiTg: '', hashimotosAntiTpoValue: '', hashimotosAntiTgValue: '',
     goitre: '', goitreSize: '',
 
     // F — Symptoms
@@ -631,24 +838,26 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
     bradycardia: '', bradycardiaPulse: '', bradycardiaDuration: {},
     giddiness: '', giddinessFreq: '', giddinessDuration: {},
     blackout: '', blackoutCount: '', blackoutLastDate: '', blackoutAssessed: '', blackoutDx: '',
-    hearing: '', hearingType: '', hearingDuration: {},
+    hearing: '', hearingTypes: [], hearingReducedDuration: {}, hearingTinnitusDuration: {},
     reflexes: '', reflexesDuration: {},
     carpalItems: {},  // { pain: { present, side, duration }, numbness: {...}, tingling: {...} }
-    macroglossia: '',
+    macroglossia: '', macroglossiaDuration: {},
     acidity: '', acidityDuration: {}, acidityOnMed: '', acidityMedName: '', acidityMedDose: '', acidityMedFreq: '', acidityMedSince: {},
 
     // G — Treatment
-    onTreatment: '', treatmentType: '', levoDrugName: '', levoBrand: '',
-    levoDose: '', levoTiming: '', levoCompliance: '', levoSince: {},
+    onTreatment: '', treatmentType: '',
+    liothyronineBrand: '', liothyronineName: '', liothyronineDose: '',
+    liothyronineTiming: '', liothyronineCompliance: '', liothyronineSince: {},
+    liothyronineDoseChanged: '', liothyronineDoseChangedDate: '', liothyronineDoseChangedReason: '',
     doseChanged: '', doseChangedDate: '', doseChangedReason: '',
 
     // H — Comorbidities
-    dyslipidaemia: '', dyslipidaemiaDuration: {}, dyslipidaemiaOnMed: '', dyslipidaemiaMedName: '', dyslipidaemiaMedDose: '', dyslipidaemiaMedTimes: '', dyslipidaemiaMedSince: {},
-    anaemia: '', anaemiaType: '', anaemiaDuration: {}, anaemiaOnMed: '', anaemiaMedName: '', anaemiaMedDose: '', anaemiaMedTimes: '', anaemiaMedSince: {},
-    diabetes: '', diabetesType: '', diabetesDuration: {}, diabetesOnMed: '', diabetesMedName: '', diabetesMedDose: '', diabetesMedTimes: '', diabetesMedSince: {},
-    htn: '', htnDuration: {}, htnOnMed: '', htnMedName: '', htnMedDose: '', htnMedFreq: '', htnMedSince: {},
+    dyslipidaemia: '', dyslipidaemiaDuration: {}, dyslipidaemiaOnMed: '', dyslipidaemiaMeds: [],
+    anaemia: '', anaemiaTypes: [], anaemiaDuration: {}, anaemiaOnMed: '', anaemiaMeds: [],
+    diabetes: '', diabetesType: '', diabetesDuration: {}, diabetesOnMed: '', diabetesMeds: [],
+    htn: '', htnDuration: {}, htnOnMed: '', htnMeds: [],
     pcosPmos: '', pcosPmosLabel: '', pcosDuration: {}, pcosOnMed: '',
-    pcosMedName: '', pcosMedDose: '', pcosMedTimes: '', pcosMedSince: {},
+    pcosMeds: [],
     infertility: '',
     osteoporosis: '', osteoporosisDEXA: '', osteoporosisDuration: {}, osteoporosisOnMed: '', osteoporosisMedName: '', osteoporosisMedDose: '', osteoporosisMedTimes: '', osteoporosisMedSince: {},
     depressionOnMed: '', depressionMedName: '', depressionMedDose: '', depressionMedFreq: '', depressionMedSince: {},
@@ -658,26 +867,36 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
 
   const set = key => val => setF(p => ({ ...p, [key]: val }));
 
+  const [draftLoadError, setDraftLoadError] = useState('');
+  const loadDraft = React.useCallback(() => {
+    if (!(patientId && episodeId)) return;
+    setDraftLoadError('');
+    // NOTE: backend returns the row flat (res.json(result.rows[0] ||
+    // null)), not wrapped in { data }. Reading res.data here meant
+    // this always evaluated to undefined — previously-saved answers
+    // were never actually restored on reload, "resume" was silently a
+    // no-op. Fixed to read the response directly.
+    conditionAPI.getHypoQ(patientId, episodeId)
+      .then(res => {
+        if (res && Object.keys(res).length) {
+          setF(p => ({ ...p, ...mapDbToForm(res) }));
+          if (res.current_page) setSavedPageId(res.current_page);
+        }
+      })
+      .catch(() => {
+        // Genuinely silent here would risk the patient thinking their
+        // previously-saved answers were lost and re-entering everything
+        // from scratch — surface it plainly instead, with a retry.
+        setDraftLoadError('Could not load your saved answers. Your previous answers have NOT been lost — please retry before continuing, rather than re-entering everything.');
+      });
+  }, [patientId, episodeId]);
+
   // ── Pre-fill from patient profile ─────────────────────
   useEffect(() => {
     if (patientGender) setF(p => ({ ...p, sex: patientGender }));
     if (patientDob) setF(p => ({ ...p, dob: patientDob }));
-    if (patientId && episodeId) {
-      // NOTE: backend returns the row flat (res.json(result.rows[0] ||
-      // null)), not wrapped in { data }. Reading res.data here meant
-      // this always evaluated to undefined — previously-saved answers
-      // were never actually restored on reload, "resume" was silently a
-      // no-op. Fixed to read the response directly.
-      conditionAPI.getHypoQ(patientId, episodeId)
-        .then(res => {
-          if (res && Object.keys(res).length) {
-            setF(p => ({ ...p, ...mapDbToForm(res) }));
-            if (res.current_page) setSavedPageId(res.current_page);
-          }
-        })
-        .catch(() => {});
-    }
-  }, [patientId, episodeId, patientGender, patientDob]);
+    loadDraft();
+  }, [patientId, episodeId, patientGender, patientDob, loadDraft]);
 
   // ── Rehydrate uploaded reports on every load — resume AND post-submit ──
   // Uploaded files are never deleted (see patientController.uploadDocument
@@ -744,7 +963,7 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
   const lmpDaysAgo = f.lmpDate
     ? Math.floor((new Date() - new Date(f.lmpDate)) / (1000 * 60 * 60 * 24)) : 0;
   const showPregnancy = !isMale && !hadHysterectomy && !isPostMeno && isMarriedStatus && lmpDaysAgo >= 31;
-  const showInfertility = !isMale && !hadHysterectomy && f.maritalStatus === 'married';
+  const showInfertility = !isMale && !hadHysterectomy && !isPostMeno && f.maritalStatus === 'married';
 
   // Note: symptom-triggered investigations (CBC/Vit B12/Vit D3/Sr Calcium/
   // Iron studies/Blood sugar) are now embedded directly inline within
@@ -786,13 +1005,13 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
     { id: 'D10', module: 'D', title: 'Thyroid imaging' },
 
     // ── MODULE E ──
-    // E1 (cause of hypothyroidism) is skipped when the cause is already
-    // evident from earlier answers: a prior thyroid diagnosis, RAI
-    // therapy, or a total thyroidectomy all make "do you know the
-    // cause" redundant — the cause is already on record from those
-    // answers. E3 (goitre) is skipped after a total thyroidectomy since
-    // the whole gland has already been removed.
-    ...(!(f.thyroidDx === 'yes' || f.thyroidRai === 'yes' || f.thyroidSurgeryType === 'total')
+    // E1 (cause of hypothyroidism) is skipped only when the cause is
+    // already evident from an earlier, hypothyroidism-specific answer: a
+    // prior diagnosis of hypothyroidism itself (not a nodule/cancer/other
+    // diagnosis, which says nothing about this hypothyroidism's cause),
+    // RAI therapy, or a total thyroidectomy. E3 (goitre) is skipped after
+    // a total thyroidectomy since the whole gland has already been removed.
+    ...(!((f.thyroidDx === 'yes' && f.thyroidDxType === 'hypothyroidism') || f.thyroidRai === 'yes' || f.thyroidSurgeryType === 'total')
       ? [{ id: 'E1', module: 'E', title: 'Cause of hypothyroidism' }] : []),
     ...(f.hypoCause === 'hashimotos' ? [{ id: 'E2', module: 'E', title: "Hashimoto's thyroiditis" }] : []),
     ...(f.thyroidSurgeryType !== 'total' ? [{ id: 'E3', module: 'E', title: 'Goitre' }] : []),
@@ -826,9 +1045,7 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
     { id: 'F24', module: 'F', title: 'Tongue enlargement (macroglossia)' },
     { id: 'F25', module: 'F', title: 'Acidity / retrosternal chest burn' },
 
-    // ── MODULE G ──
-    { id: 'G1', module: 'G', title: 'Current treatment' },
-    ...((f.levoBrand || f.levoDose || f.levoDrugName) ? [{ id: 'G2', module: 'G', title: 'Dose change' }] : []),
+    // ── MODULE G (no standalone pages — dose-change now lives in C3) ──
 
     // ── MODULE H (unified) ──
     { id: 'H1', module: 'H', title: 'Dyslipidaemia / high cholesterol' },
@@ -892,11 +1109,17 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
   // incomplete -> incomplete -> Submit, exactly as asked for.
   const [reviewMode, setReviewMode] = useState(false);
 
-  const findNextIncomplete = (afterIdx) => allPages.findIndex((p, idx) => {
-    if (idx <= afterIdx) return false;
-    const validator = HYPO_PAGE_VALIDATORS[p.id];
-    return validator ? !validator(f) : false;
-  });
+  // Single source of truth for "what's still incomplete" — recomputed
+  // live from f on every render (not just at the moment Submit was
+  // clicked), so it self-updates the instant a page is fixed and also
+  // self-corrects if editing one answer changes what's required
+  // elsewhere. Both goNext's jump logic and the bottom strip (item 3)
+  // read from this same list, so they can never disagree with each other.
+  const incompleteList = reviewMode
+    ? allPages
+        .map((p, idx) => ({ p, idx }))
+        .filter(({ p }) => { const v = HYPO_PAGE_VALIDATORS[p.id]; return v ? !v(f) : false; })
+    : [];
 
   const goNext = () => {
     if (yearInvalid) return;
@@ -905,18 +1128,19 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
       // incomplete — without this check, clicking Next before actually
       // finishing the flagged page would silently jump to a DIFFERENT
       // incomplete page instead of holding them here.
-      const leavingPage = allPages[currentPage];
-      const leavingValidator = HYPO_PAGE_VALIDATORS[leavingPage?.id];
+      const leavingValidator = HYPO_PAGE_VALIDATORS[page?.id];
       if (leavingValidator && !leavingValidator(f)) {
         setError('Please answer this question before continuing.');
         return;
       }
       setError('');
-      const nextIdx = findNextIncomplete(currentPage);
-      if (nextIdx !== -1) { setCurrentPage(nextIdx); return; }
-      // No more incomplete pages ahead of where we are — re-run the full
-      // scan (there may still be incomplete pages BEHIND current, e.g. if
-      // the patient navigated backward manually) before actually submitting.
+      // Prefer the next incomplete page ahead of current; if none ahead,
+      // wrap around to the earliest incomplete page overall (covers the
+      // case where an earlier page became incomplete again, e.g. the
+      // patient navigated back and changed something).
+      const ahead = incompleteList.find(({ idx }) => idx > currentPage);
+      const target = ahead || incompleteList[0];
+      if (target) { setCurrentPage(target.idx); return; }
       handleSubmit();
       return;
     }
@@ -1014,12 +1238,32 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
       case 'A4': return (
         <>
           <div style={{ fontSize: 16, fontWeight: 500, marginBottom: 16 }}>What is your occupation or profession?</div>
-          <HypoRadioGroup value={f.occupation} onChange={set('occupation')} options={[
-            ['teacher', 'Teacher'], ['singer', 'Singer'], ['actor', 'Actor'],
-            ['lawyer', 'Lawyer'], ['call_centre', 'Call centre agent'],
-            ['sales', 'Sales professional'], ['doctor', 'Doctor / Healthcare'],
-            ['other', 'Other'],
-          ]} />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
+            {[
+              ['teacher', 'Teacher'], ['singer', 'Singer'], ['actor', 'Actor'],
+              ['vocal_instructor', 'Vocal instructor'], ['call_centre', 'Call centre agent'],
+              ['sales', 'Sales professional'], ['other', 'Other'],
+            ].map(([val, label]) => (
+              <div key={val} onClick={() => set('occupation')(val)} style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '8px 14px', borderRadius: 8, cursor: 'pointer',
+                border: `1.5px solid ${f.occupation === val ? 'var(--teal-400)' : 'var(--border)'}`,
+                background: f.occupation === val ? 'var(--teal-50)' : 'var(--surface)',
+                color: f.occupation === val ? 'var(--teal-700)' : 'var(--text-primary)',
+                fontSize: 13, minHeight: 40, boxSizing: 'border-box',
+              }}>
+                <div style={{
+                  width: 14, height: 14, borderRadius: '50%', flexShrink: 0,
+                  border: `1.5px solid ${f.occupation === val ? 'var(--teal-500)' : 'var(--border-md)'}`,
+                  background: f.occupation === val ? 'var(--teal-500)' : 'transparent',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  {f.occupation === val && <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#fff' }} />}
+                </div>
+                {label}
+              </div>
+            ))}
+          </div>
           {f.occupation === 'other' && (
             <HypoField label="Please specify"><HypoTextInput value={f.occupationOther} onChange={set('occupationOther')} placeholder="Your occupation" /></HypoField>
           )}
@@ -1227,40 +1471,229 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
         </>
       );
 
-      // ── C3: Medication ──
-      case 'C3': return (
-        <>
-          <div style={{ fontSize: 16, fontWeight: 500, marginBottom: 16 }}>Are you currently taking any thyroid medication?</div>
-          <HypoRadioGroup value={f.thyroidMed} onChange={set('thyroidMed')} options={[['no', 'No'], ['unsure', 'Unsure'], ['yes', 'Yes']]} />
-          {f.thyroidMed === 'yes' && (
-            <HypoSubBlock>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
-                <HypoField label="Drug name"><HypoTextInput value={f.thyroidMedName} onChange={set('thyroidMedName')} placeholder="e.g. Levothyroxine" /></HypoField>
-                <HypoField label="Brand name"><HypoTextInput value={f.thyroidMedBrand} onChange={set('thyroidMedBrand')} placeholder="e.g. Eltroxin, Thyronorm" /></HypoField>
-                <HypoField label="Current dose (mcg)"><HypoTextInput type="number" min="0" value={f.thyroidMedDose} onChange={set('thyroidMedDose')} /></HypoField>
+      // ── C3: Medication (also captures "treatment type" and "dose
+      // change", formerly the separate G1/G2 screens — G1 duplicated this
+      // question outright, and G2's dose-change question logically
+      // belongs right after "what are you taking", not several screens
+      // later in Module G) ──
+      case 'C3': return (() => {
+        const LT4_COLOR = { bg: '#eef4fc', border: '#a8c8f0', text: '#1a5fb4' };
+        const LT3_COLOR = { bg: '#f6f0fc', border: '#c9b3e8', text: '#6b3fa0' };
+        const renderMedCol = (which) => {
+          const isLT4 = which === 'lt4';
+          const c = isLT4 ? LT4_COLOR : LT3_COLOR;
+          const timingField = isLT4 ? 'thyroidMedTiming' : 'liothyronineTiming';
+          const complianceField = isLT4 ? 'thyroidMedCompliance' : 'liothyronineCompliance';
+          const sinceField = isLT4 ? 'thyroidMedSince' : 'liothyronineSince';
+          const dcField = isLT4 ? 'doseChanged' : 'liothyronineDoseChanged';
+          const dcDateField = isLT4 ? 'doseChangedDate' : 'liothyronineDoseChangedDate';
+          const dcReasonField = isLT4 ? 'doseChangedReason' : 'liothyronineDoseChangedReason';
+          return (
+            <div style={{ background: c.bg, border: `1.5px solid ${c.border}`, borderRadius: 10, padding: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: c.text, marginBottom: 10 }}>
+                {isLT4 ? 'Levothyroxine (LT4)' : 'Liothyronine (LT3)'}
               </div>
               <HypoField label="Timing">
-                <HypoRadioGroup value={f.thyroidMedTiming} onChange={set('thyroidMedTiming')} options={[
+                <HypoRadioGroup value={f[timingField]} onChange={set(timingField)} options={[
                   ['before_breakfast', 'Before breakfast'],
                   ['after_breakfast', 'After breakfast'],
                   ['bedtime', 'Bedtime'],
                 ]} horizontal />
               </HypoField>
               <HypoField label="Compliance">
-                <HypoRadioGroup value={f.thyroidMedCompliance} onChange={set('thyroidMedCompliance')} options={[
+                <HypoRadioGroup value={f[complianceField]} onChange={set(complianceField)} options={[
                   ['regular', 'Regular'],
                   ['irregular', 'Irregular'],
                   ['skips_sometimes', 'Skips sometimes'],
                 ]} horizontal />
               </HypoField>
-              <HypoDurationPicker minDate={f.dob} value={f.thyroidMedSince} onChange={set('thyroidMedSince')} label="Taking since" />
-              {f.thyroidMedBrand && f.thyroidMedDose && f.thyroidMedSince && (
-                <HypoOutputBox text={`On Tab. ${f.thyroidMedBrand} — ${f.thyroidMedDose} mcg ${formatDuration(f.thyroidMedSince)}`} />
-              )}
-            </HypoSubBlock>
-          )}
-        </>
-      );
+              <HypoDurationPicker minDate={f.dob} value={f[sinceField]} onChange={set(sinceField)} label="Taking since" />
+              <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${c.border}` }}>
+                <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>Dose changed recently?</div>
+                <HypoRadioGroup value={f[dcField]} onChange={set(dcField)} horizontal options={[['no', 'No'], ['unsure', 'Unsure'], ['yes', 'Yes']]} />
+                {f[dcField] === 'yes' && (
+                  <HypoSubBlock>
+                    <HypoField label="Date of last dose change">
+                      <HypoDateInput value={f[dcDateField]} onChange={set(dcDateField)} />
+                    </HypoField>
+                    <HypoField label="Reason for change">
+                      <HypoRadioGroup value={f[dcReasonField]} onChange={set(dcReasonField)} options={[
+                        ['tsh_increased', 'TSH increased'],
+                        ['tsh_decreased', 'TSH decreased'],
+                        ...((!isMale && !hadHysterectomy && !isPostMeno && isMarriedStatus) ? [['pregnancy', 'Pregnancy']] : []),
+                        ['doctor_advice', "Doctor's advice / Other"],
+                      ]} />
+                    </HypoField>
+                  </HypoSubBlock>
+                )}
+              </div>
+            </div>
+          );
+        };
+
+        return (
+          <>
+            <div style={{ fontSize: 16, fontWeight: 500, marginBottom: 16 }}>Are you currently taking any thyroid medication?</div>
+            <HypoRadioGroup value={f.thyroidMed} onChange={set('thyroidMed')} options={[['no', 'No'], ['unsure', 'Unsure'], ['yes', 'Yes']]} />
+            {f.thyroidMed === 'yes' && (
+              <HypoSubBlock>
+                <HypoField label="Treatment type">
+                  <HypoRadioGroup value={f.treatmentType} onChange={set('treatmentType')} horizontal options={[
+                    ['levo_only', 'Levothyroxine (LT4)'],
+                    ['lio_only', 'Liothyronine (LT3)'],
+                    ['combination', 'Combination'],
+                    ['other', 'Other'],
+                  ]} />
+                </HypoField>
+
+                {(f.treatmentType === 'levo_only' || f.treatmentType === 'lio_only' || f.treatmentType === 'combination') && (
+                  <>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 4 }}>
+                      <div>
+                        {(f.treatmentType === 'levo_only' || f.treatmentType === 'combination') && (
+                          <HypoField label="Brand name — Levothyroxine (LT4)">
+                            <HypoSelect
+                              value={f.thyroidMedBrand}
+                              onChange={brand => {
+                                const info = THYROID_MED_BRANDS[brand];
+                                set('thyroidMedBrand')(brand);
+                                set('thyroidMedName')(info ? info.generic : '');
+                                set('thyroidMedDose')('');
+                              }}
+                              placeholder="Select brand..."
+                              options={Object.keys(THYROID_MED_BRANDS).sort().map(b => [b, b])}
+                            />
+                          </HypoField>
+                        )}
+                      </div>
+                      <div>
+                        {(f.treatmentType === 'lio_only' || f.treatmentType === 'combination') && (
+                          <HypoField label="Brand name — Liothyronine (LT3)">
+                            <HypoSelect
+                              value={f.liothyronineBrand}
+                              onChange={brand => {
+                                const info = LIOTHYRONINE_BRANDS[brand];
+                                set('liothyronineBrand')(brand);
+                                set('liothyronineName')(info ? info.generic : '');
+                                set('liothyronineDose')('');
+                              }}
+                              placeholder="Select brand..."
+                              options={Object.keys(LIOTHYRONINE_BRANDS).sort().map(b => [b, b])}
+                            />
+                          </HypoField>
+                        )}
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 4 }}>
+                      <div>
+                        {(f.treatmentType === 'levo_only' || f.treatmentType === 'combination') && f.thyroidMedBrand && (
+                          <HypoField label="Drug name" hint="Auto-filled from brand">
+                            <HypoTextInput value={f.thyroidMedName} onChange={set('thyroidMedName')} />
+                          </HypoField>
+                        )}
+                      </div>
+                      <div>
+                        {(f.treatmentType === 'lio_only' || f.treatmentType === 'combination') && f.liothyronineBrand && (
+                          <HypoField label="Drug name" hint="Auto-filled from brand">
+                            <HypoTextInput value={f.liothyronineName} onChange={set('liothyronineName')} />
+                          </HypoField>
+                        )}
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
+                      <div>
+                        {(f.treatmentType === 'levo_only' || f.treatmentType === 'combination') && f.thyroidMedBrand && THYROID_MED_BRANDS[f.thyroidMedBrand] && (
+                          <HypoField label="Current dose (mcg)">
+                            <HypoPillSelect perRow={3}
+                              value={f.thyroidMedDose ? Number(f.thyroidMedDose) : null}
+                              onChange={dose => set('thyroidMedDose')(String(dose))}
+                              options={THYROID_MED_BRANDS[f.thyroidMedBrand].doses}
+                            />
+                          </HypoField>
+                        )}
+                      </div>
+                      <div>
+                        {(f.treatmentType === 'lio_only' || f.treatmentType === 'combination') && f.liothyronineBrand && LIOTHYRONINE_BRANDS[f.liothyronineBrand] && (
+                          <HypoField label="Current dose (mcg)">
+                            <HypoPillSelect perRow={3}
+                              value={f.liothyronineDose ? Number(f.liothyronineDose) : null}
+                              onChange={dose => set('liothyronineDose')(String(dose))}
+                              options={LIOTHYRONINE_BRANDS[f.liothyronineBrand].doses}
+                            />
+                          </HypoField>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Timing / Compliance / Since / Dose-change — two
+                        color-coded columns, one per drug, so a combination
+                        regimen's two medicines never get mixed up */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      <div>{(f.treatmentType === 'levo_only' || f.treatmentType === 'combination') && renderMedCol('lt4')}</div>
+                      <div>{(f.treatmentType === 'lio_only' || f.treatmentType === 'combination') && renderMedCol('lt3')}</div>
+                    </div>
+
+                    {(f.thyroidMedBrand || f.liothyronineBrand) && (
+                      <HypoOutputBox text={[
+                        f.thyroidMedBrand && f.thyroidMedDose ? `Tab. ${f.thyroidMedBrand} — ${f.thyroidMedDose} mcg ${formatDuration(f.thyroidMedSince)}` : '',
+                        f.liothyronineBrand && f.liothyronineDose ? `Tab. ${f.liothyronineBrand} — ${f.liothyronineDose} mcg ${formatDuration(f.liothyronineSince)}` : '',
+                      ].filter(Boolean).join(' + ')} />
+                    )}
+                  </>
+                )}
+
+                {f.treatmentType === 'other' && (
+                  <>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+                      <HypoField label="Drug name"><HypoTextInput value={f.thyroidMedName} onChange={set('thyroidMedName')} placeholder="e.g. Levothyroxine" /></HypoField>
+                      <HypoField label="Current dose (mcg)"><HypoTextInput type="number" min="0" value={f.thyroidMedDose} onChange={set('thyroidMedDose')} /></HypoField>
+                    </div>
+                    <HypoField label="Timing">
+                      <HypoRadioGroup value={f.thyroidMedTiming} onChange={set('thyroidMedTiming')} options={[
+                        ['before_breakfast', 'Before breakfast'],
+                        ['after_breakfast', 'After breakfast'],
+                        ['bedtime', 'Bedtime'],
+                      ]} horizontal />
+                    </HypoField>
+                    <HypoField label="Compliance">
+                      <HypoRadioGroup value={f.thyroidMedCompliance} onChange={set('thyroidMedCompliance')} options={[
+                        ['regular', 'Regular'],
+                        ['irregular', 'Irregular'],
+                        ['skips_sometimes', 'Skips sometimes'],
+                      ]} horizontal />
+                    </HypoField>
+                    <HypoDurationPicker minDate={f.dob} value={f.thyroidMedSince} onChange={set('thyroidMedSince')} label="Taking since" />
+                    {f.thyroidMedName && f.thyroidMedSince && (
+                      <HypoOutputBox text={`On Tab. ${f.thyroidMedName} — ${f.thyroidMedDose} mcg ${formatDuration(f.thyroidMedSince)}`} />
+                    )}
+                    <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                      <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 8 }}>Has this dose been changed recently?</div>
+                      <HypoRadioGroup value={f.doseChanged} onChange={set('doseChanged')} horizontal options={[['no', 'No'], ['unsure', 'Unsure'], ['yes', 'Yes']]} />
+                      {f.doseChanged === 'yes' && (
+                        <HypoSubBlock>
+                          <HypoField label="Date of last dose change">
+                            <HypoDateInput value={f.doseChangedDate} onChange={set('doseChangedDate')} />
+                          </HypoField>
+                          <HypoField label="Reason for change">
+                            <HypoRadioGroup value={f.doseChangedReason} onChange={set('doseChangedReason')} options={[
+                              ['tsh_increased', 'TSH increased'],
+                              ['tsh_decreased', 'TSH decreased'],
+                              ...((!isMale && !hadHysterectomy && !isPostMeno && isMarriedStatus) ? [['pregnancy', 'Pregnancy']] : []),
+                              ['doctor_advice', "Doctor's advice / Other"],
+                            ]} />
+                          </HypoField>
+                        </HypoSubBlock>
+                      )}
+                    </div>
+                  </>
+                )}
+              </HypoSubBlock>
+            )}
+          </>
+        );
+      })();
 
       // ── C4: Family history ──
       case 'C4': return (
@@ -1313,7 +1746,8 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
           {f.autoimmune === 'yes' && (
             <HypoSubBlock>
               <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 10 }}>Select all that apply and enter duration for each</div>
-              {['Type 1 diabetes', 'Rheumatoid arthritis', 'Lupus (SLE)', 'Vitiligo', "Addison's disease", 'Other'].map(cond => (
+              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 10 }}>(Diabetes is covered separately later in this questionnaire — no need to list it here)</div>
+              {['Rheumatoid arthritis', 'Lupus (SLE)', 'Vitiligo', "Addison's disease", 'Other'].map(cond => (
                 <div key={cond} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, paddingBottom: 8, marginBottom: 8, borderBottom: '1px solid var(--border)' }}>
                   <input type="checkbox" checked={!!(f.autoimmuneItems || {})[cond]?.selected}
                     onChange={e => set('autoimmuneItems')({ ...(f.autoimmuneItems || {}), [cond]: { ...(f.autoimmuneItems?.[cond] || {}), selected: e.target.checked } })}
@@ -1494,25 +1928,38 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
         </>
       );
 
-      // ── E2: Hashimoto's ──
+      // ── E2: Hashimoto's antibody results (only shown when E1's cause
+      // was already set to "Hashimoto's thyroiditis" — so this no longer
+      // re-asks "have you been confirmed", which let a patient contradict
+      // what they'd just said one screen earlier) ──
       case 'E2': return (
         <>
-          <div style={{ fontSize: 16, fontWeight: 500, marginBottom: 16 }}>Have you been confirmed to have Hashimoto's thyroiditis?</div>
-          <HypoRadioGroup value={f.hashimotos} onChange={set('hashimotos')} options={[['no', 'No'], ['unsure', 'Unsure'], ['yes', 'Yes']]} />
-          {f.hashimotos === 'yes' && (
-            <HypoSubBlock>
-              <HypoField label="Anti-TPO antibody result">
-                <HypoRadioGroup value={f.hashimotosAntiTpo} onChange={set('hashimotosAntiTpo')} horizontal
-                  options={[['positive', 'Positive'], ['negative', 'Negative'], ['not_tested', 'Not tested']]} />
-              </HypoField>
-              <HypoField label="Anti-Tg antibody result">
-                <HypoRadioGroup value={f.hashimotosAntiTg} onChange={set('hashimotosAntiTg')} horizontal
-                  options={[['positive', 'Positive'], ['negative', 'Negative'], ['not_tested', 'Not tested']]} />
-              </HypoField>
-              {f.hashimotosAntiTpo && (
-                <HypoOutputBox text={`Hashimoto's thyroiditis — Anti-TPO ${f.hashimotosAntiTpo}${f.hashimotosAntiTg ? `, Anti-Tg ${f.hashimotosAntiTg}` : ''}`} />
-              )}
-            </HypoSubBlock>
+          <div style={{ fontSize: 16, fontWeight: 500, marginBottom: 4 }}>Antibody results for Hashimoto's thyroiditis</div>
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 16 }}>If you've had these tests done, enter the value. Leave blank if not tested.</div>
+          <HypoField label="Anti-TPO antibody">
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+              <HypoTextInput type="number" min="0" value={f.hashimotosAntiTpoValue} onChange={set('hashimotosAntiTpoValue')}
+                placeholder="IU/mL" style={{ width: 120, opacity: f.hashimotosAntiTpo === 'not_tested' ? 0.4 : 1, pointerEvents: f.hashimotosAntiTpo === 'not_tested' ? 'none' : 'auto' }} />
+              <label style={{ fontSize: 12, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
+                <input type="checkbox" checked={f.hashimotosAntiTpo === 'not_tested'}
+                  onChange={e => set('hashimotosAntiTpo')(e.target.checked ? 'not_tested' : '')} />
+                Not tested
+              </label>
+            </div>
+          </HypoField>
+          <HypoField label="Anti-Tg antibody">
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+              <HypoTextInput type="number" min="0" value={f.hashimotosAntiTgValue} onChange={set('hashimotosAntiTgValue')}
+                placeholder="IU/mL" style={{ width: 120, opacity: f.hashimotosAntiTg === 'not_tested' ? 0.4 : 1, pointerEvents: f.hashimotosAntiTg === 'not_tested' ? 'none' : 'auto' }} />
+              <label style={{ fontSize: 12, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
+                <input type="checkbox" checked={f.hashimotosAntiTg === 'not_tested'}
+                  onChange={e => set('hashimotosAntiTg')(e.target.checked ? 'not_tested' : '')} />
+                Not tested
+              </label>
+            </div>
+          </HypoField>
+          {(f.hashimotosAntiTpoValue || f.hashimotosAntiTgValue) && (
+            <HypoOutputBox text={`Hashimoto's thyroiditis${f.hashimotosAntiTpoValue ? ` — Anti-TPO ${f.hashimotosAntiTpoValue} IU/mL` : ''}${f.hashimotosAntiTgValue ? `, Anti-Tg ${f.hashimotosAntiTgValue} IU/mL` : ''}`} />
           )}
         </>
       );
@@ -1547,10 +1994,7 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
           <div style={{ fontSize: 12, fontWeight: 600, margin: '16px 0 8px', color: 'var(--text-secondary)' }}>
             Recommended investigations for this symptom
           </div>
-          <HypoCbcPanel f={f} set={set} patientId={patientId} episodeId={episodeId} />
-          <HypoInlineLab label="Vitamin B12" field="vitB12" unit="pg/mL" f={f} set={set} />
-          <HypoInlineLab label="Vitamin D3 (25-OH)" field="vitD3" unit="ng/mL" f={f} set={set} />
-          <HypoInlineLab label="Serum Calcium" field="srCalcium" unit="mg/dL" f={f} set={set} />
+          <HypoInvestigationPicker tests={['cbc', 'vitB12', 'vitD3', 'srCalcium']} rows={[['cbc', 'vitB12'], ['vitD3', 'srCalcium']]} f={f} set={set} patientId={patientId} episodeId={episodeId} />
           {(() => {
             const hb = parseFloat(f.cbcValues?.haemoglobin?.value);
             return !isNaN(hb) && hb < 10 ? (
@@ -1653,7 +2097,7 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
           {f.skin === 'yes' && (
             <HypoSubBlock>
               <HypoField label="Type (select all that apply)">
-                <HypoMultiSelect value={f.skinTypes} onChange={set('skinTypes')}
+                <HypoCheckPillGrid perRow={3} value={f.skinTypes} onChange={set('skinTypes')}
                   options={[['dryness', 'Dryness'], ['roughness', 'Roughness'], ['pallor', 'Pallor'], ['puffiness', 'Puffiness'], ['thickening', 'Thickening']]} />
               </HypoField>
               <HypoDurationPicker minDate={f.dob} value={f.skinDuration} onChange={set('skinDuration')} label="Since when" />
@@ -1771,11 +2215,7 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
         question="Do you experience muscle cramps or aches?"
         statusKey="cramps" durationKey="crampsDuration" f={f} set={set}
         extra={<>
-          <div style={{ fontSize: 12, fontWeight: 600, margin: '4px 0 8px', color: 'var(--text-secondary)' }}>
-            Recommended investigations for this symptom
-          </div>
-          <HypoInlineLab label="Vitamin D3 (25-OH)" field="vitD3" unit="ng/mL" f={f} set={set} />
-          <HypoInlineLab label="Serum Calcium" field="srCalcium" unit="mg/dL" f={f} set={set} />
+          <HypoInvestigationPicker tests={['vitD3', 'srCalcium']} rows={[['vitD3', 'srCalcium']]} f={f} set={set} patientId={patientId} episodeId={episodeId} />
         </>}
         output={f.cramps === 'yes' ? `Muscle cramps ${formatDuration(f.crampsDuration)}` : ''} />;
 
@@ -1793,10 +2233,7 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
               <div style={{ fontSize: 12, fontWeight: 600, margin: '16px 0 8px', color: 'var(--text-secondary)' }}>
                 Recommended investigations for this symptom
               </div>
-              <HypoCbcPanel f={f} set={set} patientId={patientId} episodeId={episodeId} />
-              <HypoInlineLab label="Vitamin B12" field="vitB12" unit="pg/mL" f={f} set={set} />
-              <HypoInlineLab label="Vitamin D3 (25-OH)" field="vitD3" unit="ng/mL" f={f} set={set} />
-              <HypoInlineLab label="Serum Calcium" field="srCalcium" unit="mg/dL" f={f} set={set} />
+              <HypoInvestigationPicker tests={['cbc', 'vitB12', 'vitD3', 'srCalcium']} rows={[['cbc', 'vitB12'], ['vitD3', 'srCalcium']]} f={f} set={set} patientId={patientId} episodeId={episodeId} />
               {f.weaknessLocation && <HypoOutputBox text={`Weakness in ${f.weaknessLocation === 'proximal' ? 'both thigh / upper arm muscles' : 'generalised muscle weakness'} ${formatDuration(f.weaknessDuration)}`} />}
             </HypoSubBlock>
           )}
@@ -1869,18 +2306,13 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
           {f.giddiness === 'yes' && (
             <HypoSubBlock>
               <HypoField label="Frequency">
-                <HypoRadioGroup value={f.giddinessFreq} onChange={set('giddinessFreq')} options={[
+                <HypoRadioGroup value={f.giddinessFreq} onChange={set('giddinessFreq')} horizontal options={[
                   ['rarely', 'Rarely'], ['sometimes', 'Sometimes'],
                   ['often', 'Often'], ['every_time', 'Every time I stand'],
                 ]} />
               </HypoField>
               <HypoDurationPicker minDate={f.dob} value={f.giddinessDuration} onChange={set('giddinessDuration')} label="Since when" />
-              <div style={{ fontSize: 12, fontWeight: 600, margin: '16px 0 8px', color: 'var(--text-secondary)' }}>
-                Recommended investigations for this symptom
-              </div>
-              <HypoCbcPanel f={f} set={set} patientId={patientId} episodeId={episodeId} />
-              <HypoInlineLab label="Blood Sugar — Fasting" field="fbs" unit="mg/dL" f={f} set={set} />
-              <HypoInlineLab label="Blood Sugar — Post-Prandial" field="ppbs" unit="mg/dL" f={f} set={set} />
+              <HypoInvestigationPicker tests={['cbc', 'fbs', 'ppbs']} rows={[['cbc'], ['fbs', 'ppbs']]} f={f} set={set} patientId={patientId} episodeId={episodeId} />
               {f.giddinessFreq && <HypoOutputBox text={`Postural giddiness (${f.giddinessFreq.replace('_', ' ')}) ${formatDuration(f.giddinessDuration)}`} />}
             </HypoSubBlock>
           )}
@@ -1915,9 +2347,7 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
               <div style={{ fontSize: 12, fontWeight: 600, margin: '16px 0 8px', color: 'var(--text-secondary)' }}>
                 Recommended investigations for this symptom
               </div>
-              <HypoCbcPanel f={f} set={set} patientId={patientId} episodeId={episodeId} />
-              <HypoInlineLab label="Blood Sugar — Fasting" field="fbs" unit="mg/dL" f={f} set={set} />
-              <HypoInlineLab label="Blood Sugar — Post-Prandial" field="ppbs" unit="mg/dL" f={f} set={set} />
+              <HypoInvestigationPicker tests={['cbc', 'fbs', 'ppbs']} rows={[['cbc'], ['fbs', 'ppbs']]} f={f} set={set} patientId={patientId} episodeId={episodeId} />
             </HypoSubBlock>
           )}
         </>
@@ -1929,13 +2359,23 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
           <HypoRadioGroup value={f.hearing} onChange={set('hearing')} options={[['no', 'No'], ['unsure', 'Unsure'], ['yes', 'Yes']]} />
           {f.hearing === 'yes' && (
             <HypoSubBlock>
-              <HypoField label="Type (select one)">
-                <HypoRadioGroup value={f.hearingType} onChange={set('hearingType')} options={[
-                  ['reduced', 'Reduced hearing'], ['tinnitus', 'Tinnitus (ringing)'], ['both', 'Both'],
+              <HypoField label="Type (select all that apply)">
+                <HypoMultiSelect value={f.hearingTypes || []} onChange={set('hearingTypes')} options={[
+                  ['reduced', 'Reduced hearing'], ['tinnitus', 'Tinnitus (ringing)'],
                 ]} />
               </HypoField>
-              <HypoDurationPicker minDate={f.dob} value={f.hearingDuration} onChange={set('hearingDuration')} label="Since when" />
-              {f.hearingType && <HypoOutputBox text={`${f.hearingType === 'tinnitus' ? 'Tinnitus' : f.hearingType === 'reduced' ? 'Reduced hearing' : 'Reduced hearing and tinnitus'} ${formatDuration(f.hearingDuration)}`} />}
+              {(f.hearingTypes || []).includes('reduced') && (
+                <HypoDurationPicker minDate={f.dob} value={f.hearingReducedDuration} onChange={set('hearingReducedDuration')} label="Reduced hearing — since when" />
+              )}
+              {(f.hearingTypes || []).includes('tinnitus') && (
+                <HypoDurationPicker minDate={f.dob} value={f.hearingTinnitusDuration} onChange={set('hearingTinnitusDuration')} label="Tinnitus — since when" />
+              )}
+              {(f.hearingTypes || []).length > 0 && (
+                <HypoOutputBox text={[
+                  (f.hearingTypes || []).includes('reduced') ? `Reduced hearing ${formatDuration(f.hearingReducedDuration)}` : '',
+                  (f.hearingTypes || []).includes('tinnitus') ? `Tinnitus ${formatDuration(f.hearingTinnitusDuration)}` : '',
+                ].filter(Boolean).join('. ')} />
+              )}
             </HypoSubBlock>
           )}
         </>
@@ -1961,10 +2401,12 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
           <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 14 }}>(Carpal tunnel symptoms)</div>
           {[['pain', 'Pain'], ['numbness', 'Numbness'], ['tingling', 'Tingling']].map(([type, label]) => (
             <div key={type} style={{ marginBottom: 14, paddingBottom: 14, borderBottom: '1px solid var(--border)' }}>
-              <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 8 }}>{label}</div>
-              <HypoRadioGroup value={(f.carpalItems || {})[type]?.status || ''}
-                onChange={v => set('carpalItems')({ ...(f.carpalItems || {}), [type]: { ...(f.carpalItems?.[type] || {}), status: v } })}
-                options={[['no', 'No'], ['unsure', 'Unsure'], ['yes', 'Yes']]} horizontal />
+              <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 4 }}>
+                <div style={{ fontSize: 14, fontWeight: 500, minWidth: 90 }}>{label}</div>
+                <HypoRadioGroup value={(f.carpalItems || {})[type]?.status || ''}
+                  onChange={v => set('carpalItems')({ ...(f.carpalItems || {}), [type]: { ...(f.carpalItems?.[type] || {}), status: v } })}
+                  options={[['no', 'No'], ['unsure', 'Unsure'], ['yes', 'Yes']]} horizontal noMargin />
+              </div>
               {(f.carpalItems || {})[type]?.status === 'yes' && (
                 <HypoSubBlock>
                   <HypoField label="Which hand">
@@ -1980,13 +2422,7 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
             </div>
           ))}
           {['numbness', 'tingling'].some(t => (f.carpalItems || {})[t]?.status === 'yes') && (
-            <>
-              <div style={{ fontSize: 12, fontWeight: 600, margin: '16px 0 8px', color: 'var(--text-secondary)' }}>
-                Recommended investigations for this symptom
-              </div>
-              <HypoCbcPanel f={f} set={set} patientId={patientId} episodeId={episodeId} />
-              <HypoInlineLab label="Vitamin B12" field="vitB12" unit="pg/mL" f={f} set={set} />
-            </>
+            <HypoInvestigationPicker tests={['cbc', 'vitB12']} rows={[['cbc', 'vitB12']]} f={f} set={set} patientId={patientId} episodeId={episodeId} />
           )}
           {Object.entries(f.carpalItems || {}).filter(([, v]) => v?.status === 'yes').length > 0 && (
             <HypoOutputBox text={Object.entries(f.carpalItems || {}).filter(([, v]) => v?.status === 'yes')
@@ -2000,7 +2436,13 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
           <div style={{ fontSize: 16, fontWeight: 500, marginBottom: 8 }}>Have you noticed any swelling or enlargement of your tongue?</div>
           <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 14 }}>(Macroglossia)</div>
           <HypoRadioGroup value={f.macroglossia} onChange={set('macroglossia')} options={[['no', 'No'], ['unsure', 'Unsure'], ['yes', 'Yes']]} />
-          {f.macroglossia && <HypoOutputBox text={f.macroglossia === 'yes' ? 'Enlargement of tongue noted' : 'No enlargement of tongue'} />}
+          {f.macroglossia === 'yes' && (
+            <HypoSubBlock>
+              <HypoDurationPicker minDate={f.dob} value={f.macroglossiaDuration} onChange={set('macroglossiaDuration')} label="Since when" />
+              <HypoOutputBox text={`Enlargement of tongue ${formatDuration(f.macroglossiaDuration)}`} />
+            </HypoSubBlock>
+          )}
+          {f.macroglossia === 'no' && <HypoOutputBox text="No enlargement of tongue" />}
         </>
       );
 
@@ -2013,7 +2455,12 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
             <HypoSubBlock>
               <HypoDurationPicker minDate={f.dob} value={f.acidityDuration} onChange={set('acidityDuration')} label="Since when" />
               <HypoField label="Taking any medication for this?">
-                <HypoRadioGroup value={f.acidityOnMed} onChange={set('acidityOnMed')} horizontal options={[['no','No'],['unsure','Unsure'],['yes','Yes']]} />
+                <HypoRadioGroup value={f.acidityOnMed} onChange={v => {
+                  set('acidityOnMed')(v);
+                  if (v === 'yes' && !f.acidityMedName) {
+                    setF(p => ({ ...p, acidityMedName: 'Pantoprazole', acidityMedDose: '40', acidityMedFreq: '1' }));
+                  }
+                }} horizontal options={[['no','No'],['unsure','Unsure'],['yes','Yes']]} />
               </HypoField>
               {f.acidityOnMed === 'yes' && (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
@@ -2031,83 +2478,6 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
         </>
       );
 
-      // ── G1: Treatment ──
-      case 'G1': return (
-        <>
-          <div style={{ fontSize: 16, fontWeight: 500, marginBottom: 4 }}>Current thyroid medication</div>
-          <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 16 }}>Leave blank if you are not currently taking any medication for hypothyroidism.</div>
-          <HypoSubBlock>
-            <HypoField label="Treatment type">
-              <HypoRadioGroup value={f.treatmentType} onChange={set('treatmentType')} options={[
-                ['levo_only', 'Levothyroxine only'],
-                ['lio_only', 'Liothyronine only'],
-                ['combination', 'Combination'],
-                ['other', 'Other'],
-              ]} />
-            </HypoField>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
-              <HypoField label="Drug name"><HypoTextInput value={f.levoDrugName} onChange={set('levoDrugName')} placeholder="e.g. Levothyroxine" /></HypoField>
-              <HypoField label="Brand name"><HypoTextInput value={f.levoBrand} onChange={set('levoBrand')} placeholder="e.g. Thyronorm, Eltroxin" /></HypoField>
-              <HypoField label="Current dose (mcg)"><HypoTextInput type="number" min="0" value={f.levoDose} onChange={set('levoDose')} /></HypoField>
-            </div>
-            <HypoField label="Timing">
-              <HypoRadioGroup value={f.levoTiming} onChange={set('levoTiming')} horizontal options={[
-                ['before_breakfast', 'Before breakfast'],
-                ['after_breakfast', 'After breakfast'],
-                ['bedtime', 'Bedtime'],
-              ]} />
-            </HypoField>
-            <HypoField label="Compliance">
-              <HypoRadioGroup value={f.levoCompliance} onChange={set('levoCompliance')} horizontal options={[
-                ['regular', 'Regular'],
-                ['irregular', 'Irregular'],
-                ['skips_sometimes', 'Skips sometimes'],
-              ]} />
-            </HypoField>
-            <HypoDurationPicker minDate={f.dob} value={f.levoSince} onChange={set('levoSince')} label="Treatment started" />
-            {f.levoBrand && f.levoDose && (
-              <HypoOutputBox text={`On Tab. ${f.levoBrand} — ${f.levoDose} mcg ${formatDuration(f.levoSince)}`} />
-            )}
-          </HypoSubBlock>
-        </>
-      );
-
-      // ── G2: Dose change ──
-      case 'G2': return (
-        <>
-          <div style={{ fontSize: 16, fontWeight: 500, marginBottom: 8 }}>
-            Has your <span style={{ color: 'var(--teal-600)' }}>{f.levoBrand || 'thyroid medication'}</span> dose been changed recently?
-          </div>
-          <HypoRadioGroup value={f.doseChanged} onChange={set('doseChanged')} options={[['no', 'No'], ['unsure', 'Unsure'], ['yes', 'Yes']]} />
-          {f.doseChanged === 'yes' && (
-            <HypoSubBlock>
-              <HypoField label="Date of last dose change">
-                <HypoDateInput value={f.doseChangedDate} onChange={set('doseChangedDate')} />
-              </HypoField>
-              <HypoField label="Reason for change">
-                <HypoRadioGroup value={f.doseChangedReason} onChange={set('doseChangedReason')} options={[
-                  ['tsh_increased', 'TSH increased'],
-                  ['tsh_decreased', 'TSH decreased'],
-                  ['pregnancy', 'Pregnancy'],
-                  ['doctor_advice', "Doctor's advice / Other"],
-                ]} />
-              </HypoField>
-              {f.doseChangedReason && f.doseChangedDate && (
-                <HypoOutputBox text={`Dose of Tab. ${f.levoBrand || 'thyroid medication'} was ${
-                  f.doseChangedReason === 'tsh_increased' ? 'increased' :
-                  f.doseChangedReason === 'tsh_decreased' ? 'decreased' :
-                  f.doseChangedReason === 'pregnancy' ? 'changed due to pregnancy' : 'changed on doctor\'s advice'
-                } since ${new Date(f.doseChangedDate).toLocaleDateString('en-IN')} as ${
-                  f.doseChangedReason === 'tsh_increased' ? 'TSH has increased' :
-                  f.doseChangedReason === 'tsh_decreased' ? 'TSH has decreased' :
-                  f.doseChangedReason === 'pregnancy' ? 'patient is pregnant' : "doctor's advice"
-                }`} />
-              )}
-            </HypoSubBlock>
-          )}
-        </>
-      );
-
       // ── H1: Dyslipidaemia ──
       case 'H1': return (
         <>
@@ -2120,16 +2490,10 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
                 <HypoRadioGroup value={f.dyslipidaemiaOnMed} onChange={set('dyslipidaemiaOnMed')} horizontal options={[['no','No'],['unsure','Unsure'],['yes','Yes']]} />
               </HypoField>
               {f.dyslipidaemiaOnMed === 'yes' && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
-                  <HypoField label="Medicine name"><HypoTextInput value={f.dyslipidaemiaMedName} onChange={set('dyslipidaemiaMedName')} placeholder="e.g. Atorvastatin" /></HypoField>
-                  <HypoField label="Dose (mg)"><HypoTextInput type="number" value={f.dyslipidaemiaMedDose} onChange={set('dyslipidaemiaMedDose')} /></HypoField>
-                  <HypoField label="Times per day"><HypoTextInput type="number" min="1" max="4" value={f.dyslipidaemiaMedTimes} onChange={set('dyslipidaemiaMedTimes')} /></HypoField>
-                </div>
+                <HypoMedList field="dyslipidaemiaMeds" f={f} set={set} namePlaceholder="e.g. Atorvastatin"
+                  defaultEntry={{ name: 'Atorvastatin', dose: '10', freq: '1' }} />
               )}
-              {f.dyslipidaemiaOnMed === 'yes' && (
-                <HypoDurationPicker minDate={f.dob} value={f.dyslipidaemiaMedSince} onChange={set('dyslipidaemiaMedSince')} label="Taking medication since" />
-              )}
-              <HypoOutputBox text={f.dyslipidaemia === 'yes' ? `Dyslipidaemia / Hypercholesterolaemia ${formatDuration(f.dyslipidaemiaDuration)}${f.dyslipidaemiaOnMed === 'yes' && f.dyslipidaemiaMedName ? `. On Tab. ${f.dyslipidaemiaMedName}${f.dyslipidaemiaMedDose ? ` (${f.dyslipidaemiaMedDose} mg)` : ''}${f.dyslipidaemiaMedTimes ? ` — ${f.dyslipidaemiaMedTimes} times a day` : ''}.` : ''}` : ''} />
+              <HypoOutputBox text={f.dyslipidaemia === 'yes' ? `Dyslipidaemia / Hypercholesterolaemia ${formatDuration(f.dyslipidaemiaDuration)}${f.dyslipidaemiaOnMed === 'yes' && f.dyslipidaemiaMeds?.length ? `. On ${formatMedList(f.dyslipidaemiaMeds)}.` : ''}` : ''} />
             </HypoSubBlock>
           )}
         </>
@@ -2142,8 +2506,8 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
           <HypoRadioGroup value={f.anaemia} onChange={set('anaemia')} options={[['no', 'No'], ['unsure', 'Unsure'], ['yes', 'Yes']]} />
           {f.anaemia === 'yes' && (
             <HypoSubBlock>
-              <HypoField label="Type if known">
-                <HypoRadioGroup value={f.anaemiaType} onChange={set('anaemiaType')} options={[
+              <HypoField label="Type if known (select all that apply)">
+                <HypoCheckPillGrid perRow={2} value={f.anaemiaTypes || []} onChange={set('anaemiaTypes')} options={[
                   ['iron_deficiency', 'Iron deficiency'],
                   ['b12_deficiency', 'Vitamin B12 deficiency'],
                   ['folate_deficiency', 'Folate deficiency'],
@@ -2155,16 +2519,15 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
                 <HypoRadioGroup value={f.anaemiaOnMed} onChange={set('anaemiaOnMed')} horizontal options={[['no','No'],['unsure','Unsure'],['yes','Yes']]} />
               </HypoField>
               {f.anaemiaOnMed === 'yes' && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
-                  <HypoField label="Medicine name"><HypoTextInput value={f.anaemiaMedName} onChange={set('anaemiaMedName')} placeholder="e.g. Autrin, Folvite" /></HypoField>
-                  <HypoField label="Dose (mg)"><HypoTextInput type="number" value={f.anaemiaMedDose} onChange={set('anaemiaMedDose')} /></HypoField>
-                  <HypoField label="Times per day"><HypoTextInput type="number" min="1" max="4" value={f.anaemiaMedTimes} onChange={set('anaemiaMedTimes')} /></HypoField>
-                </div>
+                <HypoMedList field="anaemiaMeds" f={f} set={set} namePlaceholder="e.g. Autrin, Folvite"
+                  defaultEntries={(f.anaemiaTypes || []).map(t =>
+                    t === 'b12_deficiency' ? { name: 'Methylcobalamin', dose: '500', freq: '1' } :
+                    t === 'folate_deficiency' ? { name: 'Folvite', dose: '5', freq: '1' } :
+                    t === 'iron_deficiency' ? { name: 'Autrin', dose: '300', freq: '1' } :
+                    null
+                  ).filter(Boolean)} />
               )}
-              {f.anaemiaOnMed === 'yes' && (
-                <HypoDurationPicker minDate={f.dob} value={f.anaemiaMedSince} onChange={set('anaemiaMedSince')} label="Taking medication since" />
-              )}
-              <HypoOutputBox text={f.anaemiaType ? `K/c/o ${f.anaemiaType.replace(/_/g,' ')} anaemia${f.anaemiaOnMed === 'yes' && f.anaemiaMedName ? `. On ${f.anaemiaMedName}${f.anaemiaMedDose ? ` (${f.anaemiaMedDose} mg)` : ''}.` : ''}` : ''} />
+              <HypoOutputBox text={(f.anaemiaTypes || []).length ? `K/c/o ${f.anaemiaTypes.map(t => t.replace(/_/g,' ')).join(' + ')} anaemia${f.anaemiaOnMed === 'yes' && f.anaemiaMeds?.length ? `. On ${formatMedList(f.anaemiaMeds)}.` : ''}` : ''} />
             </HypoSubBlock>
           )}
         </>
@@ -2178,26 +2541,40 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
           {f.diabetes === 'yes' && (
             <HypoSubBlock>
               <HypoField label="Type">
-                <HypoRadioGroup value={f.diabetesType} onChange={set('diabetesType')} options={[
-                  ['type1', 'Type 1 diabetes'], ['type2', 'Type 2 diabetes'],
-                  ['pre_diabetes', 'Pre-diabetes'], ['not_specified', 'Not specified'],
-                ]} />
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
+                  {[
+                    ['type1', 'Type 1 diabetes'], ['type2', 'Type 2 diabetes'],
+                    ['pre_diabetes', 'Pre-diabetes'], ['not_specified', 'Not specified'],
+                  ].map(([val, label]) => (
+                    <div key={val} onClick={() => set('diabetesType')(val)} style={{
+                      display: 'flex', alignItems: 'center', gap: 8,
+                      padding: '8px 14px', borderRadius: 8, cursor: 'pointer',
+                      border: `1.5px solid ${f.diabetesType === val ? 'var(--teal-400)' : 'var(--border)'}`,
+                      background: f.diabetesType === val ? 'var(--teal-50)' : 'var(--surface)',
+                      color: f.diabetesType === val ? 'var(--teal-700)' : 'var(--text-primary)',
+                      fontSize: 13, minHeight: 40, boxSizing: 'border-box',
+                    }}>
+                      <div style={{
+                        width: 14, height: 14, borderRadius: '50%', flexShrink: 0,
+                        border: `1.5px solid ${f.diabetesType === val ? 'var(--teal-500)' : 'var(--border-md)'}`,
+                        background: f.diabetesType === val ? 'var(--teal-500)' : 'transparent',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        {f.diabetesType === val && <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#fff' }} />}
+                      </div>
+                      {label}
+                    </div>
+                  ))}
+                </div>
               </HypoField>
               <HypoDurationPicker minDate={f.dob} value={f.diabetesDuration} onChange={set('diabetesDuration')} label="Since when" />
               <HypoField label="On medication?">
                 <HypoRadioGroup value={f.diabetesOnMed} onChange={set('diabetesOnMed')} horizontal options={[['no','No'],['unsure','Unsure'],['yes','Yes']]} />
               </HypoField>
               {f.diabetesOnMed === 'yes' && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
-                  <HypoField label="Medicine name"><HypoTextInput value={f.diabetesMedName} onChange={set('diabetesMedName')} placeholder="e.g. Metformin" /></HypoField>
-                  <HypoField label="Dose (mg)"><HypoTextInput type="number" value={f.diabetesMedDose} onChange={set('diabetesMedDose')} /></HypoField>
-                  <HypoField label="Times per day"><HypoTextInput type="number" min="1" max="4" value={f.diabetesMedTimes} onChange={set('diabetesMedTimes')} /></HypoField>
-                </div>
+                <HypoMedList field="diabetesMeds" f={f} set={set} namePlaceholder="e.g. Metformin" />
               )}
-              {f.diabetesOnMed === 'yes' && (
-                <HypoDurationPicker minDate={f.dob} value={f.diabetesMedSince} onChange={set('diabetesMedSince')} label="Taking medication since" />
-              )}
-              <HypoOutputBox text={f.diabetesType ? `K/c/o ${f.diabetesType.replace(/_/g,' ')} ${formatDuration(f.diabetesDuration)}${f.diabetesOnMed === 'yes' && f.diabetesMedName ? `. On Tab. ${f.diabetesMedName}${f.diabetesMedDose ? ` (${f.diabetesMedDose} mg)` : ''}${f.diabetesMedTimes ? ` — ${f.diabetesMedTimes} times a day` : ''}.` : ''}` : ''} />
+              <HypoOutputBox text={f.diabetesType ? `K/c/o ${f.diabetesType.replace(/_/g,' ')} ${formatDuration(f.diabetesDuration)}${f.diabetesOnMed === 'yes' && f.diabetesMeds?.length ? `. On ${formatMedList(f.diabetesMeds)}.` : ''}` : ''} />
             </HypoSubBlock>
           )}
         </>
@@ -2211,28 +2588,17 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
           <HypoRadioGroup value={f.pcosPmos} onChange={set('pcosPmos')} options={[['no', 'No'], ['unsure', 'Unsure'], ['yes', 'Yes']]} />
           {f.pcosPmos === 'yes' && (
             <HypoSubBlock>
-              <HypoField label="Which diagnosis?">
-                <HypoRadioGroup value={f.pcosPmosLabel} onChange={set('pcosPmosLabel')} horizontal
-                  options={[['pcos', 'PCOS'], ['pmos', 'PMOS']]} />
-              </HypoField>
               <HypoDurationPicker minDate={f.dob} value={f.pcosDuration} onChange={set('pcosDuration')} label="Since when" />
               <HypoField label="Are you taking any medicines for this?">
                 <HypoRadioGroup value={f.pcosOnMed} onChange={set('pcosOnMed')} horizontal
                   options={[['no', 'No'], ['unsure', 'Unsure'], ['yes', 'Yes']]} />
               </HypoField>
               {f.pcosOnMed === 'yes' && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
-                  <HypoField label="Medicine name"><HypoTextInput value={f.pcosMedName} onChange={set('pcosMedName')} placeholder="e.g. Metformin" /></HypoField>
-                  <HypoField label="Dose (mg)"><HypoTextInput type="number" min="0" value={f.pcosMedDose} onChange={set('pcosMedDose')} /></HypoField>
-                  <HypoField label="Times per day"><HypoTextInput type="number" min="1" max="6" value={f.pcosMedTimes} onChange={set('pcosMedTimes')} /></HypoField>
-                </div>
+                <HypoMedList field="pcosMeds" f={f} set={set} namePlaceholder="e.g. Metformin" />
               )}
-              {f.pcosOnMed === 'yes' && (
-                <HypoDurationPicker minDate={f.dob} value={f.pcosMedSince} onChange={set('pcosMedSince')} label="Taking medication since" />
-              )}
-              {f.pcosPmosLabel && (
-                <HypoOutputBox text={`K/c/o ${f.pcosPmosLabel.toUpperCase()} ${formatDuration(f.pcosDuration)}${
-                  f.pcosOnMed === 'yes' && f.pcosMedName ? `, on Tab. ${f.pcosMedName}${f.pcosMedDose ? ` (${f.pcosMedDose} mg)` : ''}${f.pcosMedTimes ? ` — ${f.pcosMedTimes} times a day` : ''}` : ''
+              {f.pcosDuration && (f.pcosDuration.date || f.pcosDuration.years || f.pcosDuration.months) && (
+                <HypoOutputBox text={`K/c/o PCOS/PMOS ${formatDuration(f.pcosDuration)}${
+                  f.pcosOnMed === 'yes' && f.pcosMeds?.length ? `, on ${formatMedList(f.pcosMeds)}` : ''
                 }`} />
               )}
             </HypoSubBlock>
@@ -2261,16 +2627,10 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
                 <HypoRadioGroup value={f.htnOnMed} onChange={set('htnOnMed')} horizontal options={[['no','No'],['unsure','Unsure'],['yes','Yes']]} />
               </HypoField>
               {f.htnOnMed === 'yes' && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
-                  <HypoField label="Medicine name"><HypoTextInput value={f.htnMedName} onChange={set('htnMedName')} placeholder="e.g. Amlodipine, Telmisartan" /></HypoField>
-                  <HypoField label="Dose (mg)"><HypoTextInput type="number" value={f.htnMedDose} onChange={set('htnMedDose')} /></HypoField>
-                  <HypoField label="Times per day"><HypoTextInput type="number" min="1" max="4" value={f.htnMedFreq} onChange={set('htnMedFreq')} /></HypoField>
-                </div>
+                <HypoMedList field="htnMeds" f={f} set={set} namePlaceholder="e.g. Amlodipine, Telmisartan"
+                  defaultEntry={{ name: 'Amlodipine', dose: '5', freq: '1' }} />
               )}
-              {f.htnOnMed === 'yes' && (
-                <HypoDurationPicker minDate={f.dob} value={f.htnMedSince} onChange={set('htnMedSince')} label="Taking medication since" />
-              )}
-              <HypoOutputBox text={f.htn === 'yes' ? `Hypertension ${formatDuration(f.htnDuration)}${f.htnOnMed === 'yes' && f.htnMedName ? `. On Tab. ${f.htnMedName}${f.htnMedDose ? ` (${f.htnMedDose} mg)` : ''}${f.htnMedFreq ? ` — ${f.htnMedFreq} times a day` : ''}.` : ''}` : ''} />
+              <HypoOutputBox text={f.htn === 'yes' ? `Hypertension ${formatDuration(f.htnDuration)}${f.htnOnMed === 'yes' && f.htnMeds?.length ? `. On ${formatMedList(f.htnMeds)}.` : ''}` : ''} />
             </HypoSubBlock>
           )}
         </>
@@ -2287,7 +2647,12 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
                 <HypoRadioGroup value={f.osteoporosisDEXA} onChange={set('osteoporosisDEXA')} horizontal options={[['no','No'],['yes','Yes'],['not_done','Not done']]} />
               </HypoField>
               <HypoField label="On bone-protection medication?">
-                <HypoRadioGroup value={f.osteoporosisOnMed} onChange={set('osteoporosisOnMed')} horizontal options={[['no','No'],['unsure','Unsure'],['yes','Yes']]} />
+                <HypoRadioGroup value={f.osteoporosisOnMed} onChange={v => {
+                  set('osteoporosisOnMed')(v);
+                  if (v === 'yes' && !f.osteoporosisMedName) {
+                    setF(p => ({ ...p, osteoporosisMedName: 'Alendronate', osteoporosisMedDose: '70', osteoporosisMedTimes: '1' }));
+                  }
+                }} horizontal options={[['no','No'],['unsure','Unsure'],['yes','Yes']]} />
               </HypoField>
               {f.osteoporosisOnMed === 'yes' && (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
@@ -2314,7 +2679,7 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
           {f.familyCancer === 'yes' && (
             <HypoSubBlock>
               <HypoField label="Type (select all that apply)">
-                <HypoMultiSelect value={f.familyCancerTypes} onChange={set('familyCancerTypes')} options={[
+                <HypoCheckPillGrid perRow={2} value={f.familyCancerTypes} onChange={set('familyCancerTypes')} options={[
                   ['men1', 'MEN1 (Multiple Endocrine Neoplasia type 1)'],
                   ['men2a', 'MEN2A (Multiple Endocrine Neoplasia type 2A)'],
                   ['men2b', 'MEN2B (Multiple Endocrine Neoplasia type 2B)'],
@@ -2354,6 +2719,12 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
 
   return (
     <div style={{ maxWidth: 680, margin: '0 auto' }}>
+      {draftLoadError && (
+        <div style={{ background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: 13, color: '#991b1b', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <span>{draftLoadError}</span>
+          <button onClick={loadDraft} className="btn btn-secondary btn-sm" style={{ flexShrink: 0 }}>Retry</button>
+        </div>
+      )}
       {/* Progress bar */}
       <div style={{ marginBottom: 20 }}>
         <div style={{ display: 'flex', justifyContent: 'flex-end', fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 4 }}>
@@ -2374,13 +2745,15 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
       </div>
 
       {/* Page content */}
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '20px 24px', marginBottom: 16 }}>
+      <div ref={pageContentRef} style={{ position: 'relative', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '20px 24px', marginBottom: 16 }}>
         {error && <div style={{ background: 'var(--red-50)', border: '1px solid var(--red-200)', borderRadius: 8, padding: '8px 12px', marginBottom: 14, fontSize: 12, color: 'var(--red-700)' }}>{error}</div>}
         {renderPage()}
+        <HypoMissingPointer containerRef={pageContentRef} pageKey={page?.id}
+          active={reviewMode && incompleteList.some(({ idx }) => idx === currentPage)} />
       </div>
 
       {/* Navigation */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: incompleteList.length > 0 ? 60 : 0 }}>
         <button className="btn btn-secondary" onClick={goPrev}>
           ← {currentPage === 0 ? 'Back' : 'Previous'}
         </button>
@@ -2391,10 +2764,40 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
           <button className="btn btn-primary" onClick={goNext} disabled={saving || yearInvalid}>
             {currentPage === totalPages - 1
               ? saving ? <Spinner size={14} color="#fff" /> : 'Submit questionnaire ✓'
-              : 'Next →'}
+              : reviewMode ? 'Next unanswered →' : 'Next →'}
           </button>
         </div>
       </div>
+
+      {/* Item 3: fixed bottom strip listing every unanswered question —
+          appears once Submit has been clicked and something's missing,
+          disappears once everything's fixed (fully derived from
+          incompleteList, so it reappears automatically if Submit is
+          clicked again and something's still missing). */}
+      {incompleteList.length > 0 && (
+        <div style={{
+          position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 40,
+          background: '#fff', borderTop: '2px solid var(--red-300, #e6a3a3)',
+          boxShadow: '0 -2px 12px rgba(0,0,0,0.10)', padding: '10px 20px',
+          display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+        }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--red-700, #a83232)', marginRight: 4 }}>
+            {incompleteList.length} unanswered — jump to:
+          </span>
+          {incompleteList.map(({ p, idx }) => (
+            <button key={p.id} onClick={() => { setError(''); setCurrentPage(idx); }}
+              title={p.title}
+              style={{
+                fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 12, cursor: 'pointer',
+                border: `1.5px solid ${idx === currentPage ? 'var(--teal-500)' : 'var(--red-300, #e6a3a3)'}`,
+                background: idx === currentPage ? 'var(--teal-50)' : '#fff',
+                color: idx === currentPage ? 'var(--teal-700)' : 'var(--red-700, #a83232)',
+              }}>
+              Q{idx + 1}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 };
@@ -2583,6 +2986,115 @@ const HypoInlineLab = ({ label, field, f, set, unit }) => {
   );
 };
 
+// ─── Repeatable medicine list ("+ Add another medicine") — used by the
+// 5 comorbidity screens (Dyslipidaemia, Anaemia, Diabetes, PCOS/PMOS,
+// Hypertension). Mirrors the existing RAI repeatable-entry pattern. ───
+const HypoMedList = ({ field, f, set, dosePlaceholder = 'e.g. 500', namePlaceholder = 'Medicine name', defaultEntry = null, defaultEntries = null }) => {
+  const list = f[field] || [];
+  const update = (i, patch) => set(field)(list.map((e, j) => j === i ? { ...e, ...patch } : e));
+  const remove = (i) => set(field)(list.filter((_, j) => j !== i));
+  const add = () => {
+    if (list.length === 0 && defaultEntries && defaultEntries.length) {
+      set(field)(defaultEntries.map(e => ({ ...e, since: {} })));
+      return;
+    }
+    set(field)([...list, list.length === 0 && defaultEntry ? { ...defaultEntry, since: {} } : { name: '', dose: '', freq: '', since: {} }]);
+  };
+
+  return (
+    <div style={{ marginBottom: 8 }}>
+      {list.map((entry, i) => (
+        <div key={i} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 10, marginBottom: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>Medicine {i + 1}</div>
+            <button type="button" onClick={() => remove(i)}
+              style={{ background: 'none', border: 'none', color: 'var(--red-500)', cursor: 'pointer', fontSize: 12 }}>
+              Remove
+            </button>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
+            <HypoField label="Medicine name">
+              <HypoTextInput value={entry.name} onChange={v => update(i, { name: v })} placeholder={namePlaceholder} />
+            </HypoField>
+            <HypoField label="Dose (mg/mcg)">
+              <HypoTextInput type="number" min="0" value={entry.dose} onChange={v => update(i, { dose: v })} placeholder={dosePlaceholder} />
+            </HypoField>
+            <HypoField label="Times per day">
+              <HypoTextInput type="number" min="1" max="6" value={entry.freq} onChange={v => update(i, { freq: v })} />
+            </HypoField>
+          </div>
+          <HypoDurationPicker minDate={f.dob} value={entry.since || {}} onChange={v => update(i, { since: v })} label="Taking since" />
+        </div>
+      ))}
+      <button type="button" onClick={add}
+        style={{ fontSize: 13, color: 'var(--teal-600)', background: 'none', border: '1px dashed var(--teal-300)', borderRadius: 6, padding: '6px 12px', cursor: 'pointer' }}>
+        + Add {list.length ? 'another' : ''} medicine
+      </button>
+    </div>
+  );
+};
+
+const HypoInvestigationPicker = ({ tests, rows, f, set, patientId, episodeId }) => {
+  const META = {
+    cbc:       { label: 'CBC (Complete Blood Count)' },
+    vitB12:    { label: 'Vitamin B12' },
+    vitD3:     { label: 'Vitamin D3 (25-OH)' },
+    srCalcium: { label: 'Serum Calcium' },
+    fbs:       { label: 'Blood Sugar — Fasting' },
+    ppbs:      { label: 'Blood Sugar — Post-Prandial' },
+  };
+  const chosen = f.investigationsSelected || {};
+  // Checked if clicked this session OR a value was already saved for it
+  // (covers resuming a draft without needing a separate DB column).
+  const isChecked = (key) => !!chosen[key] || (key === 'cbc'
+    ? Object.values(f.cbcValues || {}).some(v => v?.value)
+    : !!f[`${key}Value`]);
+  const toggle = (key) => set('investigationsSelected')({ ...chosen, [key]: !isChecked(key) });
+  // rows lets callers control exactly which tests land on which row
+  // (e.g. CBC + Vit B12 on row 1, Vit D3 + Sr Calcium on row 2) instead
+  // of everything free-flowing in one wrapped row.
+  const rowGroups = rows || [tests];
+
+  return (
+    <>
+      <div style={{ fontSize: 12, fontWeight: 600, margin: '16px 0 8px', color: 'var(--text-secondary)' }}>
+        Recommended investigations for this symptom — select tests done
+      </div>
+      {rowGroups.map((rowKeys, ri) => (
+        <div key={ri} style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+          {rowKeys.map(key => {
+            const sel = isChecked(key);
+            return (
+              <div key={key} onClick={() => toggle(key)} style={{
+                display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
+                padding: '8px 14px', borderRadius: 8, flex: '1 1 0',
+                border: `1.5px solid ${sel ? 'var(--teal-400)' : 'var(--border)'}`,
+                background: sel ? 'var(--teal-50)' : 'var(--surface)',
+                color: sel ? 'var(--teal-700)' : 'var(--text-primary)',
+                fontSize: 13, minHeight: HYPO_OPTION_MIN_HEIGHT, boxSizing: 'border-box',
+              }}>
+                <div style={{
+                  width: 15, height: 15, borderRadius: 4, flexShrink: 0,
+                  border: `1.5px solid ${sel ? 'var(--teal-500)' : 'var(--border-md)'}`,
+                  background: sel ? 'var(--teal-500)' : 'transparent',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: '#fff',
+                }}>{sel && '✓'}</div>
+                {META[key].label}
+              </div>
+            );
+          })}
+        </div>
+      ))}
+      {tests.includes('cbc') && isChecked('cbc') && <HypoCbcPanel f={f} set={set} patientId={patientId} episodeId={episodeId} />}
+      {tests.includes('vitB12') && isChecked('vitB12') && <HypoInlineLab label="Vitamin B12" field="vitB12" unit="pg/mL" f={f} set={set} />}
+      {tests.includes('vitD3') && isChecked('vitD3') && <HypoInlineLab label="Vitamin D3 (25-OH)" field="vitD3" unit="ng/mL" f={f} set={set} />}
+      {tests.includes('srCalcium') && isChecked('srCalcium') && <HypoInlineLab label="Serum Calcium" field="srCalcium" unit="mg/dL" f={f} set={set} />}
+      {tests.includes('fbs') && isChecked('fbs') && <HypoInlineLab label="Blood Sugar — Fasting" field="fbs" unit="mg/dL" f={f} set={set} />}
+      {tests.includes('ppbs') && isChecked('ppbs') && <HypoInlineLab label="Blood Sugar — Post-Prandial" field="ppbs" unit="mg/dL" f={f} set={set} />}
+    </>
+  );
+};
+
 // ─── DB mapping helpers ───────────────────────────────────
 function mapFormToDb(f) {
   // ── CBC panel: value/unit/ref_low/ref_high per component, shared date+status ──
@@ -2651,6 +3163,16 @@ function mapFormToDb(f) {
     thyroid_med_compliance: f.thyroidMedCompliance || null,
     thyroid_med_since_years: f.thyroidMedSince?.years || null,
     thyroid_med_since_months: f.thyroidMedSince?.months || null,
+    liothyronine_brand: f.liothyronineBrand || null,
+    liothyronine_name: f.liothyronineName || null,
+    liothyronine_dose: f.liothyronineDose || null,
+    liothyronine_timing: f.liothyronineTiming || null,
+    liothyronine_compliance: f.liothyronineCompliance || null,
+    liothyronine_since_years: f.liothyronineSince?.years || null,
+    liothyronine_since_months: f.liothyronineSince?.months || null,
+    liothyronine_dose_changed_status: f.liothyronineDoseChanged || null,
+    liothyronine_dose_changed_date: f.liothyronineDoseChangedDate || null,
+    liothyronine_dose_change_reason: f.liothyronineDoseChangedReason || null,
     family_thyroid_status: f.familyThyroid || null,
     family_thyroid_relations: (f.familyThyroidRelatives || []).length ? f.familyThyroidRelatives : null,
     // DB only holds one condition value per episode (pre-existing schema
@@ -2731,9 +3253,11 @@ function mapFormToDb(f) {
     hypo_duration_days: f.hypoDuration?.days || null,
     goitre_present: f.goitre === 'yes',
     goitre_size_value: f.goitreSize || null,
-    hashimotos_confirmed: f.hashimotos === 'yes',
+    hashimotos_confirmed: f.hypoCause === 'hashimotos',
     hashimotos_anti_tpo: f.hashimotosAntiTpo || null,
     hashimotos_anti_tg: f.hashimotosAntiTg || null,
+    hashimotos_anti_tpo_value: f.hashimotosAntiTpoValue || null,
+    hashimotos_anti_tg_value: f.hashimotosAntiTgValue || null,
 
     // ═══ MODULE F — symptoms (existing, unchanged) + NEW Acidity ═══
     sym_fatigue_status: f.fatigue || null,
@@ -2868,11 +3392,11 @@ function mapFormToDb(f) {
     sym_blackout_assessed: f.blackoutAssessed === 'yes',
     sym_blackout_dx: f.blackoutDx || null,
     sym_hearing_status: f.hearing || null,
-    sym_hearing_type: f.hearingType || null,
-    sym_hearing_since_date: f.hearingDuration?.date || null,
-    sym_hearing_years: f.hearingDuration?.years || null,
-    sym_hearing_months: f.hearingDuration?.months || null,
-    sym_hearing_days: f.hearingDuration?.days || null,
+    sym_hearing_data: (f.hearingTypes || []).length ? {
+      types: f.hearingTypes,
+      reduced: f.hearingReducedDuration || {},
+      tinnitus: f.hearingTinnitusDuration || {},
+    } : null,
     sym_reflexes_status: f.reflexes || null,
     sym_reflexes_since_date: f.reflexesDuration?.date || null,
     sym_reflexes_years: f.reflexesDuration?.years || null,
@@ -2880,6 +3404,10 @@ function mapFormToDb(f) {
     sym_reflexes_days: f.reflexesDuration?.days || null,
     sym_carpal_data: f.carpalItems && Object.keys(f.carpalItems).length ? f.carpalItems : null,
     sym_macroglossia_status: f.macroglossia || null,
+    sym_macroglossia_since_date: f.macroglossiaDuration?.date || null,
+    sym_macroglossia_years: f.macroglossiaDuration?.years || null,
+    sym_macroglossia_months: f.macroglossiaDuration?.months || null,
+    sym_macroglossia_days: f.macroglossiaDuration?.days || null,
     // Acidity / retrosternal chest burn — new symptom
     acidity_status: f.acidity || null,
     acidity_since_date: f.acidityDuration?.date || null,
@@ -2894,17 +3422,10 @@ function mapFormToDb(f) {
     acidity_med_since_years: f.acidityMedSince?.years || null,
     acidity_med_since_months: f.acidityMedSince?.months || null,
 
-    // ═══ MODULE G — current treatment (unchanged) ═══
-    on_treatment: !!(f.levoBrand || f.levoDose || f.levoDrugName),
+    // ═══ MODULE G — current treatment (merged into C3 above; thyroid_med_*
+    // columns already carry this data — see MODULE C payload block) ═══
+    on_treatment: !!(f.thyroidMed === 'yes' && (f.thyroidMedBrand || f.thyroidMedDose)),
     treatment_type: f.treatmentType || null,
-    levo_drug_name: f.levoDrugName || null,
-    levo_brand: f.levoBrand || null,
-    levo_dose_mcg: f.levoDose || null,
-    levo_timing: f.levoTiming || null,
-    levo_compliance_val: f.levoCompliance || null,
-    treatment_start_date_val: f.levoSince?.date || null,
-    treatment_start_years: f.levoSince?.years || null,
-    treatment_start_months_val: f.levoSince?.months || null,
     dose_changed_status: f.doseChanged || null,
     dose_last_changed_date: f.doseChangedDate || null,
     dose_change_reason_type: f.doseChangedReason || null,
@@ -2916,26 +3437,16 @@ function mapFormToDb(f) {
     dyslipidaemia_months: f.dyslipidaemiaDuration?.months || null,
     dyslipidaemia_days: f.dyslipidaemiaDuration?.days || null,
     dyslipidaemia_on_med: f.dyslipidaemiaOnMed || null,
-    dyslipidaemia_med_name: f.dyslipidaemiaMedName || null,
-    dyslipidaemia_med_dose: f.dyslipidaemiaMedDose || null,
-    dyslipidaemia_med_freq: f.dyslipidaemiaMedTimes || null,
-    dyslipidaemia_med_since_date: f.dyslipidaemiaMedSince?.date || null,
-    dyslipidaemia_med_since_years: f.dyslipidaemiaMedSince?.years || null,
-    dyslipidaemia_med_since_months: f.dyslipidaemiaMedSince?.months || null,
+    dyslipidaemia_meds: f.dyslipidaemiaMeds && f.dyslipidaemiaMeds.length ? f.dyslipidaemiaMeds : null,
 
     anaemia_status: f.anaemia || null,
-    anaemia_type: f.anaemiaType || null,
+    anaemia_types: (f.anaemiaTypes || []).length ? f.anaemiaTypes : null,
     anaemia_since_date: f.anaemiaDuration?.date || null,
     anaemia_years: f.anaemiaDuration?.years || null,
     anaemia_months: f.anaemiaDuration?.months || null,
     anaemia_days: f.anaemiaDuration?.days || null,
     anaemia_on_med: f.anaemiaOnMed || null,
-    anaemia_med_name: f.anaemiaMedName || null,
-    anaemia_med_dose: f.anaemiaMedDose || null,
-    anaemia_med_freq: f.anaemiaMedTimes || null,
-    anaemia_med_since_date: f.anaemiaMedSince?.date || null,
-    anaemia_med_since_years: f.anaemiaMedSince?.years || null,
-    anaemia_med_since_months: f.anaemiaMedSince?.months || null,
+    anaemia_meds: f.anaemiaMeds && f.anaemiaMeds.length ? f.anaemiaMeds : null,
 
     diabetes_status: f.diabetes || null,
     diabetes_type: f.diabetesType || null,
@@ -2944,12 +3455,7 @@ function mapFormToDb(f) {
     diabetes_months: f.diabetesDuration?.months || null,
     diabetes_days: f.diabetesDuration?.days || null,
     diabetes_on_med: f.diabetesOnMed || null,
-    diabetes_med_name: f.diabetesMedName || null,
-    diabetes_med_dose: f.diabetesMedDose || null,
-    diabetes_med_freq: f.diabetesMedTimes || null,
-    diabetes_med_since_date: f.diabetesMedSince?.date || null,
-    diabetes_med_since_years: f.diabetesMedSince?.years || null,
-    diabetes_med_since_months: f.diabetesMedSince?.months || null,
+    diabetes_meds: f.diabetesMeds && f.diabetesMeds.length ? f.diabetesMeds : null,
 
     // Hypertension — new comorbidity (H6)
     htn_status: f.htn || null,
@@ -2958,12 +3464,7 @@ function mapFormToDb(f) {
     htn_months: f.htnDuration?.months || null,
     htn_days: f.htnDuration?.days || null,
     htn_on_med: f.htnOnMed || null,
-    htn_med_name: f.htnMedName || null,
-    htn_med_dose: f.htnMedDose || null,
-    htn_med_freq: f.htnMedFreq || null,
-    htn_med_since_date: f.htnMedSince?.date || null,
-    htn_med_since_years: f.htnMedSince?.years || null,
-    htn_med_since_months: f.htnMedSince?.months || null,
+    htn_meds: f.htnMeds && f.htnMeds.length ? f.htnMeds : null,
 
     pcos_status: f.pcosPmos || null,
     pcos_pmos_label: f.pcosPmosLabel || null,
@@ -2972,12 +3473,7 @@ function mapFormToDb(f) {
     pcos_months: f.pcosDuration?.months || null,
     pcos_days: f.pcosDuration?.days || null,
     pcos_on_med: f.pcosOnMed || null,
-    pcos_med_name: f.pcosMedName || null,
-    pcos_med_dose: f.pcosMedDose || null,
-    pcos_med_freq: f.pcosMedTimes || null,
-    pcos_med_since_date: f.pcosMedSince?.date || null,
-    pcos_med_since_years: f.pcosMedSince?.years || null,
-    pcos_med_since_months: f.pcosMedSince?.months || null,
+    pcos_meds: f.pcosMeds && f.pcosMeds.length ? f.pcosMeds : null,
 
     has_infertility: f.infertility === 'yes',
 
@@ -3052,6 +3548,15 @@ function mapDbToForm(r) {
     thyroidMedTiming: r.thyroid_med_timing || '',
     thyroidMedCompliance: r.thyroid_med_compliance || '',
     thyroidMedSince: { years: r.thyroid_med_since_years, months: r.thyroid_med_since_months },
+    liothyronineBrand: r.liothyronine_brand || '',
+    liothyronineName: r.liothyronine_name || '',
+    liothyronineDose: r.liothyronine_dose || '',
+    liothyronineTiming: r.liothyronine_timing || '',
+    liothyronineCompliance: r.liothyronine_compliance || '',
+    liothyronineSince: { years: r.liothyronine_since_years, months: r.liothyronine_since_months },
+    liothyronineDoseChanged: r.liothyronine_dose_changed_status || '',
+    liothyronineDoseChangedDate: r.liothyronine_dose_changed_date || '',
+    liothyronineDoseChangedReason: r.liothyronine_dose_change_reason || '',
     familyThyroid: r.family_thyroid_status || '',
     familyThyroidRelatives: r.family_thyroid_relations || [],
     familyThyroidConditions: r.family_thyroid_relations?.length && r.family_thyroid_condition
@@ -3111,9 +3616,10 @@ function mapDbToForm(r) {
     hypoDuration: { date: r.hypo_duration_date, years: r.hypo_duration_years, months: r.hypo_duration_months, days: r.hypo_duration_days },
     goitre: r.goitre_present ? 'yes' : 'no',
     goitreSize: r.goitre_size_value || '',
-    hashimotos: r.hashimotos_confirmed ? 'yes' : 'no',
     hashimotosAntiTpo: r.hashimotos_anti_tpo || '',
     hashimotosAntiTg: r.hashimotos_anti_tg || '',
+    hashimotosAntiTpoValue: r.hashimotos_anti_tpo_value || '',
+    hashimotosAntiTgValue: r.hashimotos_anti_tg_value || '',
 
     // Module F — symptoms
     fatigue: r.sym_fatigue_status || '',
@@ -3184,12 +3690,15 @@ function mapDbToForm(r) {
     blackoutAssessed: r.sym_blackout_assessed ? 'yes' : 'no',
     blackoutDx: r.sym_blackout_dx || '',
     hearing: r.sym_hearing_status || '',
-    hearingType: r.sym_hearing_type || '',
-    hearingDuration: { date: r.sym_hearing_since_date, years: r.sym_hearing_years, months: r.sym_hearing_months, days: r.sym_hearing_days },
+    hearingTypes: r.sym_hearing_data?.types || (r.sym_hearing_type
+      ? (r.sym_hearing_type === 'both' ? ['reduced', 'tinnitus'] : [r.sym_hearing_type]) : []),
+    hearingReducedDuration: r.sym_hearing_data?.reduced || { date: r.sym_hearing_since_date, years: r.sym_hearing_years, months: r.sym_hearing_months, days: r.sym_hearing_days },
+    hearingTinnitusDuration: r.sym_hearing_data?.tinnitus || {},
     reflexes: r.sym_reflexes_status || '',
     reflexesDuration: { date: r.sym_reflexes_since_date, years: r.sym_reflexes_years, months: r.sym_reflexes_months, days: r.sym_reflexes_days },
     carpalItems: r.sym_carpal_data || {},
     macroglossia: r.sym_macroglossia_status || '',
+    macroglossiaDuration: { date: r.sym_macroglossia_since_date, years: r.sym_macroglossia_years, months: r.sym_macroglossia_months, days: r.sym_macroglossia_days },
     acidity: r.acidity_status || '',
     acidityDuration: { date: r.acidity_since_date, years: r.acidity_years, months: r.acidity_months, days: r.acidity_days },
     acidityOnMed: r.acidity_on_med || '',
@@ -3198,15 +3707,9 @@ function mapDbToForm(r) {
     acidityMedFreq: r.acidity_med_freq || '',
     acidityMedSince: { date: r.acidity_med_since_date, years: r.acidity_med_since_years, months: r.acidity_med_since_months },
 
-    // Module G
+    // Module G (medication itself now hydrated from thyroid_med_* in Module C, above)
     onTreatment: r.on_treatment ? 'yes' : 'no',
     treatmentType: r.treatment_type || '',
-    levoDrugName: r.levo_drug_name || '',
-    levoBrand: r.levo_brand || '',
-    levoDose: r.levo_dose_mcg || '',
-    levoTiming: r.levo_timing || '',
-    levoCompliance: r.levo_compliance_val || '',
-    levoSince: { date: r.treatment_start_date_val, years: r.treatment_start_years, months: r.treatment_start_months_val },
     doseChanged: r.dose_changed_status || '',
     doseChangedDate: r.dose_last_changed_date || '',
     doseChangedReason: r.dose_change_reason_type || '',
@@ -3215,45 +3718,30 @@ function mapDbToForm(r) {
     dyslipidaemia: r.dyslipidaemia_status || '',
     dyslipidaemiaDuration: { date: r.dyslipidaemia_since_date, years: r.dyslipidaemia_years, months: r.dyslipidaemia_months, days: r.dyslipidaemia_days },
     dyslipidaemiaOnMed: r.dyslipidaemia_on_med || '',
-    dyslipidaemiaMedName: r.dyslipidaemia_med_name || '',
-    dyslipidaemiaMedDose: r.dyslipidaemia_med_dose || '',
-    dyslipidaemiaMedTimes: r.dyslipidaemia_med_freq || '',
-    dyslipidaemiaMedSince: { date: r.dyslipidaemia_med_since_date, years: r.dyslipidaemia_med_since_years, months: r.dyslipidaemia_med_since_months },
+    dyslipidaemiaMeds: r.dyslipidaemia_meds || (r.dyslipidaemia_med_name ? [{ name: r.dyslipidaemia_med_name, dose: r.dyslipidaemia_med_dose || '', freq: r.dyslipidaemia_med_freq || '', since: { date: r.dyslipidaemia_med_since_date, years: r.dyslipidaemia_med_since_years, months: r.dyslipidaemia_med_since_months } }] : []),
 
     anaemia: r.anaemia_status || '',
-    anaemiaType: r.anaemia_type || '',
+    anaemiaTypes: r.anaemia_types || (r.anaemia_type ? [r.anaemia_type] : []),
     anaemiaDuration: { date: r.anaemia_since_date, years: r.anaemia_years, months: r.anaemia_months, days: r.anaemia_days },
     anaemiaOnMed: r.anaemia_on_med || '',
-    anaemiaMedName: r.anaemia_med_name || '',
-    anaemiaMedDose: r.anaemia_med_dose || '',
-    anaemiaMedTimes: r.anaemia_med_freq || '',
-    anaemiaMedSince: { date: r.anaemia_med_since_date, years: r.anaemia_med_since_years, months: r.anaemia_med_since_months },
+    anaemiaMeds: r.anaemia_meds || (r.anaemia_med_name ? [{ name: r.anaemia_med_name, dose: r.anaemia_med_dose || '', freq: r.anaemia_med_freq || '', since: { date: r.anaemia_med_since_date, years: r.anaemia_med_since_years, months: r.anaemia_med_since_months } }] : []),
 
     diabetes: r.diabetes_status || '',
     diabetesType: r.diabetes_type || '',
     diabetesDuration: { date: r.diabetes_since_date, years: r.diabetes_years, months: r.diabetes_months, days: r.diabetes_days },
     diabetesOnMed: r.diabetes_on_med || '',
-    diabetesMedName: r.diabetes_med_name || '',
-    diabetesMedDose: r.diabetes_med_dose || '',
-    diabetesMedTimes: r.diabetes_med_freq || '',
-    diabetesMedSince: { date: r.diabetes_med_since_date, years: r.diabetes_med_since_years, months: r.diabetes_med_since_months },
+    diabetesMeds: r.diabetes_meds || (r.diabetes_med_name ? [{ name: r.diabetes_med_name, dose: r.diabetes_med_dose || '', freq: r.diabetes_med_freq || '', since: { date: r.diabetes_med_since_date, years: r.diabetes_med_since_years, months: r.diabetes_med_since_months } }] : []),
 
     htn: r.htn_status || '',
     htnDuration: { date: r.htn_since_date, years: r.htn_years, months: r.htn_months, days: r.htn_days },
     htnOnMed: r.htn_on_med || '',
-    htnMedName: r.htn_med_name || '',
-    htnMedDose: r.htn_med_dose || '',
-    htnMedFreq: r.htn_med_freq || '',
-    htnMedSince: { date: r.htn_med_since_date, years: r.htn_med_since_years, months: r.htn_med_since_months },
+    htnMeds: r.htn_meds || (r.htn_med_name ? [{ name: r.htn_med_name, dose: r.htn_med_dose || '', freq: r.htn_med_freq || '', since: { date: r.htn_med_since_date, years: r.htn_med_since_years, months: r.htn_med_since_months } }] : []),
 
     pcosPmos: r.pcos_status || '',
     pcosPmosLabel: r.pcos_pmos_label || '',
     pcosDuration: { date: r.pcos_since_date, years: r.pcos_years, months: r.pcos_months, days: r.pcos_days },
     pcosOnMed: r.pcos_on_med || '',
-    pcosMedName: r.pcos_med_name || '',
-    pcosMedDose: r.pcos_med_dose || '',
-    pcosMedTimes: r.pcos_med_freq || '',
-    pcosMedSince: { date: r.pcos_med_since_date, years: r.pcos_med_since_years, months: r.pcos_med_since_months },
+    pcosMeds: r.pcos_meds || (r.pcos_med_name ? [{ name: r.pcos_med_name, dose: r.pcos_med_dose || '', freq: r.pcos_med_freq || '', since: { date: r.pcos_med_since_date, years: r.pcos_med_since_years, months: r.pcos_med_since_months } }] : []),
 
     infertility: r.has_infertility ? 'yes' : 'no',
 

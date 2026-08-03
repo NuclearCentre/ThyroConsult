@@ -36,6 +36,8 @@ const NoduleInput = ({ value, onChange, type = "text", placeholder, min, max, st
     placeholder={placeholder}
     min={min}
     max={max}
+    data-hyporeq-type={type === "date" ? "date" : "text"}
+    data-hyporeq-filled={value ? "true" : "false"}
     style={{ width: "100%", padding: "10px 12px", border: "1.5px solid #d0d7e8", borderRadius: 8, fontSize: 14, outline: "none", boxSizing: "border-box", ...style }}
   />
 );
@@ -62,6 +64,8 @@ const NoduleSelect = ({ value, onChange, options, placeholder }) => (
   <select
     value={value || ""}
     onChange={e => onChange(e.target.value)}
+    data-hyporeq-type="select"
+    data-hyporeq-filled={value ? "true" : "false"}
     style={{ width: "100%", padding: "10px 12px", border: "1.5px solid #d0d7e8", borderRadius: 8, fontSize: 14, background: "#fff", outline: "none" }}
   >
     {placeholder && <option value="">{placeholder}</option>}
@@ -70,7 +74,7 @@ const NoduleSelect = ({ value, onChange, options, placeholder }) => (
 );
 
 const NoduleRadioGroup = ({ value, onChange, options, inline }) => (
-  <div style={{ display: "flex", flexDirection: inline ? "row" : "column", gap: 10, flexWrap: "wrap" }}>
+  <div data-hyporeq-type="select" data-hyporeq-filled={value ? "true" : "false"} style={{ display: "flex", flexDirection: inline ? "row" : "column", gap: 10, flexWrap: "wrap" }}>
     {options.map(o => (
       <label key={o.value} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "8px 14px", borderRadius: 8, border: `1.5px solid ${value === o.value ? "#534AB7" : "#d0d7e8"}`, background: value === o.value ? "#EEEDFE" : "#fff", fontWeight: value === o.value ? 600 : 400, fontSize: 14, whiteSpace: "nowrap" }}>
         <input type="radio" checked={value === o.value} onChange={() => onChange(o.value)} style={{ accentColor: "#534AB7" }} />
@@ -86,7 +90,7 @@ const NoduleCheckGroup = ({ values = [], onChange, options }) => {
     onChange(next);
   };
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+    <div data-hyporeq-type="select" data-hyporeq-filled={values.length ? "true" : "false"} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       {options.map(o => (
         <label key={o.value} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "8px 14px", borderRadius: 8, border: `1.5px solid ${values.includes(o.value) ? "#534AB7" : "#d0d7e8"}`, background: values.includes(o.value) ? "#EEEDFE" : "#fff", fontSize: 14 }}>
           <input type="checkbox" checked={values.includes(o.value)} onChange={() => toggle(o.value)} style={{ accentColor: "#534AB7" }} />
@@ -107,7 +111,7 @@ const NoduleYesNo = ({ value, onChange }) => (
 
 const NoduleDurationPicker = ({ label = "Since when?", sinceDate, onSinceDate, years, onYears, months, onMonths, minDate }) => (
   <NoduleField label={label}>
-    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+    <div data-hyporeq-type="duration" data-hyporeq-filled={(sinceDate || years || months) ? "true" : "false"} style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
       <div style={{ flex: "1 1 180px" }}>
         <label style={{ fontSize: 12, color: "#555", display: "block", marginBottom: 4 }}>Date (if known)</label>
         <NoduleInput type="date" value={sinceDate} onChange={onSinceDate} max={new Date().toISOString().split("T")[0]} min={minDate || undefined} />
@@ -217,6 +221,134 @@ function evalTshBranch(tshValue, refLow, refHigh) {
   return "normal";
 }
 
+// ─── Per-page completion validators — built directly from each page's own
+// actual render logic above. ───
+const ndDur = d => !!(d && (d.since_date || d.years || d.months));
+const NODULE_PAGE_VALIDATORS = {
+  Q3: d => !!d.marital_status,
+  Q4: d => !!d.occupation && (d.occupation !== "other" || !!d.occupation_other),
+
+  Q5: d => !!d.nodule_discovery_mode && (d.nodule_discovery_mode !== "other" || !!d.nodule_discovery_other) && ndDur({ since_date: d.nodule_noticed_date, years: d.nodule_duration_years, months: d.nodule_duration_months }),
+  Q6: d => !!d.nodule_size_change && (d.nodule_size_change !== "yes" || (!!d.nodule_growth_direction && (d.nodule_growth_direction !== "larger" || (!!d.nodule_growth_years || !!d.nodule_growth_months) && !!d.nodule_growth_rate))),
+  Q7: d => !!d.doctor_consulted_status && (d.doctor_consulted_status !== "yes" || (!!d.doctor_consulted_date && (d.doctor_advised_tests || []).length > 0)),
+  Q8: d => !!d.repeat_usg_advised && (d.repeat_usg_advised !== "yes" || (!!d.repeat_usg_done && (d.repeat_usg_done !== "no" || !!d.repeat_usg_due_date))),
+  Q9: d => (d.consultation_trigger || []).length > 0 && (!(d.consultation_trigger || []).includes("other") || !!d.consultation_trigger_other),
+
+  Q10: d => !!d.mgmt_plan_discussed && (d.mgmt_plan_discussed !== "yes" || (d.mgmt_plan_types || []).length > 0),
+  Q11: d => !!d.outcomes_discussed,
+  Q12: d => !!d.patient_primary_concern && (d.patient_primary_concern !== "other" || !!d.patient_concern_other),
+
+  // TSH — ref range is functionally required here (not just optional
+  // detail like other lab screens) because the branch logic can't
+  // classify high/low/normal without both bounds.
+  Q13: d => !!d.tsh_status && (d.tsh_status !== "yes" || (!!d.tsh_value && !!d.tsh_date && !!d.tsh_ref_low && !!d.tsh_ref_high)),
+  Q14: d => !!d.ft4_status && (d.ft4_status !== "yes" || (!!d.ft4_value && !!d.ft4_date)),
+  Q15: d => !!d.ft3_status && (d.ft3_status !== "yes" || (!!d.ft3_value && !!d.ft3_date)),
+  // Anti-TPO/Anti-Tg explicitly optional ("neither is mandatory")
+  Q16: d => !!d.antibody_status,
+  Q17a: d => !!d.imaging_status && (d.imaging_status !== "yes" || ((d.imaging_types || []).length > 0 && !!d.imaging_date && !!d.nodule_count && !!d.tirads_category)),
+  Q17b: d => !!d.cytology_status && (d.cytology_status !== "yes" || ((d.cytology_types || []).length > 0 && !!d.cytology_date && !!d.bethesda_category)),
+
+  B1: d => {
+    if (!d.hysterectomy_status) return false;
+    if (d.hysterectomy_status !== "yes") return true;
+    if (!d.hysterectomy_reason || (d.hysterectomy_reason === "other" && !d.hysterectomy_reason_other)) return false;
+    const precision = d.hysterectomy_date_precision || "full";
+    if (precision === "full") return !!d.hysterectomy_date;
+    if (precision === "month_year") return !!d.hysterectomy_month && !!d.hysterectomy_year;
+    if (precision === "year_only") return !!d.hysterectomy_year;
+    return true;
+  },
+  B2: d => !!d.menopause_status && (d.menopause_status !== "post" || !!d.menopause_years_ago),
+  B3: d => !!d.menstrual_change_status && (d.menstrual_change_status !== "yes" || !!d.menstrual_pattern),
+  B4: d => !!d.lmp_date,
+  B5: d => {
+    const lmpDaysAgo = d.lmp_date ? Math.floor((Date.now() - new Date(d.lmp_date)) / 86400000) : 0;
+    if (lmpDaysAgo < 31) return true;
+    return !!d.pregnancy_status;
+  },
+
+  C1: d => !!d.thyroid_dx_status && (d.thyroid_dx_status !== "yes" || (!!d.thyroid_dx_type && !!d.thyroid_dx_year)),
+  C2: d => !!d.thyroid_tx_status && (d.thyroid_tx_status !== "yes" || (!!d.thyroid_tx_type && !!d.thyroid_tx_year)),
+  C3: d => !!d.thyroid_med_status && (d.thyroid_med_status !== "yes" || (!!d.thyroid_med_name && !!d.thyroid_med_brand && !!d.thyroid_med_dose && !!d.thyroid_med_timing && !!d.thyroid_med_compliance)),
+  C4b: d => !!d.family_men_status && (d.family_men_status !== "yes" || ((d.family_men_types || []).length > 0 && !!d.family_men_relative)),
+
+  Q18: d => !!d.nodule_treatment_status && (d.nodule_treatment_status !== "yes" || ((d.nodule_treatment_types || []).length > 0 && !!d.nodule_treatment_date && !!d.nodule_treatment_completed)),
+  Q19: d => !!d.prior_advice_status && (d.prior_advice_status !== "yes" || ((d.prior_advice_types || []).length > 0 && !!d.prior_advice_followed && (d.prior_advice_followed !== "no" || !!d.prior_advice_not_followed_reason))),
+  Q20: d => !!d.prior_opinion_status && (d.prior_opinion_status !== "yes" || ((d.prior_opinion_specialty || []).length > 0 && !!d.prior_opinion_date && !!d.prior_opinion_summary && !!d.prior_opinion_followed)),
+  Q21: d => !!d.current_med_status && (d.current_med_status !== "yes" || (!!d.current_med_name && !!d.current_med_brand && !!d.current_med_dose && !!d.current_med_timing && !!d.current_med_compliance)),
+
+  Q22: d => !!d.nodule_visible_status && (d.nodule_visible_status !== "yes" || (ndDur({ since_date: d.nodule_visible_since_date, years: d.nodule_visible_years, months: d.nodule_visible_months }) && (d.nodule_visible_pattern || []).length > 0)),
+  Q23: d => !!d.neck_pain_status && (d.neck_pain_status !== "yes" || ((d.neck_pain_types || []).length > 0 && !!d.neck_pain_severity && ndDur({ since_date: d.neck_pain_since_date, years: d.neck_pain_years, months: d.neck_pain_months }))),
+  Q24: d => !!d.dysphagia_status && (d.dysphagia_status !== "yes" || (!!d.dysphagia_type && !!d.dysphagia_severity && ndDur({ since_date: d.dysphagia_since_date, years: d.dysphagia_years, months: d.dysphagia_months }))),
+  Q25: d => !!d.resp_symptom_status && (d.resp_symptom_status !== "yes" || ((d.resp_symptom_types || []).length > 0 && !!d.resp_symptom_trigger && ndDur({ since_date: d.resp_since_date, years: d.resp_years, months: d.resp_months }))),
+  Q26: d => !!d.hoarseness_status && (d.hoarseness_status !== "yes" || (ndDur({ since_date: d.hoarseness_since_date, years: d.hoarseness_years, months: d.hoarseness_months }) && !!d.hoarseness_pattern && !!d.voice_fatigue_status)),
+  Q27: d => !!d.nodule_cough_status && (d.nodule_cough_status !== "yes" || (!!d.nodule_cough_type && ndDur({ since_date: d.nodule_cough_since_date, years: d.nodule_cough_years, months: d.nodule_cough_months }))),
+
+  Q28: d => !!d.fatigue_status && (d.fatigue_status !== "yes" || (!!d.fatigue_severity && ndDur({ since_date: d.fatigue_since_date, years: d.fatigue_years, months: d.fatigue_months }))),
+  Q29: d => !!d.weight_change_status && (d.weight_change_status !== "yes" || (!!d.weight_direction && !!d.weight_kg && ndDur({ since_date: d.weight_since_date, years: d.weight_years, months: d.weight_months }))),
+  Q30: d => !!d.appetite_change_status && (d.appetite_change_status !== "yes" || (!!d.appetite_direction && ndDur({ since_date: d.appetite_since_date, years: d.appetite_years, months: d.appetite_months }))),
+  Q31: d => !!d.cold_intol_status && (d.cold_intol_status !== "yes" || (!!d.cold_intol_severity && ndDur({ since_date: d.cold_intol_since_date, years: d.cold_intol_years, months: d.cold_intol_months }))),
+  Q32: d => !!d.bowel_change_status && (d.bowel_change_status !== "yes" || (!!d.bowel_type && ndDur({ since_date: d.bowel_since_date, years: d.bowel_years, months: d.bowel_months }))),
+  Q33: d => !!d.skin_status && (d.skin_status !== "yes" || ((d.skin_types || []).length > 0 && ndDur({ since_date: d.skin_since_date, years: d.skin_years, months: d.skin_months }))),
+  Q34: d => !!d.hair_status && (d.hair_status !== "yes" || ((d.hair_types || []).length > 0 && ndDur({ since_date: d.hair_since_date, years: d.hair_years, months: d.hair_months }))),
+  Q35: d => !!d.muscle_sx_status && (d.muscle_sx_status !== "yes" || ((d.muscle_sx_types || []).length > 0 && (!(d.muscle_sx_types || []).includes("weakness") || !!d.muscle_weakness_location) && ndDur({ since_date: d.muscle_sx_since_date, years: d.muscle_sx_years, months: d.muscle_sx_months }))),
+  Q36: d => !!d.depression_status && (d.depression_status !== "yes" || (ndDur({ since_date: d.depression_since_date, years: d.depression_years, months: d.depression_months }) && !!d.depression_treated && !!d.depression_diagnosed)),
+  Q37: d => !!d.palp_tremor_status && (d.palp_tremor_status !== "yes" || ((d.palp_tremor_types || []).length > 0 && ndDur({ since_date: d.palp_tremor_since_date, years: d.palp_tremor_years, months: d.palp_tremor_months }))),
+  Q38: d => !!d.anxiety_status && (d.anxiety_status !== "yes" || (!!d.anxiety_severity && ndDur({ since_date: d.anxiety_since_date, years: d.anxiety_years, months: d.anxiety_months }))),
+
+  J1: d => !!d.dyslipidaemia_status && (d.dyslipidaemia_status !== "yes" || (ndDur({ since_date: d.dyslipidaemia_since_date, years: d.dyslipidaemia_years, months: d.dyslipidaemia_months }) && !!d.dyslipidaemia_on_med && (d.dyslipidaemia_on_med !== "yes" || (d.dyslipidaemia_meds || []).some(m => m.name)))),
+  J2: d => !!d.anaemia_status && (d.anaemia_status !== "yes" || !!d.anaemia_type),
+  // "Current medications" on J3 is explicitly labelled optional
+  J3: d => !!d.diabetes_status && (d.diabetes_status !== "yes" || (!!d.diabetes_type && ndDur({ since_date: d.diabetes_since_date, years: d.diabetes_years, months: d.diabetes_months }))),
+  J4: d => !!d.htn_status && (d.htn_status !== "yes" || (ndDur({ since_date: d.htn_since_date, years: d.htn_years, months: d.htn_months }) && !!d.htn_on_med && (d.htn_on_med !== "yes" || (d.htn_meds || []).some(m => m.name)))),
+  J4b: d => !!d.pcos_status && (d.pcos_status !== "yes" || (!!d.pcos_label && ndDur({ since_date: d.pcos_since_date, years: d.pcos_years, months: d.pcos_months }) && !!d.pcos_on_med && (d.pcos_on_med !== "yes" || !!d.pcos_med_name))),
+  J4c: d => !!d.infertility_status,
+  J5: d => !!d.autoimmune_status && (d.autoimmune_status !== "yes" || ((d.autoimmune_conditions || []).length > 0 && (!(d.autoimmune_conditions || []).includes("other") || !!d.autoimmune_other))),
+  J6: d => !!d.family_thyroid_status && (d.family_thyroid_status !== "yes" || ((d.family_thyroid_relations || []).length > 0 && !!d.family_thyroid_condition)),
+  J7: d => !!d.radiation_exposure_status && (d.radiation_exposure_status !== "yes" || ((d.radiation_exposure_types || []).length > 0 && (!(d.radiation_exposure_types || []).includes("other") || !!d.radiation_exposure_other) && !!d.radiation_exposure_year)),
+  J8: d => !!d.iodine_deficiency_status && (d.iodine_deficiency_status !== "yes" || ndDur({ since_date: d.iodine_deficiency_since_date, years: d.iodine_deficiency_years, months: d.iodine_deficiency_months })),
+  J9: d => !!d.iodine_med_status && (d.iodine_med_status !== "yes" || (!!d.iodine_med_name && ndDur({ since_date: d.iodine_med_since_date, years: d.iodine_med_years, months: d.iodine_med_months }))),
+  J10: () => true,
+};
+
+const NDREQ_MESSAGES = { select: "Select any one", date: "Enter date", duration: "Enter duration", text: "Enter details" };
+const NoduleMissingPointer = ({ containerRef, active, pageKey }) => {
+  const [pos, setPos] = useState(null);
+  useEffect(() => {
+    if (!active || !containerRef.current) { setPos(null); return; }
+    const scan = () => {
+      if (!containerRef.current) return;
+      const el = containerRef.current.querySelector('[data-hyporeq-filled="false"]');
+      if (!el) { setPos(null); return; }
+      const elRect = el.getBoundingClientRect();
+      const containerRect = containerRef.current.getBoundingClientRect();
+      setPos({ top: elRect.top - containerRect.top, left: elRect.left - containerRect.left, type: el.getAttribute("data-hyporeq-type") || "select" });
+    };
+    scan();
+    const t = setTimeout(scan, 60);
+    const observer = new MutationObserver(scan);
+    observer.observe(containerRef.current, { attributes: true, attributeFilter: ["data-hyporeq-filled"], childList: true, subtree: true });
+    return () => { clearTimeout(t); observer.disconnect(); };
+  }, [active, containerRef, pageKey]);
+
+  if (!pos) return null;
+  return (
+    <>
+      <style>{`
+        @keyframes ndreqBounce { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(7px); } }
+        .ndreq-arrow { animation: ndreqBounce 0.9s ease-in-out infinite; }
+      `}</style>
+      <div style={{ position: "absolute", top: Math.max(0, pos.top - 30), left: pos.left, display: "flex", alignItems: "center", gap: 4, zIndex: 5, pointerEvents: "none" }}>
+        <div style={{ background: "#c0392b", color: "#fff", fontSize: 11, fontWeight: 600, padding: "3px 9px", borderRadius: 6, whiteSpace: "nowrap" }}>
+          {NDREQ_MESSAGES[pos.type] || "Answer this question"}
+        </div>
+        <div className="ndreq-arrow" style={{ fontSize: 15, color: "#c0392b" }}>➜</div>
+      </div>
+    </>
+  );
+};
+
 // ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
 
 export default function NoduleQuestionnaire({
@@ -233,6 +365,8 @@ export default function NoduleQuestionnaire({
   const [branchConfirmed, setBranchConfirmed] = useState(false);
   const [savedPageId, setSavedPageId] = useState(null);
   const [resumedFrom, setResumedFrom] = useState(false);
+  const [reviewMode, setReviewMode] = useState(false);
+  const pageContentRef = useRef(null);
 
   const set = useCallback((key, value) => setData(prev => ({ ...prev, [key]: value })), []);
   const get = useCallback((key, fallback = "") => (data[key] !== undefined ? data[key] : fallback), [data]);
@@ -323,8 +457,10 @@ export default function NoduleQuestionnaire({
   // fetched and immediately discarded. Nodule was the only one of the
   // four condition questionnaires where a returning patient's answers
   // were never restored under any circumstances, not even buggily.
-  useEffect(() => {
+  const [draftLoadError, setDraftLoadError] = useState('');
+  const loadDraft = useCallback(() => {
     if (patientId && episodeId) {
+      setDraftLoadError('');
       conditionAPI.getNoduleQ(patientId, episodeId)
         .then(d => {
           if (d && Object.keys(d).length) {
@@ -332,9 +468,12 @@ export default function NoduleQuestionnaire({
             if (d.current_page) setSavedPageId(d.current_page);
           }
         })
-        .catch(() => {});
+        .catch(() => {
+          setDraftLoadError('Could not load your saved answers. Your previous answers have NOT been lost — please retry before continuing, rather than re-entering everything.');
+        });
     }
   }, [patientId, episodeId]);
+  useEffect(() => { loadDraft(); }, [loadDraft]);
 
   // ── Autosave ───────────────────────────────────────────────────────────────
   // Replaces saving only when the patient clicked Next. Saves
@@ -369,9 +508,34 @@ export default function NoduleQuestionnaire({
     finally { setSaving(false); }
   }, [data, patientId, episodeId, onComplete]);
 
+  // Every question needs an answer before the questionnaire can actually
+  // be submitted — finds the first incomplete page (in display order, so
+  // it respects branching, including the TSH-normal-only pages) and
+  // routes there instead of submitting. Only applies to the NORMAL
+  // completion path — the TSH-branch handoff (switchToHypo/switchToHyper)
+  // intentionally bypasses this, since it's handing off to a different
+  // questionnaire entirely rather than completing this one.
+  const handleSubmit = useCallback(() => {
+    const incompleteIdx = allPages.findIndex(id => { const v = NODULE_PAGE_VALIDATORS[id]; return v ? !v(data) : false; });
+    if (incompleteIdx !== -1) {
+      setReviewMode(true);
+      setCurrentPage(incompleteIdx);
+      setSaveMsg("Please answer this question before submitting — some questions were left incomplete.");
+      return;
+    }
+    setReviewMode(false);
+    submitFinal(data);
+  }, [allPages, data, submitFinal]);
+
+  const incompleteList = reviewMode
+    ? allPages.map((id, idx) => ({ id, idx })).filter(({ id }) => { const v = NODULE_PAGE_VALIDATORS[id]; return v ? !v(data) : false; })
+    : [];
+
   const next = useCallback(() => {
     if (yearInvalid) return;
-    // TSH branch — trigger switch before moving past Q13
+    // TSH branch — trigger switch before moving past Q13. Left completely
+    // untouched by reviewMode/handleSubmit: this hands off to a different
+    // questionnaire, so full-questionnaire completeness doesn't apply.
     if (pageId === "Q13" && (tshBranch === "high" || tshBranch === "low") && !branchConfirmed) {
       setBranchConfirmed(true);
       return; // show the alert on same page; user clicks Next again to confirm
@@ -384,9 +548,19 @@ export default function NoduleQuestionnaire({
       submitFinal({ switchToHyper: true, data });
       return;
     }
+    if (reviewMode) {
+      const leavingValidator = NODULE_PAGE_VALIDATORS[pageId];
+      if (leavingValidator && !leavingValidator(data)) { setSaveMsg("Please answer this question before continuing."); return; }
+      setSaveMsg("");
+      const ahead = incompleteList.find(({ idx }) => idx > currentPage);
+      const target = ahead || incompleteList[0];
+      if (target) { setCurrentPage(target.idx); return; }
+      handleSubmit();
+      return;
+    }
     if (currentPage < totalPages - 1) setCurrentPage(p => p + 1);
-    else submitFinal(data);
-  }, [currentPage, totalPages, pageId, tshBranch, branchConfirmed, submitFinal, data, yearInvalid]);
+    else handleSubmit();
+  }, [currentPage, totalPages, pageId, tshBranch, branchConfirmed, submitFinal, data, yearInvalid, reviewMode, incompleteList, handleSubmit]);
 
   const prev = useCallback(() => {
     setBranchConfirmed(false);
@@ -1560,12 +1734,20 @@ export default function NoduleQuestionnaire({
     if (pageId === "Q13" && (tshBranch === "high" || tshBranch === "low") && !branchConfirmed) return "View TSH result →";
     if (pageId === "Q13" && tshBranch === "high" && branchConfirmed) return "Continue to Hypothyroid questionnaire →";
     if (pageId === "Q13" && tshBranch === "low" && branchConfirmed) return "Continue to Hyperthyroid questionnaire →";
+    if (reviewMode) return "Next unanswered →";
     if (currentPage === totalPages - 1) return "Submit ✓";
     return "Next →";
   };
 
   return (
     <div style={{ maxWidth: 680, margin: "0 auto", fontFamily: "system-ui, sans-serif", padding: "0 16px 40px" }}>
+
+      {draftLoadError && (
+        <div style={{ background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: 8, padding: '10px 14px', margin: '16px 0', fontSize: 13, color: '#991b1b', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <span>{draftLoadError}</span>
+          <button onClick={loadDraft} className="btn btn-secondary btn-sm" style={{ flexShrink: 0 }}>Retry</button>
+        </div>
+      )}
 
       {/* Progress bar */}
       <div style={{ position: "sticky", top: 0, background: "#fff", paddingTop: 16, paddingBottom: 12, zIndex: 10, borderBottom: "1px solid #f0f0f0" }}>
@@ -1578,7 +1760,7 @@ export default function NoduleQuestionnaire({
         </div>
         <div style={{ fontSize: 11, color: "#bbb", marginTop: 4 }}>
           {pageId}
-          {saveMsg && <span style={{ marginLeft: 12, color: saveMsg.includes("failed") ? "#e74c3c" : "#27ae60" }}>{saveMsg}</span>}
+          {saveMsg && <span style={{ marginLeft: 12, color: (saveMsg.includes("failed") || saveMsg.includes("Please answer")) ? "#e74c3c" : "#27ae60" }}>{saveMsg}</span>}
           {tshBranch === "high" && get("tsh_status") === "yes" && <span style={{ marginLeft: 12, color: "#185FA5", fontWeight: 600 }}>TSH high — Hypo route</span>}
           {tshBranch === "low"  && get("tsh_status") === "yes" && <span style={{ marginLeft: 12, color: "#854F0B", fontWeight: 600 }}>TSH low — Hyper route</span>}
           {tshBranch === "normal" && get("tsh_status") === "yes" && <span style={{ marginLeft: 12, color: "#27ae60", fontWeight: 600 }}>TSH normal — continuing</span>}
@@ -1586,9 +1768,25 @@ export default function NoduleQuestionnaire({
       </div>
 
       {/* Question */}
-      <div style={{ paddingTop: 24, paddingBottom: 80 }}>
+      <div ref={pageContentRef} style={{ position: "relative", paddingTop: 24, paddingBottom: incompleteList.length > 0 ? 130 : 80 }}>
         {renderPage()}
+        <NoduleMissingPointer containerRef={pageContentRef} pageKey={pageId}
+          active={reviewMode && incompleteList.some(({ idx }) => idx === currentPage)} />
       </div>
+
+      {/* Bottom strip listing every unanswered question — stacked just
+          above the already-fixed nav bar. */}
+      {incompleteList.length > 0 && (
+        <div style={{ position: "fixed", bottom: 60, left: 0, right: 0, zIndex: 40, background: "#fff", borderTop: "2px solid #e6a3a3", boxShadow: "0 -2px 12px rgba(0,0,0,0.10)", padding: "10px 20px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", maxWidth: 680, margin: "0 auto" }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: "#a83232", marginRight: 4 }}>{incompleteList.length} unanswered — jump to:</span>
+          {incompleteList.map(({ id, idx }) => (
+            <button key={id} onClick={() => { setSaveMsg(""); setCurrentPage(idx); }}
+              style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 12, cursor: "pointer", border: `1.5px solid ${idx === currentPage ? "#534AB7" : "#e6a3a3"}`, background: idx === currentPage ? "#EEEDFE" : "#fff", color: idx === currentPage ? "#534AB7" : "#a83232" }}>
+              Q{idx + 1}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Navigation */}
       <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "#fff", borderTop: "1px solid #f0f0f0", padding: "12px 24px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>

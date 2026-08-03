@@ -68,10 +68,18 @@ const SelectDoctor = ({ condition, onComplete, onBack }) => {
     return () => { cancelled = true; };
   }, [condition]);
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     if (!selected) return;
     setConfirming(true);
-    onComplete(selected);
+    setError('');
+    try {
+      await onComplete(selected);
+      // On success the parent switches away from this screen entirely,
+      // so no need to reset confirming here — this component unmounts.
+    } catch (err) {
+      setConfirming(false);
+      setError(err?.response?.data?.error || 'Could not confirm your doctor choice. Please try again.');
+    }
   };
 
   if (loading) {

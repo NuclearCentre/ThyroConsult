@@ -31,6 +31,8 @@ const TcInput = ({ value, onChange, type = "text", placeholder, min, max, style 
     placeholder={placeholder}
     min={min}
     max={max}
+    data-hyporeq-type={type === "date" ? "date" : "text"}
+    data-hyporeq-filled={value ? "true" : "false"}
     style={{ width: "100%", padding: "10px 12px", border: "1.5px solid #d0d7e8", borderRadius: 8, fontSize: 14, outline: "none", boxSizing: "border-box", ...style }}
   />
 );
@@ -57,6 +59,8 @@ const TcSelect = ({ value, onChange, options, placeholder }) => (
   <select
     value={value || ""}
     onChange={e => onChange(e.target.value)}
+    data-hyporeq-type="select"
+    data-hyporeq-filled={value ? "true" : "false"}
     style={{ width: "100%", padding: "10px 12px", border: "1.5px solid #d0d7e8", borderRadius: 8, fontSize: 14, background: "#fff", outline: "none" }}
   >
     {placeholder && <option value="">{placeholder}</option>}
@@ -64,8 +68,28 @@ const TcSelect = ({ value, onChange, options, placeholder }) => (
   </select>
 );
 
+// Fixed dose-pill grid (5 per row), matching HypoQuestionnaire's HypoPillSelect.
+const TcPillSelect = ({ options, value, onChange, perRow = 5 }) => (
+  <div data-hyporeq-type="select" data-hyporeq-filled={value ? "true" : "false"}
+    style={{ display: "grid", gridTemplateColumns: `repeat(${perRow}, 1fr)`, gap: 8, marginBottom: 12 }}>
+    {options.map(opt => {
+      const sel = value === opt;
+      return (
+        <div key={opt} onClick={() => onChange(opt)} style={{
+          display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center",
+          padding: "8px 6px", borderRadius: 8, cursor: "pointer", fontSize: 13,
+          border: `1.5px solid ${sel ? "#d35400" : "#d0d7e8"}`,
+          background: sel ? "#fef5ef" : "#fff",
+          color: sel ? "#d35400" : "#1a1a2e",
+          minHeight: 40, boxSizing: "border-box",
+        }}>{opt} mcg</div>
+      );
+    })}
+  </div>
+);
+
 const TcRadioGroup = ({ value, onChange, options, inline }) => (
-  <div style={{ display: "flex", flexDirection: inline ? "row" : "column", gap: 10, flexWrap: "wrap" }}>
+  <div data-hyporeq-type="select" data-hyporeq-filled={value ? "true" : "false"} style={{ display: "flex", flexDirection: inline ? "row" : "column", gap: 10, flexWrap: "wrap" }}>
     {options.map(o => (
       <label key={o.value} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "8px 14px", borderRadius: 8, border: `1.5px solid ${value === o.value ? "#d35400" : "#d0d7e8"}`, background: value === o.value ? "#fef5ef" : "#fff", fontWeight: value === o.value ? 600 : 400, fontSize: 14, whiteSpace: "nowrap" }}>
         <input type="radio" checked={value === o.value} onChange={() => onChange(o.value)} style={{ accentColor: "#d35400" }} />
@@ -81,7 +105,7 @@ const TcCheckGroup = ({ values = [], onChange, options }) => {
     onChange(next);
   };
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+    <div data-hyporeq-type="select" data-hyporeq-filled={values.length ? "true" : "false"} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       {options.map(o => (
         <label key={o.value} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "8px 14px", borderRadius: 8, border: `1.5px solid ${values.includes(o.value) ? "#d35400" : "#d0d7e8"}`, background: values.includes(o.value) ? "#fef5ef" : "#fff", fontSize: 14 }}>
           <input type="checkbox" checked={values.includes(o.value)} onChange={() => toggle(o.value)} style={{ accentColor: "#d35400" }} />
@@ -102,7 +126,7 @@ const TcYesNo = ({ value, onChange }) => (
 
 const TcDurationPicker = ({ label = "Since when?", sinceDate, onSinceDate, years, onYears, months, onMonths, minDate }) => (
   <TcField label={label}>
-    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+    <div data-hyporeq-type="duration" data-hyporeq-filled={(sinceDate || years || months) ? "true" : "false"} style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
       <div style={{ flex: "1 1 180px" }}>
         <label style={{ fontSize: 12, color: "#555", display: "block", marginBottom: 4 }}>Date (if known)</label>
         <TcInput type="date" value={sinceDate} onChange={onSinceDate} max={new Date().toISOString().split("T")[0]} min={minDate || undefined} />
@@ -188,6 +212,189 @@ function calcEDD(lmp, iso) {
   return iso ? d.toISOString().split("T")[0] : d.toLocaleDateString("en-GB");
 }
 
+// ─── Per-page completion validators — built directly from each page's own
+// actual render logic above, mirroring HypoQuestionnaire/HyperQuestionnaire. ───
+// ─── Thyroid medication brand → generic name + available doses ───
+// Same database as HypoQuestionnaire — same drugs, same market.
+const THYROID_MED_BRANDS = {
+  'Eltroxin':    { generic: 'Thyroxine Sodium', doses: [25, 50, 100] },
+  'Thyronorm':   { generic: 'Thyroxine Sodium', doses: [12.5, 25, 37.5, 50, 62.5, 75, 88, 100, 112, 125, 137, 150, 200] },
+  'Thyrox':      { generic: 'Thyroxine Sodium', doses: [50, 62.5, 88, 100, 150] },
+  'L-Thyroid':   { generic: 'Thyroxine Sodium', doses: [25, 50, 75, 88, 150] },
+  'Thyroactiv':  { generic: 'Thyroxine Sodium', doses: [12.5, 25, 50, 75, 100] },
+  'Thyro-Fresh': { generic: 'Thyroxine Sodium', doses: [100] },
+  'Thyroford':   { generic: 'Thyroxine Sodium', doses: [50] },
+  'Tyroxil':     { generic: 'Thyroxine Sodium', doses: [25, 50, 100] },
+  'Thyine':      { generic: 'Thyroxine Sodium', doses: [75] },
+  'Lythrox':     { generic: 'Thyroxine Sodium', doses: [12.5, 25, 50, 75] },
+  'Thyronex':    { generic: 'Thyroxine Sodium', doses: [12.5, 25, 50] },
+  'Thyrocip':    { generic: 'Thyroxine Sodium', doses: [100] },
+  'Toskiv':      { generic: 'Thyroxine Sodium', doses: [100] },
+  'L-Thyrox':    { generic: 'Levothyroxine Sodium', doses: [25] },
+  'Euthyrox':    { generic: 'Levothyroxine Sodium', doses: [100] },
+  'Lethyrox':    { generic: 'Levothyroxine Sodium', doses: [50] },
+};
+
+const LIOTHYRONINE_BRANDS = {
+  'Thyonin':   { generic: 'Liothyronine Sodium', doses: [5, 25, 50] },
+  'Tertroxin': { generic: 'Liothyronine Sodium', doses: [5, 25, 50] },
+  'Linorma T': { generic: 'Liothyronine Sodium', doses: [5, 25, 50] },
+  'Thyro3':    { generic: 'Liothyronine Sodium', doses: [5, 25, 50] },
+  'Liorel':    { generic: 'Liothyronine Sodium', doses: [5, 25, 50] },
+  'Cytomel':   { generic: 'Liothyronine Sodium', doses: [5, 25, 50] },
+};
+
+const tcDur = d => !!(d && (d.since_date || d.years || d.months));
+const TC_PAGE_VALIDATORS = {
+  A3: d => !!d.marital_status,
+  A4: d => !!d.occupation && (d.occupation !== "other" || !!d.occupation_other),
+
+  D5a: d => !!d.imaging_status && (d.imaging_status !== "yes" || ((d.imaging_types || []).length > 0 && !!d.imaging_date)),
+  D5b: d => !!d.cytology_status && (d.cytology_status !== "yes" || ((d.cytology_types || []).length > 0 && !!d.cytology_date && !!d.cytology_result)),
+
+  E1: d => !!d.ca_thyroid_type && (d.ca_thyroid_type !== "other" || !!d.ca_thyroid_type_other) && !!d.ca_dx_year,
+  E2: d => !!d.ca_staged && (d.ca_staged !== "yes" || (!!d.ca_stage && !!d.ca_grade)),
+  E3: d => !!d.ca_surgery_type && (d.ca_surgery_type !== "other" || !!d.ca_surgery_type_other) && (d.ca_surgery_type === "no_surgery" || (!!d.ca_surgery_date && !!d.ca_surgery_side)),
+  E4: d => !!d.neck_dissection_status && (d.neck_dissection_status !== "yes" || (!!d.neck_dissection_type && !!d.neck_dissection_side)),
+  E5: d => !!d.rai_post_surgery_status && (d.rai_post_surgery_status !== "yes" || (!!d.rai_cycles && !!d.rai_last_date && !!d.rai_purpose)),
+  E6: d => !!d.ebrt_status && (d.ebrt_status !== "yes" || ((d.ebrt_regions || []).length > 0 && (!(d.ebrt_regions || []).includes("other") || !!d.ebrt_other) && !!d.ebrt_date)),
+  E7: d => !!d.targeted_tx_status && (d.targeted_tx_status !== "yes" || (!!d.targeted_tx_name && !!d.targeted_tx_dose && !!d.targeted_tx_freq && !!d.targeted_tx_ongoing && (d.targeted_tx_ongoing !== "no" || !!d.targeted_tx_stop_reason))),
+  E8: d => !!d.recurrence_status && (d.recurrence_status !== "yes" || ((d.recurrence_sites || []).length > 0 && !!d.recurrence_date)),
+  E9: d => !!d.metastasis_status && (d.metastasis_status !== "yes" || ((d.metastasis_sites || []).length > 0 && (!(d.metastasis_sites || []).includes("other") || !!d.metastasis_other) && !!d.metastasis_date)),
+  // Tg/TgAb values explicitly optional ("neither is mandatory") — only status + stimulated required
+  E10: d => !!d.tg_status && (d.tg_status !== "yes" || !!d.tg_stimulated),
+  E11: d => !!d.surveillance_status && (d.surveillance_status !== "yes" || ((d.surveillance_types || []).length > 0 && !!d.surveillance_date && !!d.surveillance_findings)),
+
+  B1: d => {
+    if (!d.hysterectomy_status) return false;
+    if (d.hysterectomy_status !== "yes") return true;
+    if (!d.hysterectomy_reason || (d.hysterectomy_reason === "other" && !d.hysterectomy_reason_other)) return false;
+    const precision = d.hysterectomy_date_precision || "full";
+    if (precision === "full") return !!d.hysterectomy_date;
+    if (precision === "month_year") return !!d.hysterectomy_month && !!d.hysterectomy_year;
+    if (precision === "year_only") return !!d.hysterectomy_year;
+    return true;
+  },
+  B2: d => !!d.menopause_status && (d.menopause_status !== "post" || !!d.menopause_years_ago),
+  B3: d => !!d.menstrual_change_status && (d.menstrual_change_status !== "yes" || !!d.menstrual_pattern),
+  B4: d => !!d.lmp_date,
+  B5: d => {
+    const lmpDaysAgo = d.lmp_date ? Math.floor((Date.now() - new Date(d.lmp_date)) / 86400000) : 0;
+    if (lmpDaysAgo < 31) return true;
+    return !!d.pregnancy_status;
+  },
+
+  C1: d => !!d.thyroid_dx_status && (d.thyroid_dx_status !== "yes" || (!!d.thyroid_dx_type && !!d.thyroid_dx_year)),
+  C2: d => !!d.thyroid_tx_status && (d.thyroid_tx_status !== "yes" || (!!d.thyroid_tx_type && !!d.thyroid_tx_year)),
+  C3: d => {
+    if (!d.thyroid_med_status) return false;
+    if (d.thyroid_med_status !== "yes") return true;
+    if (!d.thyroid_med_treatment_type) return false;
+    const lt4Ok = !!d.thyroid_med_brand && !!d.thyroid_med_dose;
+    const lt3Ok = !!d.liothyronine_brand && !!d.liothyronine_dose;
+    const otherOk = !!d.thyroid_med_name && !!d.thyroid_med_dose;
+    const medOk =
+      d.thyroid_med_treatment_type === "levo_only" ? lt4Ok :
+      d.thyroid_med_treatment_type === "lio_only" ? lt3Ok :
+      d.thyroid_med_treatment_type === "combination" ? (lt4Ok && lt3Ok) :
+      d.thyroid_med_treatment_type === "other" ? otherOk : false;
+    if (!medOk) return false;
+    const lt4DcOk = !!d.dose_changed_status && (d.dose_changed_status !== "yes" || (!!d.dose_last_changed_date && !!d.dose_change_reason));
+    const lt3DcOk = !!d.liothyronine_dose_changed_status && (d.liothyronine_dose_changed_status !== "yes" || (!!d.liothyronine_dose_changed_date && !!d.liothyronine_dose_change_reason));
+    if (d.thyroid_med_treatment_type === "levo_only" && !lt4DcOk) return false;
+    if (d.thyroid_med_treatment_type === "lio_only" && !lt3DcOk) return false;
+    if (d.thyroid_med_treatment_type === "combination" && !(lt4DcOk && lt3DcOk)) return false;
+    if (d.thyroid_med_treatment_type === "other" && !lt4DcOk) return false;
+    return true;
+  },
+  C4a: d => !!d.family_thyroid_status && (d.family_thyroid_status !== "yes" || ((d.family_thyroid_relations || []).length > 0 && !!d.family_thyroid_condition)),
+  C4b: d => !!d.family_men_status && (d.family_men_status !== "yes" || ((d.family_men_types || []).length > 0 && !!d.family_men_relative)),
+  C5: d => !!d.autoimmune_status && (d.autoimmune_status !== "yes" || ((d.autoimmune_conditions || []).length > 0 && (!(d.autoimmune_conditions || []).includes("other") || !!d.autoimmune_other))),
+
+  D1: d => !!d.tsh_status && (d.tsh_status !== "yes" || (!!d.tsh_value && !!d.tsh_date)),
+  D2: d => !!d.t3_status && (d.t3_status !== "yes" || (!!d.t3_value && !!d.t3_date)),
+  D3: d => !!d.ft3_status && (d.ft3_status !== "yes" || (!!d.ft3_value && !!d.ft3_date)),
+  D4: d => !!d.t4_status && (d.t4_status !== "yes" || (!!d.t4_value && !!d.t4_date)),
+  D5: d => !!d.ft4_status && (d.ft4_status !== "yes" || (!!d.ft4_value && !!d.ft4_date)),
+  D6: d => !!d.antitpo_status && (d.antitpo_status !== "yes" || (!!d.antitpo_value && !!d.antitpo_date)),
+  D7: d => !!d.antitg_status && (d.antitg_status !== "yes" || (!!d.antitg_value && !!d.antitg_date)),
+
+  F1: d => !!d.fatigue_status && (d.fatigue_status !== "yes" || (!!d.fatigue_severity && tcDur({ since_date: d.fatigue_since_date, years: d.fatigue_years, months: d.fatigue_months }))),
+  F2: d => !!d.weight_change_status && (d.weight_change_status !== "yes" || (!!d.weight_direction && !!d.weight_kg && tcDur({ since_date: d.weight_since_date, years: d.weight_years, months: d.weight_months }))),
+  F3: d => !!d.appetite_status,
+  F4: d => !!d.cold_intol_status && (d.cold_intol_status !== "yes" || tcDur({ since_date: d.cold_intol_since_date, years: d.cold_intol_years, months: d.cold_intol_months })),
+  F5: d => !!d.bowel_change_status && (d.bowel_change_status !== "yes" || (!!d.bowel_type && tcDur({ since_date: d.bowel_since_date, years: d.bowel_years, months: d.bowel_months }))),
+  F6: d => !!d.abdominal_status && (d.abdominal_status !== "yes" || ((d.abdominal_types || []).length > 0 && tcDur({ since_date: d.abdominal_since_date, years: d.abdominal_years, months: d.abdominal_months }))),
+  F7: d => !!d.skin_status && (d.skin_status !== "yes" || ((d.skin_types || []).length > 0 && tcDur({ since_date: d.skin_since_date, years: d.skin_years, months: d.skin_months }))),
+  F8a: d => !!d.periorbital_status && (d.periorbital_status !== "yes" || tcDur({ since_date: d.periorbital_since_date, years: d.periorbital_years, months: d.periorbital_months })),
+  F8b: d => !!d.facial_oedema_status && (d.facial_oedema_status !== "yes" || tcDur({ since_date: d.facial_oedema_since_date, years: d.facial_oedema_years, months: d.facial_oedema_months })),
+  F9: d => !!d.leg_oedema_status && (d.leg_oedema_status !== "yes" || (!!d.leg_oedema_type && tcDur({ since_date: d.leg_oedema_since_date, years: d.leg_oedema_years, months: d.leg_oedema_months }))),
+  F10: d => !!d.hair_status && (d.hair_status !== "yes" || ((d.hair_types || []).length > 0 && tcDur({ since_date: d.hair_since_date, years: d.hair_years, months: d.hair_months }))),
+  F11: d => !!d.nail_status && (d.nail_status !== "yes" || ((d.nail_types || []).length > 0 && tcDur({ since_date: d.nail_since_date, years: d.nail_years, months: d.nail_months }))),
+  F12: d => !!d.hoarseness_status && (d.hoarseness_status !== "yes" || (!!d.hoarseness_pattern && tcDur({ since_date: d.hoarseness_since_date, years: d.hoarseness_years, months: d.hoarseness_months }))),
+  F13: d => !!d.muscle_cramp_status && (d.muscle_cramp_status !== "yes" || tcDur({ since_date: d.muscle_cramp_since_date, years: d.muscle_cramp_years, months: d.muscle_cramp_months })),
+  F14: d => !!d.muscle_weakness_status && (d.muscle_weakness_status !== "yes" || (!!d.muscle_weakness_location && tcDur({ since_date: d.muscle_weakness_since_date, years: d.muscle_weakness_years, months: d.muscle_weakness_months }))),
+  F15a: d => !!d.cognition_status && (d.cognition_status !== "yes" || tcDur({ since_date: d.cognition_since_date, years: d.cognition_years, months: d.cognition_months })),
+  F15b: d => !!d.memory_status && (d.memory_status !== "yes" || tcDur({ since_date: d.memory_since_date, years: d.memory_years, months: d.memory_months })),
+  F16: d => !!d.depression_status && (d.depression_status !== "yes" || (tcDur({ since_date: d.depression_since_date, years: d.depression_years, months: d.depression_months }) && !!d.depression_treated && !!d.depression_diagnosed)),
+  F17: d => !!d.hypersomnia_status && (d.hypersomnia_status !== "yes" || tcDur({ since_date: d.hypersomnia_since_date, years: d.hypersomnia_years, months: d.hypersomnia_months })),
+  F18: d => !!d.bradycardia_status && (d.bradycardia_status !== "yes" || tcDur({ since_date: d.bradycardia_since_date, years: d.bradycardia_years, months: d.bradycardia_months })),
+  F19: d => !!d.postural_giddiness_status && (d.postural_giddiness_status !== "yes" || (!!d.postural_giddiness_freq && tcDur({ since_date: d.postural_giddiness_since_date, years: d.postural_giddiness_years, months: d.postural_giddiness_months }))),
+  F20: d => !!d.blackout_status && (d.blackout_status !== "yes" || (!!d.blackout_count && !!d.blackout_last_date && !!d.blackout_assessed && (d.blackout_assessed !== "yes" || !!d.blackout_dx))),
+  F21: d => !!d.hearing_status && (d.hearing_status !== "yes" || (!!d.hearing_type && tcDur({ since_date: d.hearing_since_date, years: d.hearing_years, months: d.hearing_months }))),
+  F22: d => !!d.delayed_reflexes_status,
+  F23: d => !!d.carpal_tunnel_status && (d.carpal_tunnel_status !== "yes" || ((d.carpal_tunnel_symptoms || []).length > 0 && !!d.carpal_tunnel_side && tcDur({ since_date: d.carpal_tunnel_since_date, years: d.carpal_tunnel_years, months: d.carpal_tunnel_months }))),
+  F24: d => !!d.macroglossia_status,
+
+
+  H1: d => !!d.dyslipidaemia_status && (d.dyslipidaemia_status !== "yes" || (tcDur({ since_date: d.dyslipidaemia_since_date, years: d.dyslipidaemia_years, months: d.dyslipidaemia_months }) && !!d.dyslipidaemia_on_med && (d.dyslipidaemia_on_med !== "yes" || (d.dyslipidaemia_meds || []).some(m => m.name)))),
+  H2: d => !!d.anaemia_status && (d.anaemia_status !== "yes" || !!d.anaemia_type),
+  H3: d => !!d.diabetes_status && (d.diabetes_status !== "yes" || (tcDur({ since_date: d.diabetes_since_date, years: d.diabetes_years, months: d.diabetes_months }) && !!d.diabetes_on_med && (d.diabetes_on_med !== "yes" || (d.diabetes_meds || []).some(m => m.name)))),
+  H4: d => !!d.pcos_status && (d.pcos_status !== "yes" || (!!d.pcos_label && tcDur({ since_date: d.pcos_since_date, years: d.pcos_years, months: d.pcos_months }) && !!d.pcos_on_med && (d.pcos_on_med !== "yes" || !!d.pcos_med_name))),
+  H5: d => !!d.infertility_status,
+  H6: d => !!d.depression_dx_status && (d.depression_dx_status !== "yes" || !!d.depression_on_med),
+  H7: d => !!d.osteoporosis_status && (d.osteoporosis_status !== "yes" || (!!d.osteoporosis_dexa && !!d.osteoporosis_on_med && (d.osteoporosis_on_med !== "yes" || !!d.osteoporosis_med_name))),
+  H8: d => !!d.family_cancer_status && (d.family_cancer_status !== "yes" || (d.family_cancer_types || []).length > 0),
+  H9: () => true,
+};
+
+const TCREQ_MESSAGES = { select: "Select any one", date: "Enter date", duration: "Enter duration", text: "Enter details" };
+const TcMissingPointer = ({ containerRef, active, pageKey }) => {
+  const [pos, setPos] = useState(null);
+  useEffect(() => {
+    if (!active || !containerRef.current) { setPos(null); return; }
+    const scan = () => {
+      if (!containerRef.current) return;
+      const el = containerRef.current.querySelector('[data-hyporeq-filled="false"]');
+      if (!el) { setPos(null); return; }
+      const elRect = el.getBoundingClientRect();
+      const containerRect = containerRef.current.getBoundingClientRect();
+      setPos({ top: elRect.top - containerRect.top, left: elRect.left - containerRect.left, type: el.getAttribute("data-hyporeq-type") || "select" });
+    };
+    scan();
+    const t = setTimeout(scan, 60);
+    const observer = new MutationObserver(scan);
+    observer.observe(containerRef.current, { attributes: true, attributeFilter: ["data-hyporeq-filled"], childList: true, subtree: true });
+    return () => { clearTimeout(t); observer.disconnect(); };
+  }, [active, containerRef, pageKey]);
+
+  if (!pos) return null;
+  return (
+    <>
+      <style>{`
+        @keyframes tcreqBounce { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(7px); } }
+        .tcreq-arrow { animation: tcreqBounce 0.9s ease-in-out infinite; }
+      `}</style>
+      <div style={{ position: "absolute", top: Math.max(0, pos.top - 30), left: pos.left, display: "flex", alignItems: "center", gap: 4, zIndex: 5, pointerEvents: "none" }}>
+        <div style={{ background: "#c0392b", color: "#fff", fontSize: 11, fontWeight: 600, padding: "3px 9px", borderRadius: 6, whiteSpace: "nowrap" }}>
+          {TCREQ_MESSAGES[pos.type] || "Answer this question"}
+        </div>
+        <div className="tcreq-arrow" style={{ fontSize: 15, color: "#c0392b" }}>➜</div>
+      </div>
+    </>
+  );
+};
+
 // ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
 
 export default function TcQuestionnaire({ episodeId, patientId, patientDob, patientGender, maritalStatus, hysterectomyDone, onComplete, onBack }) {
@@ -199,6 +406,8 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
   const [saving, setSaving]       = useState(false);
   const [saveMsg, setSaveMsg]     = useState("");
   const [savedPageId, setSavedPageId] = useState(null);
+  const [reviewMode, setReviewMode] = useState(false);
+  const pageContentRef = useRef(null);
   const [resumedFrom, setResumedFrom] = useState(false);
 
   const set = useCallback((key, value) => setData(prev => ({ ...prev, [key]: value })), []);
@@ -253,9 +462,7 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
       "F13", "F14", "F15a", "F15b", "F16", "F17",
       "F18", "F19", "F20", "F21", "F22", "F23", "F24",
 
-      // ── MODULE G — Treatment & monitoring ──
-      "G1",
-      ...(get("g1_on_treatment") === "yes" ? ["G2"] : []),
+      // ── MODULE G (no standalone pages — merged into C3) ──
 
       // ── MODULE H — Unified comorbidities ──
       "H1", "H2", "H3",
@@ -287,8 +494,10 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
   }, [savedPageId, resumedFrom, allPages]);
 
   // ── Load draft on mount ───────────────────────────────────────────────────
-  useEffect(() => {
+  const [draftLoadError, setDraftLoadError] = useState('');
+  const loadDraft = useCallback(() => {
     if (patientId && episodeId) {
+      setDraftLoadError('');
       conditionAPI.getTcQ(patientId, episodeId)
         .then(d => {
           if (d && Object.keys(d).length) {
@@ -296,9 +505,12 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
             if (d.current_page) setSavedPageId(d.current_page);
           }
         })
-        .catch(() => {});
+        .catch(() => {
+          setDraftLoadError('Could not load your saved answers. Your previous answers have NOT been lost — please retry before continuing, rather than re-entering everything.');
+        });
     }
   }, [patientId, episodeId]);
+  useEffect(() => { loadDraft(); }, [loadDraft]);
 
   // ── Autosave ───────────────────────────────────────────────────────────────
   // Replaces the previous approach of saving (always as a draft) only
@@ -334,11 +546,42 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
     finally { setSaving(false); }
   }, [data, patientId, episodeId, onComplete]);
 
+  // Every question needs an answer before the questionnaire can actually
+  // be submitted — finds the first incomplete page (in display order, so
+  // it respects branching) and routes there instead of submitting.
+  const handleSubmit = useCallback(() => {
+    const incompleteIdx = allPages.findIndex(id => { const v = TC_PAGE_VALIDATORS[id]; return v ? !v(data) : false; });
+    if (incompleteIdx !== -1) {
+      setReviewMode(true);
+      setCurrentPage(incompleteIdx);
+      setSaveMsg("Please answer this question before submitting — some questions were left incomplete.");
+      return;
+    }
+    setReviewMode(false);
+    submitFinal();
+  }, [allPages, data, submitFinal]);
+
+  // Single source of truth for "what's still incomplete" — recomputed
+  // live from data on every render.
+  const incompleteList = reviewMode
+    ? allPages.map((id, idx) => ({ id, idx })).filter(({ id }) => { const v = TC_PAGE_VALIDATORS[id]; return v ? !v(data) : false; })
+    : [];
+
   const next = useCallback(() => {
     if (yearInvalid) return;
+    if (reviewMode) {
+      const leavingValidator = TC_PAGE_VALIDATORS[pageId];
+      if (leavingValidator && !leavingValidator(data)) { setSaveMsg("Please answer this question before continuing."); return; }
+      setSaveMsg("");
+      const ahead = incompleteList.find(({ idx }) => idx > currentPage);
+      const target = ahead || incompleteList[0];
+      if (target) { setCurrentPage(target.idx); return; }
+      handleSubmit();
+      return;
+    }
     if (currentPage < totalPages - 1) setCurrentPage(p => p + 1);
-    else submitFinal();
-  }, [currentPage, totalPages, submitFinal, yearInvalid]);
+    else handleSubmit();
+  }, [currentPage, totalPages, handleSubmit, yearInvalid, reviewMode, incompleteList, pageId, data]);
 
   const prev = useCallback(() => {
     if (currentPage > 0) setCurrentPage(p => p - 1);
@@ -882,38 +1125,218 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
         </div>
       );
 
-      case "C3": return (
-        <div>
-          <h3>Are you currently taking any thyroid medication?</h3>
-          <TcYesNoUnsure value={get("thyroid_med_status")} onChange={v => set("thyroid_med_status", v)} />
-          {get("thyroid_med_status") === "yes" && (
-            <TcSectionCard title="Current thyroid medication">
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <TcField label="Drug name"><TcInput value={get("thyroid_med_name")} onChange={v => set("thyroid_med_name", v)} placeholder="e.g. Levothyroxine" /></TcField>
-                <TcField label="Brand name"><TcInput value={get("thyroid_med_brand")} onChange={v => set("thyroid_med_brand", v)} placeholder="e.g. Thyronorm" /></TcField>
-                <TcField label="Dose (mcg)"><TcInput type="number" value={get("thyroid_med_dose")} onChange={v => set("thyroid_med_dose", v)} placeholder="e.g. 100" /></TcField>
-                <TcField label="Timing">
-                  <TcRadioGroup value={get("thyroid_med_timing")} onChange={v => set("thyroid_med_timing", v)} options={[
-                    { value: "before_breakfast", label: "Before breakfast" },
-                    { value: "after_breakfast", label: "After breakfast" },
-                    { value: "bedtime", label: "Bedtime" },
-                  ]} />
-                </TcField>
+      case "C3": return (() => {
+        const hadHysterectomy = get("hysterectomy_status") === "yes" || hysterectomyDone;
+        const isPostMeno = get("menopause_status") === "post";
+        const LT4_COLOR = { bg: "#fef5ef", border: "#f0c8a8", text: "#d35400" };
+        const LT3_COLOR = { bg: "#f6f0fc", border: "#c9b3e8", text: "#6b3fa0" };
+        const renderMedCol = (which) => {
+          const isLT4 = which === "lt4";
+          const c = isLT4 ? LT4_COLOR : LT3_COLOR;
+          const timingField = isLT4 ? "thyroid_med_timing" : "liothyronine_timing";
+          const complianceField = isLT4 ? "thyroid_med_compliance" : "liothyronine_compliance";
+          const sinceYearsField = isLT4 ? "thyroid_med_since_years" : "liothyronine_since_years";
+          const sinceMonthsField = isLT4 ? "thyroid_med_since_months" : "liothyronine_since_months";
+          const dcField = isLT4 ? "dose_changed_status" : "liothyronine_dose_changed_status";
+          const dcDateField = isLT4 ? "dose_last_changed_date" : "liothyronine_dose_changed_date";
+          const dcReasonField = isLT4 ? "dose_change_reason" : "liothyronine_dose_change_reason";
+          return (
+            <div style={{ background: c.bg, border: `1.5px solid ${c.border}`, borderRadius: 10, padding: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: c.text, marginBottom: 10 }}>
+                {isLT4 ? "Levothyroxine (LT4)" : "Liothyronine (LT3)"}
               </div>
+              <TcField label="Timing">
+                <TcRadioGroup value={get(timingField)} onChange={v => set(timingField, v)} options={[
+                  { value: "before_breakfast", label: "Before breakfast" },
+                  { value: "after_breakfast", label: "After breakfast" },
+                  { value: "bedtime", label: "Bedtime" },
+                ]} />
+              </TcField>
               <TcField label="Compliance">
-                <TcRadioGroup value={get("thyroid_med_compliance")} onChange={v => set("thyroid_med_compliance", v)} inline options={[
+                <TcRadioGroup value={get(complianceField)} onChange={v => set(complianceField, v)} inline options={[
                   { value: "regular", label: "Regular" }, { value: "irregular", label: "Irregular" }, { value: "skips_sometimes", label: "Skips sometimes" },
                 ]} />
               </TcField>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <TcField label="Taking since (years)"><TcInput type="number" value={get("thyroid_med_since_years")} onChange={v => set("thyroid_med_since_years", v)} min={0} placeholder="0" /></TcField>
-                <TcField label="Taking since (months)"><TcInput type="number" value={get("thyroid_med_since_months")} onChange={v => set("thyroid_med_since_months", v)} min={0} max={11} placeholder="0" /></TcField>
+                <TcField label="Taking since (years)"><TcInput type="number" value={get(sinceYearsField)} onChange={v => set(sinceYearsField, v)} min={0} placeholder="0" /></TcField>
+                <TcField label="Taking since (months)"><TcInput type="number" value={get(sinceMonthsField)} onChange={v => set(sinceMonthsField, v)} min={0} max={11} placeholder="0" /></TcField>
               </div>
-            </TcSectionCard>
-          )}
-          <TcOutputBox text={get("thyroid_med_status") === "yes" && get("thyroid_med_brand") && get("thyroid_med_dose") ? `On Tab. ${get("thyroid_med_brand")} — ${get("thyroid_med_dose")} mcg${get("thyroid_med_timing") ? " " + get("thyroid_med_timing").replace(/_/g, " ") : ""} since last ${durationText(get("thyroid_med_since_years"), get("thyroid_med_since_months"), "")}.` : ""} />
-        </div>
-      );
+              <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${c.border}` }}>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Dose changed recently?</div>
+                <TcYesNoUnsure value={get(dcField)} onChange={v => set(dcField, v)} />
+                {get(dcField) === "yes" && (
+                  <TcSectionCard title="Dose change details">
+                    <TcField label="Date of last dose change"><TcInput type="date" value={get(dcDateField)} onChange={v => set(dcDateField, v)} max={new Date().toISOString().split("T")[0]} /></TcField>
+                    <TcField label="Reason for change">
+                      <TcRadioGroup value={get(dcReasonField)} onChange={v => set(dcReasonField, v)} options={[
+                        { value: "tsh_increased", label: "TSH increased" }, { value: "tsh_decreased", label: "TSH decreased" },
+                        ...(isFemale && !hadHysterectomy && !isPostMeno && isMarried ? [{ value: "pregnancy", label: "Pregnancy" }] : []),
+                        { value: "other", label: "Other" },
+                      ]} />
+                    </TcField>
+                  </TcSectionCard>
+                )}
+              </div>
+            </div>
+          );
+        };
+
+        return (
+          <div>
+            <h3>Are you currently taking any thyroid medication?</h3>
+            <TcYesNoUnsure value={get("thyroid_med_status")} onChange={v => set("thyroid_med_status", v)} />
+            {get("thyroid_med_status") === "yes" && (
+              <TcSectionCard title="Current thyroid medication">
+                <TcField label="Treatment type">
+                  <TcRadioGroup value={get("thyroid_med_treatment_type")} onChange={v => set("thyroid_med_treatment_type", v)} inline options={[
+                    { value: "levo_only", label: "Levothyroxine (LT4)" },
+                    { value: "lio_only", label: "Liothyronine (LT3)" },
+                    { value: "combination", label: "Combination" },
+                    { value: "other", label: "Other" },
+                  ]} />
+                </TcField>
+
+                {(get("thyroid_med_treatment_type") === "levo_only" || get("thyroid_med_treatment_type") === "lio_only" || get("thyroid_med_treatment_type") === "combination") && (
+                  <>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 4 }}>
+                      <div>
+                        {(get("thyroid_med_treatment_type") === "levo_only" || get("thyroid_med_treatment_type") === "combination") && (
+                          <TcField label="Brand name — Levothyroxine (LT4)">
+                            <TcSelect
+                              value={get("thyroid_med_brand")}
+                              onChange={brand => {
+                                const info = THYROID_MED_BRANDS[brand];
+                                set("thyroid_med_brand", brand);
+                                set("thyroid_med_name", info ? info.generic : "");
+                                set("thyroid_med_dose", "");
+                              }}
+                              placeholder="Select brand..."
+                              options={Object.keys(THYROID_MED_BRANDS).sort().map(b => ({ value: b, label: b }))}
+                            />
+                          </TcField>
+                        )}
+                      </div>
+                      <div>
+                        {(get("thyroid_med_treatment_type") === "lio_only" || get("thyroid_med_treatment_type") === "combination") && (
+                          <TcField label="Brand name — Liothyronine (LT3)">
+                            <TcSelect
+                              value={get("liothyronine_brand")}
+                              onChange={brand => {
+                                const info = LIOTHYRONINE_BRANDS[brand];
+                                set("liothyronine_brand", brand);
+                                set("liothyronine_name", info ? info.generic : "");
+                                set("liothyronine_dose", "");
+                              }}
+                              placeholder="Select brand..."
+                              options={Object.keys(LIOTHYRONINE_BRANDS).sort().map(b => ({ value: b, label: b }))}
+                            />
+                          </TcField>
+                        )}
+                      </div>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 4 }}>
+                      <div>
+                        {(get("thyroid_med_treatment_type") === "levo_only" || get("thyroid_med_treatment_type") === "combination") && get("thyroid_med_brand") && (
+                          <TcField label="Drug name" hint="Auto-filled from brand">
+                            <TcInput value={get("thyroid_med_name")} onChange={v => set("thyroid_med_name", v)} />
+                          </TcField>
+                        )}
+                      </div>
+                      <div>
+                        {(get("thyroid_med_treatment_type") === "lio_only" || get("thyroid_med_treatment_type") === "combination") && get("liothyronine_brand") && (
+                          <TcField label="Drug name" hint="Auto-filled from brand">
+                            <TcInput value={get("liothyronine_name")} onChange={v => set("liothyronine_name", v)} />
+                          </TcField>
+                        )}
+                      </div>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+                      <div>
+                        {(get("thyroid_med_treatment_type") === "levo_only" || get("thyroid_med_treatment_type") === "combination") && get("thyroid_med_brand") && THYROID_MED_BRANDS[get("thyroid_med_brand")] && (
+                          <TcField label="Current dose (mcg)">
+                            <TcPillSelect perRow={3}
+                              value={get("thyroid_med_dose") ? Number(get("thyroid_med_dose")) : null}
+                              onChange={dose => set("thyroid_med_dose", String(dose))}
+                              options={THYROID_MED_BRANDS[get("thyroid_med_brand")].doses}
+                            />
+                          </TcField>
+                        )}
+                      </div>
+                      <div>
+                        {(get("thyroid_med_treatment_type") === "lio_only" || get("thyroid_med_treatment_type") === "combination") && get("liothyronine_brand") && LIOTHYRONINE_BRANDS[get("liothyronine_brand")] && (
+                          <TcField label="Current dose (mcg)">
+                            <TcPillSelect perRow={3}
+                              value={get("liothyronine_dose") ? Number(get("liothyronine_dose")) : null}
+                              onChange={dose => set("liothyronine_dose", String(dose))}
+                              options={LIOTHYRONINE_BRANDS[get("liothyronine_brand")].doses}
+                            />
+                          </TcField>
+                        )}
+                      </div>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                      <div>{(get("thyroid_med_treatment_type") === "levo_only" || get("thyroid_med_treatment_type") === "combination") && renderMedCol("lt4")}</div>
+                      <div>{(get("thyroid_med_treatment_type") === "lio_only" || get("thyroid_med_treatment_type") === "combination") && renderMedCol("lt3")}</div>
+                    </div>
+                  </>
+                )}
+
+                {get("thyroid_med_treatment_type") === "other" && (
+                  <>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+                      <TcField label="Drug name"><TcInput value={get("thyroid_med_name")} onChange={v => set("thyroid_med_name", v)} placeholder="e.g. Levothyroxine" /></TcField>
+                      <TcField label="Dose (mcg)"><TcInput type="number" value={get("thyroid_med_dose")} onChange={v => set("thyroid_med_dose", v)} placeholder="e.g. 100" /></TcField>
+                    </div>
+                    <TcField label="Timing">
+                      <TcRadioGroup value={get("thyroid_med_timing")} onChange={v => set("thyroid_med_timing", v)} options={[
+                        { value: "before_breakfast", label: "Before breakfast" },
+                        { value: "after_breakfast", label: "After breakfast" },
+                        { value: "bedtime", label: "Bedtime" },
+                      ]} />
+                    </TcField>
+                    <TcField label="Compliance">
+                      <TcRadioGroup value={get("thyroid_med_compliance")} onChange={v => set("thyroid_med_compliance", v)} inline options={[
+                        { value: "regular", label: "Regular" }, { value: "irregular", label: "Irregular" }, { value: "skips_sometimes", label: "Skips sometimes" },
+                      ]} />
+                    </TcField>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                      <TcField label="Taking since (years)"><TcInput type="number" value={get("thyroid_med_since_years")} onChange={v => set("thyroid_med_since_years", v)} min={0} placeholder="0" /></TcField>
+                      <TcField label="Taking since (months)"><TcInput type="number" value={get("thyroid_med_since_months")} onChange={v => set("thyroid_med_since_months", v)} min={0} max={11} placeholder="0" /></TcField>
+                    </div>
+                    <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1px solid #d0d7e8" }}>
+                      <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>Has this dose been changed recently?</div>
+                      <TcYesNoUnsure value={get("dose_changed_status")} onChange={v => set("dose_changed_status", v)} />
+                      {get("dose_changed_status") === "yes" && (
+                        <TcSectionCard title="Dose change details">
+                          <TcField label="Date of last dose change"><TcInput type="date" value={get("dose_last_changed_date")} onChange={v => set("dose_last_changed_date", v)} max={new Date().toISOString().split("T")[0]} /></TcField>
+                          <TcField label="Reason for change">
+                            <TcRadioGroup value={get("dose_change_reason")} onChange={v => set("dose_change_reason", v)} options={[
+                              { value: "tsh_increased", label: "TSH increased" }, { value: "tsh_decreased", label: "TSH decreased" },
+                              ...(isFemale && !hadHysterectomy && !isPostMeno && isMarried ? [{ value: "pregnancy", label: "Pregnancy" }] : []),
+                              { value: "other", label: "Other" },
+                            ]} />
+                          </TcField>
+                        </TcSectionCard>
+                      )}
+                    </div>
+                  </>
+                )}
+              </TcSectionCard>
+            )}
+            <TcOutputBox text={(() => {
+              if (get("thyroid_med_status") !== "yes") return "";
+              const parts = [];
+              if (get("thyroid_med_brand") && get("thyroid_med_dose")) parts.push(`Tab. ${get("thyroid_med_brand")} — ${get("thyroid_med_dose")} mcg`);
+              if (get("liothyronine_brand") && get("liothyronine_dose")) parts.push(`Tab. ${get("liothyronine_brand")} — ${get("liothyronine_dose")} mcg`);
+              if (get("thyroid_med_treatment_type") === "other" && get("thyroid_med_name")) parts.push(`${get("thyroid_med_name")} — ${get("thyroid_med_dose") || "?"} mcg`);
+              return parts.join(" + ");
+            })()} />
+          </div>
+        );
+      })();
 
       case "C4a": return (
         <div>
@@ -1197,60 +1620,10 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
       );
 
       // ══════════════════════════════════════════════════════
-      // MODULE G — CURRENT TREATMENT & MONITORING
+      // MODULE G (no standalone pages — G1 duplicated C3's "currently
+      // taking any thyroid medication" question; G2's dose-change now
+      // lives inside C3, merged per drug column)
       // ══════════════════════════════════════════════════════
-
-      case "G1": return (
-        <div>
-          <h3>Are you currently on thyroid hormone replacement therapy (for hypothyroidism)?</h3>
-          <TcYesNo value={get("g1_on_treatment")} onChange={v => set("g1_on_treatment", v)} />
-          {get("g1_on_treatment") === "yes" && (
-            <TcSectionCard title="Thyroid hormone replacement">
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <TcField label="Drug name"><TcInput value={get("levo_drug_name")} onChange={v => set("levo_drug_name", v)} placeholder="e.g. Levothyroxine" /></TcField>
-                <TcField label="Brand name"><TcInput value={get("levo_brand")} onChange={v => set("levo_brand", v)} placeholder="e.g. Thyronorm" /></TcField>
-                <TcField label="Dose (mcg)"><TcInput type="number" value={get("levo_dose_mcg")} onChange={v => set("levo_dose_mcg", v)} placeholder="e.g. 100" /></TcField>
-                <TcField label="Timing">
-                  <TcRadioGroup value={get("levo_timing")} onChange={v => set("levo_timing", v)} options={[
-                    { value: "before_breakfast", label: "Before breakfast" },
-                    { value: "after_breakfast", label: "After breakfast" },
-                    { value: "bedtime", label: "Bedtime" },
-                  ]} />
-                </TcField>
-              </div>
-              <TcField label="Compliance">
-                <TcRadioGroup value={get("levo_compliance")} onChange={v => set("levo_compliance", v)} inline options={[
-                  { value: "regular", label: "Regular" }, { value: "irregular", label: "Irregular" }, { value: "skips_sometimes", label: "Skips sometimes" },
-                ]} />
-              </TcField>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <TcField label="Treatment started (years)"><TcInput type="number" value={get("levo_since_years")} onChange={v => set("levo_since_years", v)} min={0} placeholder="0" /></TcField>
-                <TcField label="Treatment started (months)"><TcInput type="number" value={get("levo_since_months")} onChange={v => set("levo_since_months", v)} min={0} max={11} placeholder="0" /></TcField>
-              </div>
-            </TcSectionCard>
-          )}
-          <TcOutputBox text={get("g1_on_treatment") === "yes" && get("levo_brand") && get("levo_dose_mcg") ? `On Tab. ${get("levo_brand")} — ${get("levo_dose_mcg")} mcg since last ${durationText(get("levo_since_years"), get("levo_since_months"), "")}.` : ""} />
-        </div>
-      );
-
-      case "G2": return (
-        <div>
-          <h3>Has your dose of thyroid hormone been changed recently?</h3>
-          <TcYesNoUnsure value={get("dose_changed_status")} onChange={v => set("dose_changed_status", v)} />
-          {get("dose_changed_status") === "yes" && (
-            <TcSectionCard title="Dose change details">
-              <TcField label="Date of last dose change"><TcInput type="date" value={get("dose_last_changed_date")} onChange={v => set("dose_last_changed_date", v)} max={new Date().toISOString().split("T")[0]} /></TcField>
-              <TcField label="Reason for change">
-                <TcRadioGroup value={get("dose_change_reason")} onChange={v => set("dose_change_reason", v)} options={[
-                  { value: "tsh_increased", label: "TSH increased" }, { value: "tsh_decreased", label: "TSH decreased" },
-                  { value: "other", label: "Other" },
-                ]} />
-              </TcField>
-            </TcSectionCard>
-          )}
-          <TcOutputBox text={get("dose_changed_status") === "yes" && get("dose_change_reason") ? `Dose of Tab. ${get("levo_brand") || "thyroid medication"} was changed on ${fmtDate(get("dose_last_changed_date"))} due to ${get("dose_change_reason").replace(/_/g, " ")}.` : ""} />
-        </div>
-      );
 
       // ══════════════════════════════════════════════════════
       // MODULE H — UNIFIED COMORBIDITIES
@@ -1497,6 +1870,13 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
   return (
     <div style={{ maxWidth: 680, margin: "0 auto", fontFamily: "system-ui, sans-serif", padding: "0 16px 40px" }}>
 
+      {draftLoadError && (
+        <div style={{ background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: 8, padding: '10px 14px', margin: '16px 0', fontSize: 13, color: '#991b1b', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <span>{draftLoadError}</span>
+          <button onClick={loadDraft} className="btn btn-secondary btn-sm" style={{ flexShrink: 0 }}>Retry</button>
+        </div>
+      )}
+
       {/* Progress bar */}
       <div style={{ position: "sticky", top: 0, background: "#fff", paddingTop: 16, paddingBottom: 12, zIndex: 10, borderBottom: "1px solid #f0f0f0" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -1508,14 +1888,30 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
         </div>
         <div style={{ fontSize: 11, color: "#bbb", marginTop: 4 }}>
           Module {pageId.replace(/[0-9a-z_]+$/, "")} · {pageId}
-          {saveMsg && <span style={{ marginLeft: 12, color: saveMsg.includes("failed") ? "#e74c3c" : "#27ae60" }}>{saveMsg}</span>}
+          {saveMsg && <span style={{ marginLeft: 12, color: (saveMsg.includes("failed") || saveMsg.includes("Please answer")) ? "#e74c3c" : "#27ae60" }}>{saveMsg}</span>}
         </div>
       </div>
 
       {/* Question */}
-      <div style={{ paddingTop: 24, paddingBottom: 80 }}>
+      <div ref={pageContentRef} style={{ position: "relative", paddingTop: 24, paddingBottom: incompleteList.length > 0 ? 130 : 80 }}>
         {renderPage()}
+        <TcMissingPointer containerRef={pageContentRef} pageKey={pageId}
+          active={reviewMode && incompleteList.some(({ idx }) => idx === currentPage)} />
       </div>
+
+      {/* Bottom strip listing every unanswered question — stacked just
+          above the already-fixed nav bar. */}
+      {incompleteList.length > 0 && (
+        <div style={{ position: "fixed", bottom: 60, left: 0, right: 0, zIndex: 40, background: "#fff", borderTop: "2px solid #e6a3a3", boxShadow: "0 -2px 12px rgba(0,0,0,0.10)", padding: "10px 20px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", maxWidth: 680, margin: "0 auto" }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: "#a83232", marginRight: 4 }}>{incompleteList.length} unanswered — jump to:</span>
+          {incompleteList.map(({ id, idx }) => (
+            <button key={id} onClick={() => { setSaveMsg(""); setCurrentPage(idx); }}
+              style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 12, cursor: "pointer", border: `1.5px solid ${idx === currentPage ? "#d35400" : "#e6a3a3"}`, background: idx === currentPage ? "#fef5ef" : "#fff", color: idx === currentPage ? "#d35400" : "#a83232" }}>
+              Q{idx + 1}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Navigation */}
       <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "#fff", borderTop: "1px solid #f0f0f0", padding: "12px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", maxWidth: 680, margin: "0 auto" }}>
@@ -1532,7 +1928,7 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
           disabled={yearInvalid}
           style={{ padding: "10px 28px", border: "none", borderRadius: 8, background: yearInvalid ? "#ccc" : "#d35400", color: "#fff", cursor: yearInvalid ? "not-allowed" : "pointer", fontSize: 14, fontWeight: 600 }}
         >
-          {currentPage === totalPages - 1 ? "Submit ✓" : "Next →"}
+          {reviewMode ? "Next unanswered →" : currentPage === totalPages - 1 ? "Submit ✓" : "Next →"}
         </button>
       </div>
     </div>

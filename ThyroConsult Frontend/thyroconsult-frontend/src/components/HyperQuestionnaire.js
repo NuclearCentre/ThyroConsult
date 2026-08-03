@@ -27,6 +27,8 @@ const HyperInput = ({ value, onChange, type = "text", placeholder, min, max, sty
     placeholder={placeholder}
     min={min}
     max={max}
+    data-hyporeq-type={type === "date" ? "date" : "text"}
+    data-hyporeq-filled={value ? "true" : "false"}
     style={{ width: "100%", padding: "10px 12px", border: "1.5px solid #d0d7e8", borderRadius: 8, fontSize: 14, outline: "none", boxSizing: "border-box", ...style }}
   />
 );
@@ -55,6 +57,8 @@ const HyperSelect = ({ value, onChange, options, placeholder }) => (
   <select
     value={value || ""}
     onChange={e => onChange(e.target.value)}
+    data-hyporeq-type="select"
+    data-hyporeq-filled={value ? "true" : "false"}
     style={{ width: "100%", padding: "10px 12px", border: "1.5px solid #d0d7e8", borderRadius: 8, fontSize: 14, background: "#fff", outline: "none" }}
   >
     {placeholder && <option value="">{placeholder}</option>}
@@ -62,8 +66,29 @@ const HyperSelect = ({ value, onChange, options, placeholder }) => (
   </select>
 );
 
+// Fixed dose-pill grid (5 per row), matching HypoQuestionnaire's
+// HypoPillSelect exactly — single-select, behaves like a radio group.
+const HyperPillSelect = ({ options, value, onChange, perRow = 5 }) => (
+  <div data-hyporeq-type="select" data-hyporeq-filled={value ? "true" : "false"}
+    style={{ display: "grid", gridTemplateColumns: `repeat(${perRow}, 1fr)`, gap: 8, marginBottom: 12 }}>
+    {options.map(opt => {
+      const sel = value === opt;
+      return (
+        <div key={opt} onClick={() => onChange(opt)} style={{
+          display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center",
+          padding: "8px 6px", borderRadius: 8, cursor: "pointer", fontSize: 13,
+          border: `1.5px solid ${sel ? "#3a7bd5" : "#d0d7e8"}`,
+          background: sel ? "#eef4ff" : "#fff",
+          color: sel ? "#3a7bd5" : "#1a1a2e",
+          minHeight: 40, boxSizing: "border-box",
+        }}>{opt} mg</div>
+      );
+    })}
+  </div>
+);
+
 const HyperRadioGroup = ({ value, onChange, options, inline }) => (
-  <div style={{ display: "flex", flexDirection: inline ? "row" : "column", gap: 10, flexWrap: "wrap" }}>
+  <div data-hyporeq-type="select" data-hyporeq-filled={value ? "true" : "false"} style={{ display: "flex", flexDirection: inline ? "row" : "column", gap: 10, flexWrap: "wrap" }}>
     {options.map(o => (
       <label key={o.value} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "8px 14px", borderRadius: 8, border: `1.5px solid ${value === o.value ? "#3a7bd5" : "#d0d7e8"}`, background: value === o.value ? "#eef4ff" : "#fff", fontWeight: value === o.value ? 600 : 400, fontSize: 14, whiteSpace: "nowrap" }}>
         <input type="radio" checked={value === o.value} onChange={() => onChange(o.value)} style={{ accentColor: "#3a7bd5" }} />
@@ -79,7 +104,7 @@ const HyperCheckGroup = ({ values = [], onChange, options }) => {
     onChange(next);
   };
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+    <div data-hyporeq-type="select" data-hyporeq-filled={values.length ? "true" : "false"} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       {options.map(o => (
         <label key={o.value} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "8px 14px", borderRadius: 8, border: `1.5px solid ${values.includes(o.value) ? "#3a7bd5" : "#d0d7e8"}`, background: values.includes(o.value) ? "#eef4ff" : "#fff", fontSize: 14 }}>
           <input type="checkbox" checked={values.includes(o.value)} onChange={() => toggle(o.value)} style={{ accentColor: "#3a7bd5" }} />
@@ -197,7 +222,7 @@ const HyperDobField = ({ dob, ageYears, ageMonths, onChange }) => {
 
 const HyperDurationPicker = ({ label = "Since when?", sinceDate, onSinceDate, years, onYears, months, onMonths, minDate }) => (
   <HyperField label={label}>
-    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+    <div data-hyporeq-type="duration" data-hyporeq-filled={(sinceDate || years || months) ? "true" : "false"} style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
       <div style={{ flex: "1 1 180px" }}>
         <label style={{ fontSize: 12, color: "#555", display: "block", marginBottom: 4 }}>Date (if known)</label>
         <HyperInput type="date" value={sinceDate} onChange={onSinceDate} max={new Date().toISOString().split("T")[0]} min={minDate || undefined} />
@@ -290,6 +315,151 @@ function fmtDate(dateStr) {
   return d.toLocaleDateString("en-GB");
 }
 
+// ─── Per-page completion validators ──────────────────────────────────────
+// Mirrors HypoQuestionnaire's HYPO_PAGE_VALIDATORS exactly in spirit: pure
+// functions taking the raw data object, returning whether that page is
+// complete. Built directly from each page's own actual render logic above
+// (which sub-fields it reveals on "yes" and what its own output text
+// depends on) — not guessed. Where a page's own output text doesn't gate
+// on a particular sub-field (e.g. optional multi-selects), that field is
+// treated as optional here too, matching the page's own stated intent.
+// ─── Antithyroid drug brand → generic name + available doses (mg) ───
+const ANTITHYROID_DRUG_BRANDS = {
+  'Methimercazole': { generic: 'Methimazole', doses: [5, 10] },
+  'Methimez':       { generic: 'Methimazole', doses: [5, 10] },
+  'Neo-Mercazole':  { generic: 'Carbimazole', doses: [5, 10, 20] },
+  'Anti-Thyrox':    { generic: 'Carbimazole', doses: [5, 10] },
+  'Thyrocab':       { generic: 'Carbimazole', doses: [5, 10, 20] },
+  'Neomerdin':      { generic: 'Carbimazole', doses: [5] },
+  'Propylthiouracil': { generic: 'Propylthiouracil', doses: [25, 50] },
+  'PTU':            { generic: 'Propylthiouracil', doses: [25, 50] },
+};
+
+const dur = d => !!(d && (d.since_date || d.years || d.months));
+const HYPER_PAGE_VALIDATORS = {
+  A3: d => !!d.marital_status,
+
+  B1: d => !!d.hysterectomy_status && (d.hysterectomy_status !== "yes" || (!!d.hysterectomy_year && !!d.hysterectomy_reason && (d.hysterectomy_reason !== "other" || !!d.hysterectomy_reason_other))),
+  B2: d => !!d.menopause_status && (d.menopause_status !== "post" || !!d.menopause_year),
+  B3: d => !!d.menstrual_status && (d.menstrual_status !== "yes" || !!d.menstrual_pattern),
+  B4: d => !!d.lmp_date,
+  B5: d => {
+    const lmpDaysAgo = d.lmp_date ? Math.floor((new Date() - new Date(d.lmp_date)) / 86400000) : 0;
+    if (lmpDaysAgo < 31) return true; // page just shows an info message, nothing to answer
+    return !!d.pregnancy_status;
+  },
+
+  C1: d => !!d.thyroid_dx_status && (d.thyroid_dx_status !== "yes" || (!!d.thyroid_dx_type && !!d.thyroid_dx_year)),
+  C2a: d => !!d.thyroid_surgery_status && (d.thyroid_surgery_status !== "yes" || (!!d.thyroid_surgery_type && (d.thyroid_surgery_type !== "hemi" || !!d.thyroid_surgery_side))),
+  C2b: d => !!d.rai_status && (d.rai_status !== "yes" || ((d.rai_courses || []).some(c => c.dose_mci && c.year) && !!d.rai_post_hypothyroid)),
+  C3: d => !!d.med_status && (d.med_status !== "yes" || (!!d.med_drug_name && !!d.med_brand_name && !!d.med_dose_mg && !!d.med_tablets && !!d.med_compliance)),
+  C4: d => !!d.family_thyroid_status && (d.family_thyroid_status !== "yes" || (d.family_thyroid_data || []).some(e => e.relation && e.condition)),
+  C5: d => !!d.autoimmune_status && (d.autoimmune_status !== "yes" || (d.autoimmune_data || []).some(e => e.condition)),
+
+  D1: d => !!d.tsh_status && (d.tsh_status !== "yes" || (!!d.tsh_value && !!d.tsh_date)),
+  D2: d => !!d.ft4_status && (d.ft4_status !== "yes" || (!!d.ft4_value && !!d.ft4_date)),
+  D3: d => !!d.ft3_status && (d.ft3_status !== "yes" || (!!d.ft3_value && !!d.ft3_date)),
+  // TRAb/TSI and Anti-TPO/Anti-Tg values are explicitly stated as optional
+  // in the page's own UI text ("Either or both can be filled — neither is
+  // mandatory") — only the top-level status is required, matching that.
+  D4: d => !!d.trab_status,
+  D5: d => !!d.antibody_status,
+  D6: d => !!d.imaging_status && (d.imaging_status !== "yes" || ((d.imaging_types || []).length > 0 && !!d.imaging_date)),
+
+  E1: d => !!d.hyper_cause_known && (d.hyper_cause_known !== "yes" || (!!d.hyper_cause_type && dur({ since_date: d.hyper_cause_since_date, years: d.hyper_cause_since_years, months: d.hyper_cause_since_months_val }))),
+  E2: d => !!d.graves_confirmed && (d.graves_confirmed !== "yes" || (!!d.trab_positive && !!d.ophthal_status && !!d.dermopathy_status && !!d.acropathy_status)),
+  E3: d => !!d.toxic_nodule_confirmed && (d.toxic_nodule_confirmed !== "yes" || (!!d.toxic_nodule_type && !!d.e3_fnac_status && (d.e3_fnac_status !== "yes" || (!!d.e3_fnac_date && !!d.e3_fnac_result)))),
+  E4: d => !!d.goitre_status && (d.goitre_status !== "yes" || (!!d.goitre_size_label && !!d.goitre_pressure_status && (d.goitre_pressure_status !== "yes" || (d.goitre_pressure_types || []).length > 0))),
+  E5: d => !!d.fnac_status && (d.fnac_status !== "yes" || (!!d.fnac_date && !!d.fnac_result)),
+
+  // ── Module F — symptom pages (renderSymptomPage/renderHairNailPage) ──
+  F1: d => !!d.sym_fatigue_status && (d.sym_fatigue_status !== "yes" || (dur({ since_date: d.sym_fatigue_since_date, years: d.sym_fatigue_years, months: d.sym_fatigue_months }) && !!d.sym_fatigue_severity)),
+  F2: d => !!d.sym_weight_status && (d.sym_weight_status !== "yes" || (!!d.sym_weight_direction && !!d.sym_weight_kg && dur({ since_date: d.sym_weight_since_date, years: d.sym_weight_years, months: d.sym_weight_months }))),
+  F3: d => !!d.sym_appetite_status,
+  F4: d => !!d.sym_heat_status && (d.sym_heat_status !== "yes" || (dur({ since_date: d.sym_heat_since_date, years: d.sym_heat_years, months: d.sym_heat_months }) && !!d.sym_heat_impact)),
+  F5: d => !!d.sym_sweating_status && (d.sym_sweating_status !== "yes" || (!!d.sym_sweating_pattern && dur({ since_date: d.sym_sweating_since_date, years: d.sym_sweating_years, months: d.sym_sweating_months }))),
+  F6: d => !!d.sym_bowel_status && (d.sym_bowel_status !== "yes" || (!!d.sym_bowel_type && dur({ since_date: d.sym_bowel_since_date, years: d.sym_bowel_years, months: d.sym_bowel_months }))),
+  F7: d => !!d.sym_skin_status && (d.sym_skin_status !== "yes" || ((d.sym_skin_types || []).length > 0 && dur({ since_date: d.sym_skin_since_date, years: d.sym_skin_years, months: d.sym_skin_months }))),
+  F8a: d => !!d.sym_periorbital_status && (d.sym_periorbital_status !== "yes" || dur({ since_date: d.sym_periorbital_since_date, years: d.sym_periorbital_years, months: d.sym_periorbital_months })),
+  F8b: d => !!d.sym_facial_status && (d.sym_facial_status !== "yes" || dur({ since_date: d.sym_facial_since_date, years: d.sym_facial_years, months: d.sym_facial_months })),
+  F9: d => !!d.sym_pedal_status && (d.sym_pedal_status !== "yes" || (!!d.sym_pedal_type && dur({ since_date: d.sym_pedal_since_date, years: d.sym_pedal_years, months: d.sym_pedal_months }))),
+  F10: d => !!d.sym_hair_status && (d.sym_hair_status !== "yes" || (d.sym_hair_data || []).length > 0),
+  F11: d => !!d.sym_nail_status && (d.sym_nail_status !== "yes" || (d.sym_nail_data || []).length > 0),
+  F12: d => !!d.sym_hoarseness_status && (d.sym_hoarseness_status !== "yes" || (!!d.sym_hoarseness_pattern && dur({ since_date: d.sym_hoarseness_since_date, years: d.sym_hoarseness_years, months: d.sym_hoarseness_months }))),
+  F13: d => !!d.sym_myopathy_status && (d.sym_myopathy_status !== "yes" || (!!d.sym_myopathy_location && dur({ since_date: d.sym_myopathy_since_date, years: d.sym_myopathy_years, months: d.sym_myopathy_months }))),
+  F14: d => !!d.sym_cramp_status && (d.sym_cramp_status !== "yes" || dur({ since_date: d.sym_cramp_since_date, years: d.sym_cramp_years, months: d.sym_cramp_months })),
+  F15: d => !!d.sym_tremor_status && (d.sym_tremor_status !== "yes" || (!!d.sym_tremor_type_val && dur({ since_date: d.sym_tremor_since_date, years: d.sym_tremor_years, months: d.sym_tremor_months }))),
+  F16: d => !!d.sym_anxiety_status && (d.sym_anxiety_status !== "yes" || (!!d.sym_anxiety_seen_doctor && !!d.sym_anxiety_diagnosed && dur({ since_date: d.sym_anxiety_since_date, years: d.sym_anxiety_years, months: d.sym_anxiety_months }))),
+  F17: d => !!d.sym_irritability_status && (d.sym_irritability_status !== "yes" || dur({ since_date: d.sym_irritability_since_date, years: d.sym_irritability_years, months: d.sym_irritability_months })),
+  F18: d => !!d.sym_insomnia_status && (d.sym_insomnia_status !== "yes" || ((d.sym_insomnia_types || []).length > 0 && dur({ since_date: d.sym_insomnia_since_date, years: d.sym_insomnia_years, months: d.sym_insomnia_months }))),
+  F19: d => !!d.sym_palp_status && (d.sym_palp_status !== "yes" || (!!d.sym_palp_pattern && dur({ since_date: d.sym_palp_since_date, years: d.sym_palp_years, months: d.sym_palp_months }))),
+  F20: d => !!d.sym_af_status && (d.sym_af_status !== "yes" || (!!d.sym_af_confirmed && dur({ since_date: d.sym_af_since_date, years: d.sym_af_years, months: d.sym_af_months }) && !!d.sym_af_on_med && (d.sym_af_on_med !== "yes" || (d.sym_af_med_data || []).some(m => m.name)))),
+  F21: d => !!d.sym_giddiness_status && (d.sym_giddiness_status !== "yes" || (!!d.sym_giddiness_freq && dur({ since_date: d.sym_giddiness_since_date, years: d.sym_giddiness_years, months: d.sym_giddiness_months }))),
+  F22: d => !!d.sym_blackout_status && (d.sym_blackout_status !== "yes" || (!!d.sym_blackout_count && !!d.sym_blackout_last_date && !!d.sym_blackout_assessed && (d.sym_blackout_assessed !== "yes" || !!d.sym_blackout_dx))),
+  F23: d => !!d.sym_dyspnoea_status && (d.sym_dyspnoea_status !== "yes" || (!!d.sym_dyspnoea_onset && dur({ since_date: d.sym_dyspnoea_since_date, years: d.sym_dyspnoea_years, months: d.sym_dyspnoea_months }))),
+  F24: d => !!d.sym_concentration_status && (d.sym_concentration_status !== "yes" || (dur({ since_date: d.sym_concentration_since_date, years: d.sym_concentration_years, months: d.sym_concentration_months }) && !!d.sym_concentration_impact)),
+  F25: d => !!d.sym_memory_status && (d.sym_memory_status !== "yes" || (dur({ since_date: d.sym_memory_since_date, years: d.sym_memory_years, months: d.sym_memory_months }) && !!d.sym_memory_impact)),
+
+  // ── Module G — treatment & monitoring ──
+  G2: d => !!d.definitive_tx_status && (d.definitive_tx_status !== "yes" || !!d.definitive_tx_type),
+  G3: d => !!d.dose_changed_status && (d.dose_changed_status !== "yes" || (!!d.dose_changed_date && !!d.dose_change_direction && !!d.dose_changed_reason)),
+  G4: d => !!d.beta_blocker_status && (d.beta_blocker_status !== "yes" || (!!d.beta_blocker_name && !!d.beta_blocker_dose && !!d.beta_blocker_freq)),
+  G5: d => !!d.monitoring_status && (d.monitoring_status !== "yes" || !!d.review_frequency_val),
+
+  // ── Module H — comorbidities ──
+  H1: d => !!d.dyslipidaemia_status && (d.dyslipidaemia_status !== "yes" || (!!d.dyslipidaemia_since_months && !!d.dyslipidaemia_on_med && (d.dyslipidaemia_on_med !== "yes" || (d.dyslipidaemia_med_data || []).some(m => m.name)))),
+  H2: d => !!d.diabetes_status && (d.diabetes_status !== "yes" || (!!d.diabetes_type && !!d.diabetes_since_months && !!d.diabetes_on_med && (d.diabetes_on_med !== "yes" || (d.diabetes_med_data || []).some(m => m.name)))),
+  H3: d => !!d.anaemia_status && (d.anaemia_status !== "yes" || ((d.anaemia_types || []).length > 0 && !!d.anaemia_on_med && (d.anaemia_on_med !== "yes" || (d.anaemia_med_data || []).some(m => m.name)))),
+  H4: d => !!d.pcos_status && (d.pcos_status !== "yes" || (!!d.pcos_label && !!d.pcos_since_months && !!d.pcos_on_med && (d.pcos_on_med !== "yes" || (d.pcos_med_data || []).some(m => m.name)))),
+  H5: d => !!d.infertility_status,
+  H6: d => !!d.depression_status && (d.depression_status !== "yes" || !!d.depression_on_med_status),
+  H8: d => !!d.osteoporosis_status && (d.osteoporosis_status !== "yes" || (!!d.osteoporosis_dexa_status && !!d.osteoporosis_on_med && (d.osteoporosis_on_med !== "yes" || (d.osteoporosis_med_data || []).some(m => m.name)))),
+  H9: () => true, // optional free-text notes
+  DONE: () => true,
+};
+
+// ─── Missing-field pointer — identical mechanism to HypoQuestionnaire's
+// HypoMissingPointer: scans the current page's DOM for the first
+// data-hyporeq-filled="false" marker and points a small animated arrow at
+// it with a plain-language hint, live-tracking via MutationObserver as
+// the patient fills things in. ───
+const HYPERREQ_MESSAGES = { select: "Select any one", date: "Enter date", duration: "Enter duration", text: "Enter details" };
+const HyperMissingPointer = ({ containerRef, active, pageKey }) => {
+  const [pos, setPos] = useState(null);
+  useEffect(() => {
+    if (!active || !containerRef.current) { setPos(null); return; }
+    const scan = () => {
+      if (!containerRef.current) return;
+      const el = containerRef.current.querySelector('[data-hyporeq-filled="false"]');
+      if (!el) { setPos(null); return; }
+      const elRect = el.getBoundingClientRect();
+      const containerRect = containerRef.current.getBoundingClientRect();
+      setPos({ top: elRect.top - containerRect.top, left: elRect.left - containerRect.left, type: el.getAttribute("data-hyporeq-type") || "select" });
+    };
+    scan();
+    const t = setTimeout(scan, 60);
+    const observer = new MutationObserver(scan);
+    observer.observe(containerRef.current, { attributes: true, attributeFilter: ["data-hyporeq-filled"], childList: true, subtree: true });
+    return () => { clearTimeout(t); observer.disconnect(); };
+  }, [active, containerRef, pageKey]);
+
+  if (!pos) return null;
+  return (
+    <>
+      <style>{`
+        @keyframes hyperreqBounce { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(7px); } }
+        .hyperreq-arrow { animation: hyperreqBounce 0.9s ease-in-out infinite; }
+      `}</style>
+      <div style={{ position: "absolute", top: Math.max(0, pos.top - 30), left: pos.left, display: "flex", alignItems: "center", gap: 4, zIndex: 5, pointerEvents: "none" }}>
+        <div style={{ background: "#c0392b", color: "#fff", fontSize: 11, fontWeight: 600, padding: "3px 9px", borderRadius: 6, whiteSpace: "nowrap" }}>
+          {HYPERREQ_MESSAGES[pos.type] || "Answer this question"}
+        </div>
+        <div className="hyperreq-arrow" style={{ fontSize: 15, color: "#c0392b" }}>➜</div>
+      </div>
+    </>
+  );
+};
+
 // ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
 
 export default function HyperQuestionnaire({ episodeId, patientId, patientDob, patientGender, maritalStatus, hysterectomyDone, onComplete, onBack }) {
@@ -359,7 +529,35 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
   const currentYearField = yearFieldByPage[pageId];
   const yearInvalid = dobYear && currentYearField && get(currentYearField) && parseInt(get(currentYearField)) < dobYear;
 
-  const next = () => { if (!yearInvalid) setCurrentPage(p => Math.min(p + 1, allPages.length - 1)); };
+  // Set once handleSubmit finds an incomplete page — while true, "Next"
+  // jumps straight to the next INCOMPLETE page instead of advancing one
+  // page at a time, skipping every already-answered page in between.
+  const [reviewMode, setReviewMode] = useState(false);
+  const pageContentRef = useRef(null);
+
+  // Single source of truth for "what's still incomplete" — recomputed
+  // live from data on every render, read by both goNext's jump logic and
+  // the bottom strip below.
+  const incompleteList = reviewMode
+    ? allPages
+        .map((id, idx) => ({ id, idx }))
+        .filter(({ id }) => { const v = HYPER_PAGE_VALIDATORS[id]; return v ? !v(data) : false; })
+    : [];
+
+  const next = () => {
+    if (yearInvalid) return;
+    if (reviewMode) {
+      const leavingValidator = HYPER_PAGE_VALIDATORS[pageId];
+      if (leavingValidator && !leavingValidator(data)) { setSaveMsg("Please answer this question before continuing."); return; }
+      setSaveMsg("");
+      const ahead = incompleteList.find(({ idx }) => idx > currentPage);
+      const target = ahead || incompleteList[0];
+      if (target) { setCurrentPage(target.idx); return; }
+      handleSubmit();
+      return;
+    }
+    setCurrentPage(p => Math.min(p + 1, allPages.length - 1));
+  };
   const prev = () => setCurrentPage(p => Math.max(p - 1, 0));
 
   // Resume exactly where the patient left off, once, after allPages has
@@ -379,6 +577,23 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
       onComplete && onComplete();
     } catch (e) { setSaveMsg("Submission failed. Please try again."); }
     setSaving(false);
+  };
+
+  // Every question needs an answer before the questionnaire can actually
+  // be submitted — finds the first incomplete page (in display order, so
+  // it respects branching) and routes there instead of submitting.
+  // Without this, "Submit to my doctor" on the DONE page would save
+  // whatever was filled in regardless of gaps.
+  const handleSubmit = () => {
+    const incompleteIdx = allPages.findIndex(id => { const v = HYPER_PAGE_VALIDATORS[id]; return v ? !v(data) : false; });
+    if (incompleteIdx !== -1) {
+      setReviewMode(true);
+      setCurrentPage(incompleteIdx);
+      setSaveMsg("Please answer this question before submitting — some questions were left incomplete.");
+      return;
+    }
+    setReviewMode(false);
+    submitFinal();
   };
 
   // ── Autosave ─────────────────────────────────────────────────────────────
@@ -403,7 +618,9 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
   // Load existing draft on mount
   // NOTE: backend returns the row flat, not wrapped in { data } — reading
   // r.data here meant previously-saved answers were never restored.
-  useEffect(() => {
+  const [draftLoadError, setDraftLoadError] = useState('');
+  const loadDraft = useCallback(() => {
+    setDraftLoadError('');
     conditionAPI.getHyperQ(patientId, episodeId)
       .then(r => {
         if (r && Object.keys(r).length > 0) {
@@ -411,8 +628,11 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
           if (r.current_page) setSavedPageId(r.current_page);
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        setDraftLoadError('Could not load your saved answers. Your previous answers have NOT been lost — please retry before continuing, rather than re-entering everything.');
+      });
   }, [patientId, episodeId]);
+  useEffect(() => { loadDraft(); }, [loadDraft]);
 
   // ── Rehydrate uploaded reports on every load — resume AND post-submit ──
   // Same fix as HypoQuestionnaire: documents are never deleted (see
@@ -675,14 +895,21 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
           {get("med_status") === "yes" && (
             <HyperSectionCard title="Current medication details">
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <HyperField label="Drug name (generic)">
-                  <HyperInput value={get("med_drug_name")} onChange={v => set("med_drug_name", v)} placeholder="e.g. Carbimazole" />
-                </HyperField>
                 <HyperField label="Brand name">
-                  <HyperInput value={get("med_brand_name")} onChange={v => set("med_brand_name", v)} placeholder="e.g. Neomercazole" />
+                  <HyperSelect
+                    value={get("med_brand_name")}
+                    onChange={brand => {
+                      const info = ANTITHYROID_DRUG_BRANDS[brand];
+                      set("med_brand_name", brand);
+                      set("med_drug_name", info ? info.generic : "");
+                      set("med_dose_mg", "");
+                    }}
+                    placeholder="Select brand..."
+                    options={Object.keys(ANTITHYROID_DRUG_BRANDS).sort().map(b => ({ value: b, label: b }))}
+                  />
                 </HyperField>
-                <HyperField label="Current dose (mg)">
-                  <HyperInput type="number" value={get("med_dose_mg")} onChange={v => set("med_dose_mg", v)} placeholder="e.g. 5" min={0} />
+                <HyperField label="Drug name (generic)" hint="Auto-filled from brand">
+                  <HyperInput value={get("med_drug_name")} onChange={v => set("med_drug_name", v)} placeholder="e.g. Carbimazole" />
                 </HyperField>
                 <HyperField label="Tablets at a time">
                   <HyperInput type="number" value={get("med_tablets")} onChange={v => set("med_tablets", v)} placeholder="e.g. 2" min={1} max={10} />
@@ -691,6 +918,15 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
                   <HyperSelect value={get("med_times_per_day", "1")} onChange={v => { set("med_times_per_day", v); const n = parseInt(v); const existing = get("med_timing", []); const updated = Array.from({ length: n }, (_, i) => existing[i] || { dose_number: i + 1, timing: "" }); set("med_timing", updated); }} options={[1,2,3,4].map(n => ({ value: String(n), label: `${n} time${n > 1 ? "s" : ""}` }))} />
                 </HyperField>
               </div>
+              {get("med_brand_name") && ANTITHYROID_DRUG_BRANDS[get("med_brand_name")] && (
+                <HyperField label="Current dose (mg)">
+                  <HyperPillSelect perRow={3}
+                    value={get("med_dose_mg") ? Number(get("med_dose_mg")) : null}
+                    onChange={dose => set("med_dose_mg", String(dose))}
+                    options={ANTITHYROID_DRUG_BRANDS[get("med_brand_name")].doses}
+                  />
+                </HyperField>
+              )}
               {(get("med_timing", []) || []).map((t, i) => (
                 <HyperField key={i} label={`${i === 0 ? "First" : i === 1 ? "Second" : i === 2 ? "Third" : "Fourth"} dose timing`}>
                   <HyperSelect value={t.timing} onChange={v => { const arr = [...(get("med_timing", []) || [])]; arr[i] = { ...arr[i], timing: v }; set("med_timing", arr); }} placeholder="Select timing" options={[{ value: "before_breakfast", label: "Before breakfast" }, { value: "after_breakfast", label: "After breakfast" }, { value: "before_lunch", label: "Before lunch" }, { value: "after_lunch", label: "After lunch" }, { value: "before_dinner", label: "Before dinner" }, { value: "after_dinner", label: "After dinner" }, { value: "at_bedtime", label: "At bedtime" }]} />
@@ -1435,7 +1671,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
           <div style={{ fontSize: 56, marginBottom: 16 }}>✅</div>
           <h2 style={{ color: "#27ae60" }}>Questionnaire complete!</h2>
           <p style={{ color: "#555", fontSize: 16 }}>Thank you for completing the hyperthyroidism questionnaire. Your doctor will review your responses before your online opinion.</p>
-          <button onClick={submitFinal} disabled={saving} style={{ marginTop: 24, padding: "14px 40px", background: "#27ae60", color: "#fff", border: "none", borderRadius: 10, fontSize: 16, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer" }}>
+          <button onClick={handleSubmit} disabled={saving} style={{ marginTop: 24, padding: "14px 40px", background: "#27ae60", color: "#fff", border: "none", borderRadius: 10, fontSize: 16, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer" }}>
             {saving ? "Submitting..." : "Submit to my doctor"}
           </button>
           {saveMsg && <p style={{ marginTop: 12, color: "#e74c3c" }}>{saveMsg}</p>}
@@ -1578,6 +1814,12 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
   // ─── Shell ─────────────────────────────────────────────────────────────────
   return (
     <div style={{ maxWidth: 700, margin: "0 auto", fontFamily: "'DM Sans', Arial, sans-serif", color: "#1a1a2e" }}>
+      {draftLoadError && (
+        <div style={{ background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: 13, color: '#991b1b', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <span>{draftLoadError}</span>
+          <button onClick={loadDraft} className="btn btn-secondary btn-sm" style={{ flexShrink: 0 }}>Retry</button>
+        </div>
+      )}
       {/* Progress bar */}
       <div style={{ position: "sticky", top: 0, background: "#fff", zIndex: 10, padding: "12px 0 8px", borderBottom: "1px solid #e8edf5" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
@@ -1602,20 +1844,42 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
       </div>
 
       {/* Question card */}
-      <div style={{ background: "#fff", borderRadius: 12, border: "1.5px solid #e8edf5", padding: "28px 32px", marginTop: 16 }}>
+      <div ref={pageContentRef} style={{ position: "relative", background: "#fff", borderRadius: 12, border: "1.5px solid #e8edf5", padding: "28px 32px", marginTop: 16 }}>
+        {saveMsg && pageId !== "DONE" && (
+          <div style={{ background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 8, padding: "8px 12px", marginBottom: 14, fontSize: 12, color: "#991b1b" }}>{saveMsg}</div>
+        )}
         {renderPage()}
+        <HyperMissingPointer containerRef={pageContentRef} pageKey={pageId}
+          active={reviewMode && incompleteList.some(({ idx }) => idx === currentPage)} />
       </div>
 
       {/* Navigation */}
       {pageId !== "DONE" && (
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, padding: "0 4px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, padding: "0 4px", marginBottom: incompleteList.length > 0 ? 60 : 0 }}>
           <button onClick={currentPage === 0 ? onBack : prev} disabled={currentPage === 0 && !onBack} style={{ padding: "10px 24px", background: (currentPage === 0 && !onBack) ? "#f0f4fb" : "#fff", border: "1.5px solid #d0d7e8", borderRadius: 8, cursor: (currentPage === 0 && !onBack) ? "default" : "pointer", color: (currentPage === 0 && !onBack) ? "#bbb" : "#444", fontSize: 14 }}>
             ← Back
           </button>
           {saveMsg === "✓ Saved" && <span style={{ fontSize: 12, color: "#888" }}>✓ Saved</span>}
-          <button onClick={next} disabled={currentPage >= allPages.length - 1 || yearInvalid} style={{ padding: "10px 24px", background: "#3a7bd5", border: "none", borderRadius: 8, cursor: "pointer", color: "#fff", fontSize: 14, fontWeight: 600 }}>
-            Next →
+          <button onClick={next} disabled={(currentPage >= allPages.length - 1 && !reviewMode) || yearInvalid} style={{ padding: "10px 24px", background: "#3a7bd5", border: "none", borderRadius: 8, cursor: "pointer", color: "#fff", fontSize: 14, fontWeight: 600 }}>
+            {reviewMode ? "Next unanswered →" : "Next →"}
           </button>
+        </div>
+      )}
+
+      {/* Bottom strip listing every unanswered question — appears once
+          Submit has been attempted and something's missing, disappears
+          once everything's fixed (fully derived from incompleteList, so
+          it reappears automatically if Submit is clicked again and
+          something's still missing). */}
+      {incompleteList.length > 0 && (
+        <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 40, background: "#fff", borderTop: "2px solid #e6a3a3", boxShadow: "0 -2px 12px rgba(0,0,0,0.10)", padding: "10px 20px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: "#a83232", marginRight: 4 }}>{incompleteList.length} unanswered — jump to:</span>
+          {incompleteList.map(({ id, idx }) => (
+            <button key={id} onClick={() => { setSaveMsg(""); setCurrentPage(idx); }}
+              style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 12, cursor: "pointer", border: `1.5px solid ${idx === currentPage ? "#3a7bd5" : "#e6a3a3"}`, background: idx === currentPage ? "#eef4ff" : "#fff", color: idx === currentPage ? "#3a7bd5" : "#a83232" }}>
+              Q{idx + 1}
+            </button>
+          ))}
         </div>
       )}
     </div>
