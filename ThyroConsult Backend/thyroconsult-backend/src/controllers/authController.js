@@ -9,10 +9,16 @@ const { validationResult } = require('express-validator');
 const logger = require('../utils/logger');
 
 // ─── Token Generation ──────────────────────────────────────
-const generateTokenPair = async (userId, role, ip, userAgent) => {
+// managedBy: null for a normal account's own token. When set, this token
+// represents a parent having switched into a relative/dependent profile
+// (see switchProfile below) — carried in the JWT so a subsequent switch
+// (e.g. from one child to another, or back to the parent) can be
+// authorized against the true root account without requiring the
+// parent to re-enter their password each time.
+const generateTokenPair = async (userId, role, ip, userAgent, managedBy = null) => {
   const sessionId = uuidv4();
   const accessToken = jwt.sign(
-    { sub: userId, role, sessionId },
+    { sub: userId, role, sessionId, ...(managedBy ? { managedBy } : {}) },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRES_IN || '15m', issuer: 'thyroconsult' }
   );
@@ -616,6 +622,164 @@ const logout = async (req, res) => {
   res.json({ message: 'Logged out successfully' });
 };
 
+// ═══════════════════════════════════════════════════════════
+// "Opinion for relative" — Option A (relative shares the parent's
+// login; no separate userid/password). See migration 038.
+// ═══════════════════════════════════════════════════════════
+
+// ─── Create a relative/dependent profile under the logged-in account ──────
+const registerRelative = async (req, res) => {
+  const parentId = req.user.id;
+  const { firstName, middleName, lastName, relation, dob, gender, bloodGroup, preferredLanguage } = req.body;
+
+  try {
+    // A managed profile cannot itself add further relatives — keeps the
+    // hierarchy exactly two levels (root account → dependents), matching
+    // how the switchProfile/managedBy JWT claim below is designed.
+    const parentCheck = await query(
+      'SELECT id, managed_by_patient_id, first_name, last_name FROM patients WHERE id = $1',
+      [parentId]
+    );
+    if (!parentCheck.rows.length) return res.status(404).json({ error: 'Account not found' });
+    if (parentCheck.rows[0].managed_by_patient_id) {
+      return res.status(403).json({ error: 'A relative profile cannot add further relatives — switch back to your own profile first' });
+    }
+
+    if (!firstName || !lastName || !relation || !dob || !gender) {
+      return res.status(400).json({ error: 'firstName, lastName, relation, dob and gender are required' });
+    }
+
+    const ageYears = (Date.now() - new Date(dob).getTime()) / (365.25 * 24 * 3600 * 1000);
+    const isMinor = ageYears < 18;
+
+    // Deliberately NO mobile/email/password — not even the parent's own.
+    // Sharing the same mobile_hash/email_hash across two rows would make
+    // login()'s `WHERE mobile_hash = $1 OR email_hash = $1` match
+    // ambiguously (it takes rows[0] with no tiebreak). This profile is
+    // reachable ONLY via switchProfile below, never direct login —
+    // matching "no separate userid/password" from the request.
+    const patientData = {
+      first_name: encryptPHI(firstName),
+      middle_name: middleName ? encryptPHI(middleName) : null,
+      last_name: encryptPHI(lastName),
+      dob: encryptPHI(dob),
+      dob_auto_calculated: false,
+      gender,
+      blood_group: bloodGroup || null,
+      country: 'IN',
+      managed_by_patient_id: parentId,
+      relation_to_manager: relation,
+      // Same guardian-consent model as any minor patient registered
+      // directly — reused, not reinvented. Adult relatives (e.g. a
+      // spouse) get no guardian fields, matching how an adult self-
+      // registering today has none either.
+      guardian_name: isMinor
+        ? encryptPHI(`${decryptPHI(parentCheck.rows[0].first_name)} ${decryptPHI(parentCheck.rows[0].last_name)}`)
+        : null,
+      guardian_relation: isMinor ? relation : null,
+      // Skips straight past the OTP/verification steps (2-3) of the
+      // normal wizard — nothing to verify since there's no independent
+      // contact info on this row at all.
+      registration_step: 5,
+      registration_complete: true,
+      preferred_language: preferredLanguage || 'en',
+    };
+
+    const cols = Object.keys(patientData);
+    const placeholders = cols.map((_, i) => `$${i + 1}`);
+    const result = await query(
+      `INSERT INTO patients(${cols.join(', ')}) VALUES(${placeholders.join(', ')}) RETURNING id, patient_code`,
+      Object.values(patientData)
+    );
+
+    logger.audit('RELATIVE_PROFILE_CREATED', {
+      userId: parentId, ip: req.ip, resourceId: result.rows[0].id,
+      detail: `relation=${relation}, isMinor=${isMinor}`,
+    });
+
+    res.status(201).json({
+      message: 'Relative profile created',
+      patientId: result.rows[0].id,
+      patientCode: result.rows[0].patient_code,
+      isMinor,
+      // Consent + photo are still mandatory — same rule as any minor/
+      // adult registration — but reuse the existing saveConsent/
+      // savePhoto endpoints directly against this new patientId rather
+      // than a parallel flow.
+      nextSteps: ['consent', 'photo'],
+    });
+  } catch (err) {
+    logger.error('registerRelative error', { error: err.message });
+    res.status(500).json({ error: 'Failed to create relative profile' });
+  }
+};
+
+// ─── List relatives managed by the logged-in account ───────────────────────
+const getMyRelatives = async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT id, patient_code, first_name, last_name, dob, gender, relation_to_manager
+       FROM patients WHERE managed_by_patient_id = $1 ORDER BY created_at ASC`,
+      [req.user.id]
+    );
+    const relatives = result.rows.map(r => ({
+      id: r.id,
+      patientCode: r.patient_code,
+      name: `${decryptPHI(r.first_name)} ${decryptPHI(r.last_name)}`,
+      dob: r.dob ? decryptPHI(r.dob) : null,
+      gender: r.gender,
+      relation: r.relation_to_manager,
+    }));
+    res.json({ relatives });
+  } catch (err) {
+    logger.error('getMyRelatives error', { error: err.message });
+    res.status(500).json({ error: 'Failed to list relatives' });
+  }
+};
+
+// ─── Switch the active session to a relative's profile (or back) ──────────
+// NOTE: depends on verifyToken populating req.user.managedBy from the JWT
+// payload — flagged for confirmation once that middleware is available;
+// most JWT-decode middleware assigns the full decoded payload to req.user,
+// which would already carry this through without any change there, but
+// this hasn't been confirmed against the real file yet.
+const switchProfile = async (req, res) => {
+  const { targetPatientId } = req.body;
+  if (!targetPatientId) return res.status(400).json({ error: 'targetPatientId is required' });
+
+  // The TRUE root account this session ultimately belongs to — either
+  // the currently logged-in id (if this is already the root's own
+  // token) or the managedBy claim (if already switched into a relative
+  // and now switching to a different one, or back to the root).
+  const rootPatientId = req.user.managedBy || req.user.id;
+
+  try {
+    if (targetPatientId === rootPatientId) {
+      const tokens = await generateTokenPair(rootPatientId, 'patient', req.ip, req.get('user-agent'));
+      return res.json({ ...tokens, patientId: rootPatientId, managedBy: null });
+    }
+
+    const target = await query(
+      'SELECT id, managed_by_patient_id FROM patients WHERE id = $1',
+      [targetPatientId]
+    );
+    if (!target.rows.length || target.rows[0].managed_by_patient_id !== rootPatientId) {
+      return res.status(403).json({ error: 'Not authorized to switch to this profile' });
+    }
+
+    const tokens = await generateTokenPair(targetPatientId, 'patient', req.ip, req.get('user-agent'), rootPatientId);
+
+    logger.audit('PROFILE_SWITCHED', {
+      userId: rootPatientId, ip: req.ip, resourceId: targetPatientId,
+    });
+
+    res.json({ ...tokens, patientId: targetPatientId, managedBy: rootPatientId });
+  } catch (err) {
+    logger.error('switchProfile error', { error: err.message });
+    res.status(500).json({ error: 'Failed to switch profile' });
+  }
+};
+
 module.exports = {
   registerPatientStep1,
   sendVerificationOTPs,
@@ -627,4 +791,7 @@ module.exports = {
   login,
   refreshToken,
   logout,
+  registerRelative,
+  getMyRelatives,
+  switchProfile,
 };

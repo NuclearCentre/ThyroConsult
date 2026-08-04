@@ -18,6 +18,16 @@ async function fetchLetterData(episodeId, doctorId) {
   // or otherwise use them raw in SQL. patients has no age/sex/phone
   // columns (real columns: dob/gender/mobile); doctors has no
   // "qualification" column (real column: qualifications, plural).
+  // NOTE: the original version of this query LEFT JOINed patients pg ON
+  // pg.id = p.guardian_patient_id — that column doesn't exist anywhere
+  // in this project's actual schema (checked against every migration
+  // and every other controller this session touches patients). The
+  // real, established pattern for a minor's guardian (confirmed via
+  // receiptController.js and the platform's minor-patient rules) is
+  // plain guardian_name/guardian_relationship text columns directly on
+  // the patient's own row — no join needed. Referencing a nonexistent
+  // column threw a Postgres error on every call, which is what
+  // "Failed to generate Advise Letter" actually was.
   const opResult = await db.query(
     `SELECT o.*,
             d.first_name  AS doc_first,
@@ -29,15 +39,14 @@ async function fetchLetterData(episodeId, doctorId) {
             p.dob, p.gender,
             p.mobile      AS pat_phone,
             p.email       AS pat_email,
-            pg.first_name AS guard_first,
-            pg.last_name  AS guard_last,
+            p.guardian_name,
+            p.guardian_relationship,
             pce.condition AS condition_type,
             pce.id        AS episode_id,
             pce.patient_id
      FROM opinions o
      JOIN doctors  d   ON d.id   = o.doctor_id
      JOIN patients p   ON p.id   = o.patient_id
-     LEFT JOIN patients pg ON pg.id = p.guardian_patient_id   -- if minor
      JOIN patient_condition_episodes pce ON pce.id = o.episode_id
      WHERE o.episode_id = $1
        AND o.status IN ('submitted', 'acknowledged')`,
@@ -55,8 +64,12 @@ async function fetchLetterData(episodeId, doctorId) {
   const patPhone   = row.pat_phone ? decryptPHI(row.pat_phone) : null;
   const patEmail   = row.pat_email ? decryptPHI(row.pat_email) : null;
   const patDob     = row.dob ? decryptPHI(row.dob) : null;
-  const guardFirst = row.guard_first ? decryptPHI(row.guard_first) : null;
-  const guardLast  = row.guard_last  ? decryptPHI(row.guard_last)  : null;
+  // guardian_name follows the same encrypted-PHI convention as every
+  // other name field in this codebase; guardian_relationship is a
+  // short categorical value (e.g. "mother") and, matching this
+  // project's own established convention for similar fields, isn't
+  // encrypted.
+  const guardianName = row.guardian_name ? decryptPHI(row.guardian_name) : null;
   const docFirst   = decryptPHI(row.doc_first);
   const docLast    = decryptPHI(row.doc_last);
 
@@ -67,7 +80,7 @@ async function fetchLetterData(episodeId, doctorId) {
       sex:          row.gender,
       phone:        patPhone,
       email:        patEmail,
-      guardianName: guardFirst ? `${guardFirst} ${guardLast}` : null,
+      guardianName: guardianName ? `${guardianName}${row.guardian_relationship ? ' (' + row.guardian_relationship + ')' : ''}` : null,
     },
     doctor: {
       name:               `${docFirst} ${docLast}`,

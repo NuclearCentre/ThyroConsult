@@ -655,6 +655,63 @@ const uploadPhoto = async (req, res) => {
   }
 };
 
+// ─── POST /patient/guardian-photo — guardian's photo for a minor ──────────
+// New requirement (not part of the original minor-patient rules this
+// codebase already had wired up) — a SEPARATE photo from the minor
+// patient's own (photo_path above, which stays the mainstay field shown
+// throughout the dashboard). This one is for documentation purposes
+// only: same capture/processing/encryption pipeline as uploadPhoto,
+// deliberately duplicated rather than parameterized, so the two can
+// never accidentally cross-write each other's column if one is edited
+// later. See migration 039.
+const uploadGuardianPhoto = async (req, res) => {
+  const patientId = req.user.id;
+
+  try {
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({ error: 'Guardian photo is required' });
+    }
+
+    const sharp = require('sharp');
+    const crypto = require('crypto');
+    const metadata = await sharp(req.file.buffer).metadata();
+    if (!['jpeg', 'png'].includes(metadata.format)) {
+      return res.status(400).json({ error: 'Only JPEG/PNG photos accepted' });
+    }
+
+    const processed = await sharp(req.file.buffer)
+      .resize(400, 400, { fit: 'cover', position: 'face' })
+      .jpeg({ quality: 85 })
+      .toBuffer();
+
+    const { encryptPhoto } = require('../utils/encryption');
+    const encrypted = encryptPhoto(processed);
+    const photoHash = crypto.createHash('sha256').update(processed).digest('hex');
+
+    const photoDir = path.join(process.env.UPLOAD_PATH || './uploads', 'photos');
+    if (!fs.existsSync(photoDir)) fs.mkdirSync(photoDir, { recursive: true });
+
+    const photoFilename = `${patientId}_guardian_${Date.now()}.enc`;
+    const photoPath = path.join(photoDir, photoFilename);
+    fs.writeFileSync(photoPath, JSON.stringify(encrypted));
+
+    await query(
+      `UPDATE patients SET guardian_photo_path = $1, guardian_photo_captured_at = NOW(), guardian_photo_hash = $2 WHERE id = $3`,
+      [encryptPHI(photoPath), photoHash, patientId]
+    );
+
+    logger.audit('GUARDIAN_PHOTO_UPDATED', {
+      userId: patientId, userRole: 'patient', ip: req.ip,
+      phiAccessed: true, detail: 'Guardian photo captured (documentation only)',
+    });
+
+    res.json({ message: 'Guardian photo saved' });
+  } catch (err) {
+    logger.error('Upload guardian photo error', { error: err.message });
+    res.status(500).json({ error: 'Failed to upload guardian photo' });
+  }
+};
+
 module.exports = {
   getPatient,
   updatePatient,
@@ -662,6 +719,7 @@ module.exports = {
   getConsents,
   saveConsents,
   uploadPhoto,
+  uploadGuardianPhoto,
   getDocuments,
   uploadDocument,
   downloadDocument,

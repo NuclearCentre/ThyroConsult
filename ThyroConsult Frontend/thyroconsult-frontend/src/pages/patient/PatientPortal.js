@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer, Legend } from 'recharts';
-import { patientAPI, receiptAPI, paymentAPI, conditionAPI } from '../../api';
+import { patientAPI, receiptAPI, paymentAPI, conditionAPI, authAPI } from '../../api';
 import { PatientSidebar } from '../../components/common/Sidebar';
 import { Badge, StatusBadge, EmptyState, Spinner, SectionHeader, SecureBadge } from '../../components/common/index';
 import { useAuth } from '../../context/AuthContext';
@@ -318,6 +318,10 @@ const MyConditions = ({ patient, onAddCondition, onResumeCondition, conditionsRe
               const c = CONDITION_COLOURS[ep.condition_type] || CONDITION_COLOURS[ep.condition] || CONDITION_COLOURS.hypothyroidism;
               const label = CONDITION_LABELS[ep.condition_type] || CONDITION_LABELS[ep.condition] || ep.condition;
               const isComplete = ep.questionnaire_status === 'completed' || ep.core_q_complete;
+              // Same 3-state model as ConditionsMiniList — see that
+              // component for why it's not just complete/incomplete.
+              const statusLabel = ep.patientStatusLabel || (isComplete ? 'submitted' : 'resume');
+              const opinionSought = statusLabel === 'opinion_sought';
               return (
                 <div key={ep.id} style={{ background:c.bg, border:`1px solid ${c.border}`, borderRadius:12, padding:'18px 20px' }}>
                   <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:10 }}>
@@ -340,24 +344,32 @@ const MyConditions = ({ patient, onAddCondition, onResumeCondition, conditionsRe
                   {/* In-progress episode: jump straight back into the questionnaire
                       at its saved page — no more re-running condition selection. */}
                   {!isComplete && (
-                    <button
-                      className="btn btn-primary btn-sm"
-                      style={{ marginTop: 10, width: '100%' }}
-                      onClick={() => onResumeCondition && onResumeCondition(ep)}
-                    >
-                      ▶ Resume
-                    </button>
+                    <>
+                      {ep.percentComplete != null && (
+                        <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 8 }}>
+                          {ep.percentComplete}% complete — {100 - ep.percentComplete}% still pending
+                        </div>
+                      )}
+                      <button
+                        className="btn btn-primary btn-sm"
+                        style={{ marginTop: 6, width: '100%' }}
+                        onClick={() => onResumeCondition && onResumeCondition(ep)}
+                      >
+                        ▶ Resume
+                      </button>
+                    </>
                   )}
 
-                  {/* Completed episode: clearly marked submitted, still opens
-                      the same status/opinion view as before on click. */}
+                  {/* Completed episode: label reflects whether the doctor
+                      has responded yet, still opens the same status/opinion
+                      view either way. */}
                   {isComplete && (
                     <button
                       className="btn btn-ghost btn-sm"
                       style={{ marginTop: 10, width: '100%', color: 'var(--teal-700)' }}
                       onClick={() => setStatusEpisodeId(ep.id)}
                     >
-                      ✓ Submitted — View status
+                      {opinionSought ? '📄 Opinion sought — View' : '✓ Submitted — View status'}
                     </button>
                   )}
                 </div>
@@ -383,33 +395,384 @@ const MyConditions = ({ patient, onAddCondition, onResumeCondition, conditionsRe
 // than buried in settings, and closer to how CoWIN/Ayushman Bharat-style
 // government health portals treat language as a first-class, always-
 // visible choice for a multilingual health audience.
-const PatientLayout = ({ children, patient, onLanguageChange, keepAsDefault, onKeepAsDefaultChange, languageError }) => (
-  <div className="app-shell">
-    <PatientSidebar patient={patient} />
-    <main className="main-area">
-      <div style={{
-        display: 'flex', flexDirection: 'column', alignItems: 'flex-end',
-        gap: 4, padding: '10px 20px', borderBottom: '1px solid var(--border)',
-      }}>
-        <LanguagePicker
-          value={patient?.preferredLanguage || 'en'}
-          onChange={onLanguageChange}
-        />
-        <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-tertiary)', cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={keepAsDefault}
-            onChange={e => onKeepAsDefaultChange(e.target.checked)}
-            style={{ accentColor: 'var(--teal-400)', width: 13, height: 13 }}
+const PatientLayout = ({ children, patient, onLanguageChange, keepAsDefault, onKeepAsDefaultChange, languageError }) => {
+  const [showAddRelative, setShowAddRelative] = useState(false);
+  const [relativeResult, setRelativeResult] = useState(null);
+  // A managed relative profile can't create further relatives — matches
+  // registerRelative's own backend check — so the sidebar entry point
+  // only appears on the root account, same restriction RelativeSwitcher
+  // already applies to its own switch-list.
+  const isManagedProfile = !!getManagedByFromToken();
+
+  return (
+    <div className="app-shell">
+      <PatientSidebar
+        patient={patient}
+        onAddRelative={isManagedProfile ? undefined : () => setShowAddRelative(true)}
+      />
+      <main className="main-area">
+        <div style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'flex-end',
+          gap: 4, padding: '10px 20px', borderBottom: '1px solid var(--border)',
+        }}>
+          <LanguagePicker
+            value={patient?.preferredLanguage || 'en'}
+            onChange={onLanguageChange}
           />
-          Keep as default
-        </label>
-        {languageError && <div style={{ fontSize: 11, color: 'var(--red-600)' }}>{languageError}</div>}
+          <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-tertiary)', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={keepAsDefault}
+              onChange={e => onKeepAsDefaultChange(e.target.checked)}
+              style={{ accentColor: 'var(--teal-400)', width: 13, height: 13 }}
+            />
+            Keep as default
+          </label>
+          {languageError && <div style={{ fontSize: 11, color: 'var(--red-600)' }}>{languageError}</div>}
+        </div>
+        <div className="page-content">{children}</div>
+      </main>
+      {/* Rendered here (not inside Dashboard) so "+ Opinion for relative"
+          works identically from every page, not just the Dashboard tab. */}
+      {showAddRelative && (
+        <AddRelativeModal
+          onClose={() => setShowAddRelative(false)}
+          onCreated={(res) => { setShowAddRelative(false); setRelativeResult(res); }}
+        />
+      )}
+      {relativeResult && (
+        <RelativeOnboardingFlow result={relativeResult} onClose={() => { setRelativeResult(null); window.location.reload(); }} />
+      )}
+    </div>
+  );
+};
+
+// ─── "Opinion for relative" — profile switcher + creation modal ───────────
+// Option A: relative shares this account's login (no separate userid/
+// password) — see authController.js migration 038.
+const AddRelativeModal = ({ onClose, onCreated }) => {
+  const [form, setForm] = useState({ firstName: '', middleName: '', lastName: '', relation: '', dob: '', gender: '', bloodGroup: '' });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const set = key => e => setForm(p => ({ ...p, [key]: e.target.value }));
+
+  const handleSubmit = async () => {
+    if (!form.firstName || !form.lastName || !form.relation || !form.dob || !form.gender) {
+      setError('First name, last name, relation, date of birth and gender are all required.');
+      return;
+    }
+    setSaving(true); setError('');
+    try {
+      const res = await authAPI.registerRelative(form);
+      onCreated(res); // { patientId, patientCode, isMinor, nextSteps }
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not create relative profile. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.45)', zIndex:1000, display:'flex', alignItems:'flex-start', justifyContent:'center', overflowY:'auto', padding:'40px 16px' }}>
+      <div style={{ background:'var(--surface)', borderRadius:16, width:'100%', maxWidth:480, boxShadow:'0 8px 40px rgba(0,0,0,0.18)' }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'20px 28px', borderBottom:'1px solid var(--border)' }}>
+          <div style={{ fontFamily:'var(--font-display)', fontSize:17, fontWeight:600 }}>👪 Opinion for a relative</div>
+          <button onClick={onClose} style={{ background:'none', border:'none', fontSize:22, cursor:'pointer', color:'var(--text-tertiary)', lineHeight:1 }}>×</button>
+        </div>
+        <div style={{ padding:'24px 28px' }}>
+          <p style={{ fontSize:13, color:'var(--text-secondary)', marginBottom:16 }}>
+            Add a family member's details below. They'll be reachable from your dashboard's profile switcher — no separate login needed.
+          </p>
+          {error && <div style={{ fontSize:13, color:'var(--red-700, #991b1b)', marginBottom:12 }}>⚠️ {error}</div>}
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:12 }}>
+            <div>
+              <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>First name *</label>
+              <input value={form.firstName} onChange={set('firstName')} className="input" style={{ width:'100%' }} />
+            </div>
+            <div>
+              <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>Middle name</label>
+              <input value={form.middleName} onChange={set('middleName')} className="input" style={{ width:'100%' }} />
+            </div>
+          </div>
+          <div style={{ marginBottom:12 }}>
+            <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>Last name *</label>
+            <input value={form.lastName} onChange={set('lastName')} className="input" style={{ width:'100%' }} />
+          </div>
+          <div style={{ marginBottom:12 }}>
+            <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>Relation to you *</label>
+            <select value={form.relation} onChange={set('relation')} className="input" style={{ width:'100%' }}>
+              <option value="">Select...</option>
+              <option value="child">Child</option>
+              <option value="spouse">Spouse</option>
+              <option value="parent">Parent</option>
+              <option value="sibling">Sibling</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:12 }}>
+            <div>
+              <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>Date of birth *</label>
+              <input type="date" value={form.dob} onChange={set('dob')} className="input" style={{ width:'100%' }} max={new Date().toISOString().split('T')[0]} />
+            </div>
+            <div>
+              <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>Gender *</label>
+              <select value={form.gender} onChange={set('gender')} className="input" style={{ width:'100%' }}>
+                <option value="">Select...</option>
+                <option value="male">Male</option>
+                <option value="female">Female</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+          </div>
+          <div style={{ marginBottom:20 }}>
+            <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>Blood group</label>
+            <select value={form.bloodGroup} onChange={set('bloodGroup')} className="input" style={{ width:'100%' }}>
+              <option value="">Unknown</option>
+              {['A+','A-','B+','B-','AB+','AB-','O+','O-'].map(bg => <option key={bg} value={bg}>{bg}</option>)}
+            </select>
+          </div>
+          <button className="btn btn-primary" style={{ width:'100%' }} onClick={handleSubmit} disabled={saving}>
+            {saving ? 'Creating...' : 'Create profile'}
+          </button>
+        </div>
       </div>
-      <div className="page-content">{children}</div>
-    </main>
-  </div>
-);
+    </div>
+  );
+};
+
+// Shown right after a relative profile is created. Switches into the new
+// profile (uploadPhoto/saveConsents are both scoped to req.user.id on the
+// backend, so this has to happen first), then captures the mandatory live
+// photo and consents using patientController's real, already-working
+// endpoints — not placeholder UI. The one piece still genuinely missing:
+// a SEPARATE guardian photo for minors. Checked patientController.js and
+// authController.js thoroughly — there's no dedicated column or document
+// category for it anywhere in either file, only ever a single photo_path
+// per patient row. Rather than invent a storage mechanism that might
+// duplicate wherever it actually already lives, this flow captures the
+// relative's own photo (verified working) and clearly flags the guardian
+// photo as unresolved instead of silently skipping it.
+const RelativeOnboardingFlow = ({ result, onClose }) => {
+  // switching | photo | guardianPhoto | consent | done
+  // guardianPhoto only appears when result.isMinor — an adult relative's
+  // flow is unchanged: switching -> photo -> consent -> done.
+  const [step, setStep] = useState('switching');
+  const [error, setError] = useState('');
+  const videoRef = React.useRef(null);
+  const canvasRef = React.useRef(null);
+  const streamRef = React.useRef(null);
+  const [captured, setCaptured] = useState(null); // data URL preview
+  const [uploading, setUploading] = useState(false);
+  const [consents, setConsents] = useState({ treatment: false, data_privacy: false, telemedicine: false });
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await authAPI.switchProfile(result.patientId);
+        authAPI.setTokens(res.accessToken, res.refreshToken);
+        setStep('photo');
+      } catch (err) {
+        setError('Could not switch to the new profile. Please try again from the profile switcher.');
+      }
+    })();
+  }, [result.patientId]);
+
+  const isPhotoStep = step === 'photo' || step === 'guardianPhoto';
+  useEffect(() => {
+    if (!isPhotoStep) return;
+    navigator.mediaDevices?.getUserMedia({ video: { facingMode: 'user' } })
+      .then(stream => {
+        streamRef.current = stream;
+        if (videoRef.current) videoRef.current.srcObject = stream;
+      })
+      .catch(() => setError('Could not access the camera. Check browser permissions and try again.'));
+    return () => streamRef.current?.getTracks().forEach(t => t.stop());
+  }, [step]);
+
+  const capturePhoto = () => {
+    const video = videoRef.current, canvas = canvasRef.current;
+    if (!video || !canvas) return;
+    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+    setCaptured(canvas.toDataURL('image/jpeg', 0.9));
+  };
+
+  // Shared by both photo steps — which upload function and which step
+  // comes next differ, everything else about capture is identical.
+  const confirmPhoto = async () => {
+    setUploading(true); setError('');
+    try {
+      const blob = await (await fetch(captured)).blob();
+      const formData = new FormData();
+      if (step === 'photo') {
+        formData.append('photo', blob, 'relative-photo.jpg');
+        await patientAPI.uploadPhoto(formData);
+      } else {
+        formData.append('photo', blob, 'guardian-photo.jpg');
+        await patientAPI.uploadGuardianPhoto(formData);
+      }
+      streamRef.current?.getTracks().forEach(t => t.stop());
+      setCaptured(null);
+      if (step === 'photo' && result.isMinor) setStep('guardianPhoto');
+      else setStep('consent');
+    } catch (err) {
+      setError((step === 'photo' ? 'Photo' : 'Guardian photo') + ' upload failed. Please try again.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const allConsented = Object.values(consents).every(Boolean);
+  const submitConsents = async () => {
+    setUploading(true); setError('');
+    try {
+      for (const [type, agreed] of Object.entries(consents)) {
+        await patientAPI.saveConsents(type, agreed, null);
+      }
+      setStep('done');
+    } catch (err) {
+      setError('Could not save consents. Please try again.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.45)', zIndex:1000, display:'flex', alignItems:'center', justifyContent:'center', padding:16 }}>
+      <div style={{ background:'var(--surface)', borderRadius:16, width:'100%', maxWidth:440, padding:'28px', textAlign:'center' }}>
+        {error && <div style={{ fontSize:13, color:'var(--red-700, #991b1b)', marginBottom:16 }}>⚠️ {error}</div>}
+
+        {step === 'switching' && <div style={{ padding: 24 }}><Spinner /> Setting up {result.patientCode}'s profile...</div>}
+
+        {isPhotoStep && (
+          <>
+            <div style={{ fontFamily:'var(--font-display)', fontSize:16, fontWeight:600, marginBottom:12 }}>
+              {step === 'photo' ? '📷 Live photo' : "📷 Guardian's photo"}
+            </div>
+            {step === 'guardianPhoto' && (
+              <div style={{ fontSize:12, color:'var(--text-secondary)', background:'var(--gray-100)', borderRadius:8, padding:10, marginBottom:12, textAlign:'left' }}>
+                For documentation purposes only — the child's own photo just captured remains the primary record shown throughout the dashboard.
+              </div>
+            )}
+            {!captured ? (
+              <>
+                <video ref={videoRef} autoPlay playsInline style={{ width:'100%', borderRadius:8, marginBottom:12, background:'#000' }} />
+                <button className="btn btn-primary" style={{ width:'100%' }} onClick={capturePhoto}>Capture</button>
+              </>
+            ) : (
+              <>
+                <img src={captured} alt="Captured" style={{ width:'100%', borderRadius:8, marginBottom:12 }} />
+                <div style={{ display:'flex', gap:8 }}>
+                  <button className="btn btn-ghost" style={{ flex:1 }} onClick={() => setCaptured(null)} disabled={uploading}>Retake</button>
+                  <button className="btn btn-primary" style={{ flex:1 }} onClick={confirmPhoto} disabled={uploading}>{uploading ? 'Uploading...' : 'Confirm'}</button>
+                </div>
+              </>
+            )}
+            <canvas ref={canvasRef} style={{ display:'none' }} />
+          </>
+        )}
+
+        {step === 'consent' && (
+          <>
+            <div style={{ fontFamily:'var(--font-display)', fontSize:16, fontWeight:600, marginBottom:12 }}>Consent</div>
+            <div style={{ fontSize:11, color:'var(--text-tertiary)', marginBottom:12, textAlign:'left' }}>
+              Placeholder labels below — the actual legal consent text used during normal registration should be substituted here once available, rather than the short descriptions shown.
+            </div>
+            {[
+              ['treatment', 'I consent to online opinion for treatment purposes'],
+              ['data_privacy', 'I consent to data privacy terms'],
+              ['telemedicine', 'I consent to telemedicine/online consultation terms'],
+            ].map(([type, label]) => (
+              <label key={type} style={{ display:'flex', alignItems:'flex-start', gap:8, marginBottom:10, fontSize:13, textAlign:'left', cursor:'pointer' }}>
+                <input type="checkbox" checked={consents[type]} onChange={e => setConsents(p => ({ ...p, [type]: e.target.checked }))} style={{ marginTop:2 }} />
+                {label}
+              </label>
+            ))}
+            <button className="btn btn-primary" style={{ width:'100%', marginTop:8 }} disabled={!allConsented || uploading} onClick={submitConsents}>
+              {uploading ? 'Saving...' : 'Confirm consent'}
+            </button>
+          </>
+        )}
+
+        {step === 'done' && (
+          <>
+            <div style={{ fontSize:36, marginBottom:12 }}>✅</div>
+            <div style={{ fontFamily:'var(--font-display)', fontSize:16, fontWeight:600, marginBottom:8 }}>{result.patientCode} is ready</div>
+            <div style={{ fontSize:13, color:'var(--text-secondary)', marginBottom:20 }}>
+              You're now viewing as {result.patientCode}. Add their condition to begin, or switch back to your own profile from the dashboard.
+            </div>
+            <button className="btn btn-primary" style={{ width:'100%' }} onClick={onClose}>Continue</button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// Decoded directly from the current JWT rather than assumed to be part
+// of whatever patientAPI.getProfile() returns — that backend endpoint
+// isn't something this session has visibility into, and the managedBy
+// claim is guaranteed to be accurate here since it's the actual token
+// in use, not a value that could drift from it.
+function getManagedByFromToken() {
+  try {
+    const token = authAPI.getToken();
+    if (!token) return null;
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    return payload.managedBy || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+const RelativeSwitcher = ({ patient, onSwitched }) => {
+  const [relatives, setRelatives] = useState([]);
+  const [switching, setSwitching] = useState(false);
+  const managedBy = getManagedByFromToken();
+
+  const loadRelatives = () => {
+    // A profile that's itself a managed relative has no relatives of its
+    // own (registerRelative's backend check already forbids creating one
+    // from here) — skip the fetch entirely rather than show an empty list.
+    if (managedBy) return;
+    authAPI.getRelatives().then(r => setRelatives(r.relatives || [])).catch(() => {});
+  };
+  useEffect(loadRelatives, [patient]);
+
+  const doSwitch = async (targetPatientId) => {
+    setSwitching(true);
+    try {
+      const res = await authAPI.switchProfile(targetPatientId);
+      authAPI.setTokens(res.accessToken, res.refreshToken);
+      // Simplest reliable way to get every other component in the portal
+      // (episodes, opinions, invoices, all keyed off the old patient id)
+      // to refetch cleanly for the new profile, rather than manually
+      // resetting state scattered across this whole file.
+      window.location.reload();
+    } catch (err) {
+      setSwitching(false);
+    }
+  };
+
+  // Nothing to show at all if there are no relatives to switch to and
+  // this isn't itself a managed profile (nothing to switch "back" from).
+  if (!managedBy && relatives.length === 0) return null;
+
+  return (
+    <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+      {managedBy && (
+        <button className="btn btn-ghost btn-sm" disabled={switching} onClick={() => doSwitch(managedBy)}>
+          ← Back to my profile
+        </button>
+      )}
+      {!managedBy && relatives.map(r => (
+        <button key={r.id} className="btn btn-ghost btn-sm" disabled={switching} onClick={() => doSwitch(r.id)}>
+          👤 {r.name} ({r.relation})
+        </button>
+      ))}
+    </div>
+  );
+};
 
 // ─── Dashboard overview ────────────────────────────────────
 const Dashboard = ({ patient, opinions, invoices, onAddCondition, onResumeCondition, conditionsRefreshKey }) => {
@@ -430,6 +793,10 @@ const Dashboard = ({ patient, opinions, invoices, onAddCondition, onResumeCondit
         subtitle={new Date().toLocaleDateString('en-IN', { weekday:'long', year:'numeric', month:'long', day:'numeric' })}
         action={<SecureBadge />}
       />
+
+      <div style={{ marginBottom: 16 }}>
+        <RelativeSwitcher patient={patient} />
+      </div>
 
       <div className="stat-grid">
         <div className="stat-card">
@@ -695,17 +1062,32 @@ const ConditionsMiniList = ({ patientId, onResumeCondition, conditionsRefreshKey
         {episodes.map(ep => {
           const c = CONDITION_COLOURS[ep.condition_type] || CONDITION_COLOURS[ep.condition] || CONDITION_COLOURS.hypothyroidism;
           const label = CONDITION_LABELS[ep.condition_type] || CONDITION_LABELS[ep.condition] || ep.condition;
-          const isComplete = ep.questionnaire_status === 'completed';
+          // Three real states now, not just complete/incomplete — matches
+          // what conditionController.getEpisodes actually computes:
+          // 'resume' (questionnaire incomplete), 'submitted' (complete,
+          // opinion not ready yet), 'opinion_sought' (doctor has responded).
+          const statusLabel = ep.patientStatusLabel || (ep.questionnaire_status === 'completed' ? 'submitted' : 'resume');
+          const isResuming = statusLabel === 'resume';
+          const badgeText = statusLabel === 'opinion_sought' ? '· 📄 Opinion sought'
+            : statusLabel === 'submitted' ? '· ✓ Submitted'
+            : '· Resume';
           return (
             <button
               key={ep.id}
               // Direct action, same as the buttons on the full My Conditions
               // page — no more navigating to a page that just asks again.
-              onClick={() => isComplete ? setStatusEpisodeId(ep.id) : (onResumeCondition && onResumeCondition(ep))}
-              title={isComplete ? 'View status / opinion' : 'Resume questionnaire'}
-              style={{ background:c.bg, border:`1px solid ${c.border}`, color:c.text, borderRadius:20, padding:'4px 12px', fontSize:12, fontWeight:500, cursor:'pointer' }}
+              onClick={() => isResuming ? (onResumeCondition && onResumeCondition(ep)) : setStatusEpisodeId(ep.id)}
+              title={isResuming ? 'Resume questionnaire' : 'View status / opinion'}
+              style={{ background:c.bg, border:`1px solid ${c.border}`, color:c.text, borderRadius:20, padding:'4px 12px', fontSize:12, fontWeight:500, cursor:'pointer', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}
             >
-              {c.icon} {label} {isComplete ? '· ✓ Submitted' : '· Resume'}
+              <span>{c.icon} {label} {badgeText}</span>
+              {/* Only shown while genuinely in-progress — percentComplete is
+                  null until the patient has answered at least one question
+                  (first autosave), and null for conditions other than
+                  hypothyroidism until Hyper/TC/Nodule report it the same way. */}
+              {isResuming && ep.percentComplete != null && (
+                <span style={{ fontSize: 10, opacity: 0.75, fontWeight: 400 }}>{ep.percentComplete}% complete</span>
+              )}
             </button>
           );
         })}

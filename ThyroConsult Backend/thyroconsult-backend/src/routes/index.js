@@ -20,6 +20,7 @@ const paymentController      = require('../controllers/paymentController');
 const followUpController     = require('../controllers/followUpController');
 const physicianController    = require('../controllers/physicianController');
 const receiptController      = require('../controllers/receiptController');
+const questionnaireReportController = require('../controllers/questionnaireReportController');
 const opinionController      = require('../controllers/opinionController');
 const adviseLetterController = require('../controllers/adviseLetterController');
 
@@ -46,6 +47,12 @@ router.post('/auth/login',              authLimiter, authController.login); // u
 router.post('/auth/refresh',            authLimiter, authController.refreshToken);
 router.post('/auth/logout',             verifyToken, authController.logout);
 
+// "Opinion for relative" (Option A) — relative shares the parent's login,
+// no separate userid/password. See migration 038.
+router.post('/auth/relatives',          verifyToken, requireRole('patient'), authController.registerRelative);
+router.get ('/auth/relatives',          verifyToken, requireRole('patient'), authController.getMyRelatives);
+router.post('/auth/switch-profile',     verifyToken, requireRole('patient'), authController.switchProfile);
+
 // Public doctor list for patient doctor-selection (registration Step 5) —
 // ADDED. No verifyToken: the rest of the registration wizard (Step 1-5,
 // see /auth/patient/* above) is unauthenticated too, patientId is passed
@@ -67,6 +74,11 @@ router.post('/patient/photo',
   verifyToken, requireRole('patient'),
   uploadLimiter, uploadPhoto.single('photo'), handleUploadError,
   patientController.uploadPhoto);
+// Separate guardian photo, documentation purposes only — see migration 039.
+router.post('/patient/guardian-photo',
+  verifyToken, requireRole('patient'),
+  uploadLimiter, uploadPhoto.single('photo'), handleUploadError,
+  patientController.uploadGuardianPhoto);
 
 router.get ('/patient/consents',
   verifyToken, requireRole('patient'), patientController.getConsents);
@@ -370,6 +382,9 @@ router.get ('/physician/followup/:episodeId',
   verifyToken, requireRole('doctor'), physicianController.getFollowUpVisit);
 router.post('/physician/followup/:episodeId/:visitId/review',
   verifyToken, requireRole('doctor'), sessionTimeout, physicianController.reviewFollowUpVisit);
+// PILOT (item 3) — compiled question-by-question PDF, Hypo only for now.
+router.get('/physician/episode/:episodeId/questionnaire-report',
+  verifyToken, requireRole('doctor'), questionnaireReportController.downloadQuestionnaireReport);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DOCTOR (appointments)

@@ -422,7 +422,7 @@ export default function OpinionWriter({ episodeId, existingOpinion, questionnair
     setSavedMsg('');
     try {
       if (isAmending) {
-        await physicianAPI.amendOpinion(existingOpinion.opinionId, form);
+        await physicianAPI.amendOpinion(existingOpinion.id, form);
         setSavedMsg('Amendment saved.');
       } else {
         await physicianAPI.saveDraftOpinion(episodeId, form);

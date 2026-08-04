@@ -151,6 +151,18 @@ const HypoField = ({ label, hint, children }) => (
 // only the minimum is fixed, so nothing is cut off.
 const HYPO_OPTION_MIN_HEIGHT = 40;
 
+// Applied as minHeight (not fixed height) to every question page's content
+// box, so Previous/Next sit at a consistent vertical position across most
+// pages. Deliberately calibrated to F23 (Wrists/Hands) with all three
+// symptoms set to "No" — just the three label+radio rows, no expanded
+// side/duration sub-blocks. Pages with dropdowns, medication blocks, or
+// F23 itself with any symptom set to "Yes" are expected to exceed this
+// and push the buttons lower — that's accepted, not a bug.
+//
+// This is a real value, measured directly via DevTools' Computed panel
+// on F23 (collapsed, all three "No") — not an analytical estimate.
+const HYPO_PAGE_MIN_HEIGHT = 328;
+
 const HypoRadioGroup = ({ options, value, onChange, horizontal, noMargin }) => (
   <div data-hyporeq-type="select" data-hyporeq-filled={value ? 'true' : 'false'}
     style={{ display: 'flex', flexDirection: horizontal ? 'row' : 'column', flexWrap: 'wrap', gap: 8, marginBottom: noMargin ? 0 : 12 }}>
@@ -448,16 +460,34 @@ const HypoLmpField = ({ lmpDate, lmpApproxWeeks, lmpUnknown, onChange }) => {
           remember" is checked so the patient can still see/toggle back
           to it without losing their place. */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', opacity: lmpUnknown ? 0.4 : 1, pointerEvents: lmpUnknown ? 'none' : 'auto', transition: 'opacity 0.15s' }}>
-        <select value={day} onChange={e => setDatePart(parseInt(e.target.value), month === '' ? 0 : month, year || new Date().getFullYear())}
-          style={{ padding: '8px 6px', fontSize: 13, borderRadius: 6, border: '1px solid var(--border)' }}>
-          <option value="">Day</option>
-          {Array.from({ length: 31 }, (_, i) => i + 1).map(d => <option key={d} value={d}>{d}</option>)}
-        </select>
-        <select value={month} onChange={e => setDatePart(day || 1, parseInt(e.target.value), year || new Date().getFullYear())}
-          style={{ padding: '8px 6px', fontSize: 13, borderRadius: 6, border: '1px solid var(--border)' }}>
-          <option value="">Month</option>
-          {HYPO_MONTHS.map((m, i) => <option key={m} value={i}>{m}</option>)}
-        </select>
+        {(() => {
+          const today = new Date();
+          const isCurrentYear = year === today.getFullYear();
+          // "Later than today" only applies to the CURRENT year — any
+          // earlier year has no restriction, since every month/day in a
+          // past year is necessarily in the past too.
+          const maxMonth = isCurrentYear ? today.getMonth() : 11;
+          const isCurrentYearMonth = isCurrentYear && month === today.getMonth();
+          const maxDay = isCurrentYearMonth ? today.getDate() : 31;
+          return (
+            <>
+              <select value={day} onChange={e => setDatePart(parseInt(e.target.value), month === '' ? 0 : month, year || new Date().getFullYear())}
+                style={{ padding: '8px 6px', fontSize: 13, borderRadius: 6, border: '1px solid var(--border)' }}>
+                <option value="">Day</option>
+                {Array.from({ length: 31 }, (_, i) => i + 1).map(d => (
+                  <option key={d} value={d} disabled={d > maxDay} style={d > maxDay ? { color: '#ccc' } : undefined}>{d}</option>
+                ))}
+              </select>
+              <select value={month} onChange={e => setDatePart(day || 1, parseInt(e.target.value), year || new Date().getFullYear())}
+                style={{ padding: '8px 6px', fontSize: 13, borderRadius: 6, border: '1px solid var(--border)' }}>
+                <option value="">Month</option>
+                {HYPO_MONTHS.map((m, i) => (
+                  <option key={m} value={i} disabled={i > maxMonth} style={i > maxMonth ? { color: '#ccc' } : undefined}>{m}</option>
+                ))}
+              </select>
+            </>
+          );
+        })()}
         <div style={{ position: 'relative' }}>
           <button type="button" onClick={() => setShowYearGrid(s => !s)}
             style={{ padding: '8px 12px', fontSize: 13, borderRadius: 6, border: '1px solid var(--border)', background: '#fff', cursor: 'pointer', minWidth: 70 }}>
@@ -769,9 +799,19 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
   const [savedPageId, setSavedPageId] = useState(null); // page id restored from a previous session
   const [resumedFrom, setResumedFrom] = useState(false); // jumped to it yet?
   const [lastSavedAt, setLastSavedAt] = useState(null);
+  // Resets on every page change — without this, lastSavedAt stays truthy
+  // forever once the FIRST autosave anywhere in the session fires, so
+  // "✓ Saved" kept showing on brand-new, still-blank pages the patient
+  // hadn't touched yet, since it was really reporting "something was
+  // saved at some point," not "this page is saved."
+  useEffect(() => { setLastSavedAt(null); }, [currentPage]);
 
   // ── Form state ────────────────────────────────────────
-  const [f, setF] = useState({
+  // Factory (not just an inline literal) so the exact same blank shape
+  // can be reused to hard-reset state when patientId/episodeId changes —
+  // see the loadedForRef guard below. Reusing this rather than retyping
+  // a second copy of the shape guarantees the two can never drift apart.
+  const getInitialFormState = () => ({
     // A — Demographics
     dob: '', ageYears: '', ageMonths: '', sex: '', maritalStatus: '', occupation: '', occupationOther: '',
 
@@ -864,12 +904,25 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
     familyCancer: '', familyCancerTypes: [], familyCancerRelative: '',
     additionalNotes: '',
   });
+  const [f, setF] = useState(getInitialFormState);
 
   const set = key => val => setF(p => ({ ...p, [key]: val }));
 
   const [draftLoadError, setDraftLoadError] = useState('');
+  // Tracks which (patientId, episodeId) the most recently STARTED fetch
+  // was for. If a fetch resolves after a newer one has already started
+  // (e.g. the patient/episode changed while the old request was still
+  // in flight), its callback checks this and bails out instead of
+  // overwriting the newer, correct state — this is what "resume briefly
+  // shows the right thing, then reverts to the previous patient's
+  // unanswered questions" actually was: the OLD patient's slow-resolving
+  // fetch landing after the new one and winning the race.
+  const loadRequestRef = React.useRef(null);
+  const loadedForRef = React.useRef(null);
   const loadDraft = React.useCallback(() => {
     if (!(patientId && episodeId)) return;
+    const requestKey = `${patientId}::${episodeId}`;
+    loadRequestRef.current = requestKey;
     setDraftLoadError('');
     // NOTE: backend returns the row flat (res.json(result.rows[0] ||
     // null)), not wrapped in { data }. Reading res.data here meant
@@ -878,12 +931,20 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
     // no-op. Fixed to read the response directly.
     conditionAPI.getHypoQ(patientId, episodeId)
       .then(res => {
+        if (loadRequestRef.current !== requestKey) return; // stale — a newer request has since started
         if (res && Object.keys(res).length) {
-          setF(p => ({ ...p, ...mapDbToForm(res) }));
+          // Merge onto a FRESH blank state, not onto whatever's
+          // currently in `f` — by this point that may still be a
+          // previous patient's leftover answers (reset happens in the
+          // effect below, but only when the patient/episode actually
+          // changes; this fetch's own resolution is a second, later
+          // point where staleness could otherwise leak back in).
+          setF(p => ({ ...getInitialFormState(), ...mapDbToForm(res) }));
           if (res.current_page) setSavedPageId(res.current_page);
         }
       })
       .catch(() => {
+        if (loadRequestRef.current !== requestKey) return; // stale
         // Genuinely silent here would risk the patient thinking their
         // previously-saved answers were lost and re-entering everything
         // from scratch — surface it plainly instead, with a retry.
@@ -891,12 +952,59 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
       });
   }, [patientId, episodeId]);
 
-  // ── Pre-fill from patient profile ─────────────────────
+  // ── Reset + load on genuine patient/episode identity change ─────────────
+  // Deliberately does NOT depend on patientGender/patientDob (see the
+  // separate prefill effect below) — this used to be one combined effect,
+  // which meant ANY change to gender/dob re-ran loadDraft() too. That's a
+  // real, serious bug: if PatientPortal.js fetches the patient's profile
+  // asynchronously (very common — mount first, profile arrives a moment
+  // later), gender/dob transition from undefined to real values AFTER
+  // the questionnaire has already started, re-firing this effect and
+  // silently overwriting whatever's currently in memory with whatever
+  // was last saved to the server — discarding an answer if it happened
+  // to still be sitting in the autosave's 1.5s debounce window. This is
+  // a fully plausible explanation for an answer "disappearing" despite
+  // genuinely having been entered.
   useEffect(() => {
+    const key = `${patientId}::${episodeId}`;
+    if (loadedForRef.current !== null && loadedForRef.current !== key) {
+      // Different patient or episode than whatever this instance last
+      // loaded — hard-reset to blank BEFORE loading the new draft, not
+      // just relying on the merge above. Without this, briefly (before
+      // the new fetch resolves) the screen would show the previous
+      // patient's answers and completion/review state.
+      setF(getInitialFormState());
+      setCurrentPage(0);
+      setReviewMode(false);
+      setSavedPageId(null);
+      setResumedFrom(false);
+    }
+    loadedForRef.current = key;
+    // Applied here unconditionally (not left to the separate prefill
+    // effects below) so a genuine patient switch always re-syncs sex/
+    // dob immediately, even in the edge case where the new patient's
+    // gender/dob prop value happens to equal the previous patient's
+    // (e.g. both male) — in that case the separate effects' own
+    // dependency arrays wouldn't see a change and wouldn't re-fire on
+    // their own, which is exactly the gap that let a previous female
+    // patient's sex value survive into a new male patient's session.
     if (patientGender) setF(p => ({ ...p, sex: patientGender }));
     if (patientDob) setF(p => ({ ...p, dob: patientDob }));
     loadDraft();
-  }, [patientId, episodeId, patientGender, patientDob, loadDraft]);
+  }, [patientId, episodeId, loadDraft]);
+
+  // ── Pre-fill sex/dob from patient profile (independent updates) ──────
+  // Covers the OTHER case — gender/dob arriving or changing without a
+  // patient/episode switch (e.g. profile data loading asynchronously
+  // after this component already mounted). The identity-change effect
+  // above covers switches; this one covers everything else. Between the
+  // two, sex/dob should never be missing OR stale.
+  useEffect(() => {
+    if (patientGender) setF(p => ({ ...p, sex: patientGender }));
+  }, [patientGender]);
+  useEffect(() => {
+    if (patientDob) setF(p => ({ ...p, dob: patientDob }));
+  }, [patientDob]);
 
   // ── Rehydrate uploaded reports on every load — resume AND post-submit ──
   // Uploaded files are never deleted (see patientController.uploadDocument
@@ -956,14 +1064,22 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
   }, [episodeId]);
 
   // ── Reproductive gate helpers ─────────────────────────
-  const isMale = f.sex === 'male';
+  // Deliberately its own explicit check, NOT !isMale (f.sex !== 'male').
+  // A blank/not-yet-set f.sex (e.g. briefly, before the prefill-from-
+  // profile effect has run) must default to HIDING reproductive
+  // content, not showing it — '' !== 'male' is true, so !isMale was
+  // showing every one of these blocks by default for anyone not yet
+  // confirmed male, including a male patient during the brief window
+  // before sex was set. This is what let Hysterectomy/PCOS leak
+  // through for male patients.
+  const isFemale = f.sex === 'female';
   const isMarriedStatus = f.maritalStatus === 'married';
   const hadHysterectomy = f.hysterectomy === 'yes';
   const isPostMeno = f.menopauseStatus === 'post';
   const lmpDaysAgo = f.lmpDate
     ? Math.floor((new Date() - new Date(f.lmpDate)) / (1000 * 60 * 60 * 24)) : 0;
-  const showPregnancy = !isMale && !hadHysterectomy && !isPostMeno && isMarriedStatus && lmpDaysAgo >= 31;
-  const showInfertility = !isMale && !hadHysterectomy && !isPostMeno && f.maritalStatus === 'married';
+  const showPregnancy = isFemale && !hadHysterectomy && !isPostMeno && isMarriedStatus && lmpDaysAgo >= 31;
+  const showInfertility = isFemale && !hadHysterectomy && !isPostMeno && f.maritalStatus === 'married';
 
   // Note: symptom-triggered investigations (CBC/Vit B12/Vit D3/Sr Calcium/
   // Iron studies/Blood sugar) are now embedded directly inline within
@@ -978,13 +1094,13 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
     { id: 'A4', module: 'A', title: 'Occupation' },
 
     // ── MODULE B (female only) ──
-    ...(isMale ? [] : [
+    ...(isFemale ? [
       { id: 'B1', module: 'B', title: 'Hysterectomy' },
       ...(!hadHysterectomy ? [{ id: 'B2', module: 'B', title: 'Menopausal status' }] : []),
       ...(!hadHysterectomy && !isPostMeno ? [{ id: 'B3', module: 'B', title: 'Menstrual cycle changes' }] : []),
       ...(!hadHysterectomy && !isPostMeno ? [{ id: 'B4', module: 'B', title: 'Last menstrual period (LMP)' }] : []),
       ...(showPregnancy ? [{ id: 'B5', module: 'B', title: 'Pregnancy' }] : []),
-    ]),
+    ] : []),
 
     // ── MODULE C ──
     { id: 'C1', module: 'C', title: 'Previous thyroid diagnosis' },
@@ -1052,7 +1168,7 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
     { id: 'H2', module: 'H', title: 'Anaemia' },
     { id: 'H3', module: 'H', title: 'Diabetes / high blood sugar' },
     { id: 'H6', module: 'H', title: 'Hypertension / high blood pressure' },
-    ...(!isMale ? [{ id: 'H4', module: 'H', title: 'PCOS / PMOS' }] : []),
+    ...(isFemale ? [{ id: 'H4', module: 'H', title: 'PCOS / PMOS' }] : []),
     ...(showInfertility ? [{ id: 'H5', module: 'H', title: 'Difficulty conceiving' }] : []),
     { id: 'H7', module: 'H', title: 'Osteoporosis / osteopenia' },
     { id: 'H8', module: 'H', title: 'Family history — non-thyroid cancers' },
@@ -1061,7 +1177,25 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
 
   const totalPages = allPages.length;
   const page = allPages[currentPage];
+  // Position in the flow — "you're on page 45 of 56." Fine for the
+  // in-app progress bar, but NOT the same thing as "how much is
+  // actually answered": nothing stops forward navigation past an
+  // unanswered page, so this can read 100% while genuinely incomplete
+  // pages (like C1) still exist earlier in the sequence.
   const progress = Math.round(((currentPage + 1) / totalPages) * 100);
+  // What's actually reported to the backend as completion_percent —
+  // counts pages that genuinely pass their own validator, the exact
+  // same check handleSubmit itself uses to decide whether to redirect
+  // to an incomplete page instead of submitting. This is why the
+  // dashboard was showing "100% complete" on episodes that then
+  // bounced back to an unanswered C1 on Resume: completion_percent was
+  // being sent from `progress` (position) instead of this.
+  const validationProgress = Math.round(
+    (allPages.filter(p => {
+      const v = HYPO_PAGE_VALIDATORS[p.id];
+      return v ? v(f) : true;
+    }).length / totalPages) * 100
+  );
 
   // Resume exactly where the patient left off, once, after the saved
   // draft (including branching-relevant answers like sex/marital status)
@@ -1171,10 +1305,13 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
     }
     setReviewMode(false);
     setSaving(true); setError('');
+    submittedRef.current = true;
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     try {
-      await conditionAPI.saveHypoQ(patientId, episodeId, { ...mapFormToDb(f), _draft: false });
+      await conditionAPI.saveHypoQ(patientId, episodeId, { ...mapFormToDb(f), _draft: false, _progressPercent: validationProgress });
       onComplete();
     } catch (err) {
+      submittedRef.current = false; // submit failed — autosave must resume protecting the patient's answers
       setError(err.response?.data?.error || 'Failed to save. Please try again.');
     } finally {
       setSaving(false);
@@ -1188,19 +1325,32 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
   // (e.g. waiting on a lab report) never loses answers already given.
   // _draft:true keeps questionnaire_status from being marked "completed"
   // by these interim saves (see conditionController.js).
+  //
+  // Both refs below fix a real race: this timer used to be purely local
+  // to the effect's closure, so handleSubmit had no way to cancel it.
+  // If the patient clicked Submit within 1.5s of their last answer (an
+  // entirely normal thing to do), the final _draft:false submit save
+  // would land first, then this already-armed timer would still fire
+  // afterward with _draft:true and silently flip questionnaire_status
+  // back to incomplete — "submitted, but My Conditions still shows
+  // Resume" was this, not a failed submit.
+  const autosaveTimerRef = React.useRef(null);
+  const submittedRef = React.useRef(false);
   const skipFirstAutosave = React.useRef(true);
   useEffect(() => {
     if (skipFirstAutosave.current) { skipFirstAutosave.current = false; return; }
     if (!patientId || !episodeId) return;
-    const t = setTimeout(async () => {
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = setTimeout(async () => {
+      if (submittedRef.current) return; // already submitted — never autosave-over it
       try {
         await conditionAPI.saveHypoQ(patientId, episodeId, {
-          ...mapFormToDb(f), _draft: true, _currentPage: page?.id,
+          ...mapFormToDb(f), _draft: true, _currentPage: page?.id, _progressPercent: validationProgress,
         });
         setLastSavedAt(Date.now());
       } catch (e) { /* silent — will retry on next change */ }
     }, 1500);
-    return () => clearTimeout(t);
+    return () => clearTimeout(autosaveTimerRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [f, currentPage]);
 
@@ -1520,7 +1670,7 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
                       <HypoRadioGroup value={f[dcReasonField]} onChange={set(dcReasonField)} options={[
                         ['tsh_increased', 'TSH increased'],
                         ['tsh_decreased', 'TSH decreased'],
-                        ...((!isMale && !hadHysterectomy && !isPostMeno && isMarriedStatus) ? [['pregnancy', 'Pregnancy']] : []),
+                        ...((isFemale && !hadHysterectomy && !isPostMeno && isMarriedStatus) ? [['pregnancy', 'Pregnancy']] : []),
                         ['doctor_advice', "Doctor's advice / Other"],
                       ]} />
                     </HypoField>
@@ -1561,7 +1711,7 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
                                 set('thyroidMedDose')('');
                               }}
                               placeholder="Select brand..."
-                              options={Object.keys(THYROID_MED_BRANDS).sort().map(b => [b, b])}
+                              options={[...Object.keys(THYROID_MED_BRANDS).sort().map(b => [b, b]), ['other', 'Others']]}
                             />
                           </HypoField>
                         )}
@@ -1578,7 +1728,7 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
                                 set('liothyronineDose')('');
                               }}
                               placeholder="Select brand..."
-                              options={Object.keys(LIOTHYRONINE_BRANDS).sort().map(b => [b, b])}
+                              options={[...Object.keys(LIOTHYRONINE_BRANDS).sort().map(b => [b, b]), ['other', 'Others']]}
                             />
                           </HypoField>
                         )}
@@ -1588,15 +1738,15 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 4 }}>
                       <div>
                         {(f.treatmentType === 'levo_only' || f.treatmentType === 'combination') && f.thyroidMedBrand && (
-                          <HypoField label="Drug name" hint="Auto-filled from brand">
-                            <HypoTextInput value={f.thyroidMedName} onChange={set('thyroidMedName')} />
+                          <HypoField label="Drug name" hint={f.thyroidMedBrand === 'other' ? 'Enter medicine name' : 'Auto-filled from brand'}>
+                            <HypoTextInput value={f.thyroidMedName} onChange={set('thyroidMedName')} placeholder={f.thyroidMedBrand === 'other' ? 'e.g. Thyroxine Sodium' : undefined} />
                           </HypoField>
                         )}
                       </div>
                       <div>
                         {(f.treatmentType === 'lio_only' || f.treatmentType === 'combination') && f.liothyronineBrand && (
-                          <HypoField label="Drug name" hint="Auto-filled from brand">
-                            <HypoTextInput value={f.liothyronineName} onChange={set('liothyronineName')} />
+                          <HypoField label="Drug name" hint={f.liothyronineBrand === 'other' ? 'Enter medicine name' : 'Auto-filled from brand'}>
+                            <HypoTextInput value={f.liothyronineName} onChange={set('liothyronineName')} placeholder={f.liothyronineBrand === 'other' ? 'e.g. Liothyronine Sodium' : undefined} />
                           </HypoField>
                         )}
                       </div>
@@ -1613,6 +1763,11 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
                             />
                           </HypoField>
                         )}
+                        {(f.treatmentType === 'levo_only' || f.treatmentType === 'combination') && f.thyroidMedBrand === 'other' && (
+                          <HypoField label="Current dose (mcg)">
+                            <HypoTextInput type="number" min="0" value={f.thyroidMedDose} onChange={set('thyroidMedDose')} placeholder="e.g. 75" />
+                          </HypoField>
+                        )}
                       </div>
                       <div>
                         {(f.treatmentType === 'lio_only' || f.treatmentType === 'combination') && f.liothyronineBrand && LIOTHYRONINE_BRANDS[f.liothyronineBrand] && (
@@ -1622,6 +1777,11 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
                               onChange={dose => set('liothyronineDose')(String(dose))}
                               options={LIOTHYRONINE_BRANDS[f.liothyronineBrand].doses}
                             />
+                          </HypoField>
+                        )}
+                        {(f.treatmentType === 'lio_only' || f.treatmentType === 'combination') && f.liothyronineBrand === 'other' && (
+                          <HypoField label="Current dose (mcg)">
+                            <HypoTextInput type="number" min="0" value={f.liothyronineDose} onChange={set('liothyronineDose')} placeholder="e.g. 5" />
                           </HypoField>
                         )}
                       </div>
@@ -1637,8 +1797,8 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
 
                     {(f.thyroidMedBrand || f.liothyronineBrand) && (
                       <HypoOutputBox text={[
-                        f.thyroidMedBrand && f.thyroidMedDose ? `Tab. ${f.thyroidMedBrand} — ${f.thyroidMedDose} mcg ${formatDuration(f.thyroidMedSince)}` : '',
-                        f.liothyronineBrand && f.liothyronineDose ? `Tab. ${f.liothyronineBrand} — ${f.liothyronineDose} mcg ${formatDuration(f.liothyronineSince)}` : '',
+                        f.thyroidMedBrand && f.thyroidMedDose ? `Tab. ${f.thyroidMedBrand === 'other' ? (f.thyroidMedName || 'Other') : f.thyroidMedBrand} — ${f.thyroidMedDose} mcg ${formatDuration(f.thyroidMedSince)}` : '',
+                        f.liothyronineBrand && f.liothyronineDose ? `Tab. ${f.liothyronineBrand === 'other' ? (f.liothyronineName || 'Other') : f.liothyronineBrand} — ${f.liothyronineDose} mcg ${formatDuration(f.liothyronineSince)}` : '',
                       ].filter(Boolean).join(' + ')} />
                     )}
                   </>
@@ -1680,7 +1840,7 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
                             <HypoRadioGroup value={f.doseChangedReason} onChange={set('doseChangedReason')} options={[
                               ['tsh_increased', 'TSH increased'],
                               ['tsh_decreased', 'TSH decreased'],
-                              ...((!isMale && !hadHysterectomy && !isPostMeno && isMarriedStatus) ? [['pregnancy', 'Pregnancy']] : []),
+                              ...((isFemale && !hadHysterectomy && !isPostMeno && isMarriedStatus) ? [['pregnancy', 'Pregnancy']] : []),
                               ['doctor_advice', "Doctor's advice / Other"],
                             ]} />
                           </HypoField>
@@ -2745,7 +2905,7 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
       </div>
 
       {/* Page content */}
-      <div ref={pageContentRef} style={{ position: 'relative', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '20px 24px', marginBottom: 16 }}>
+      <div ref={pageContentRef} style={{ position: 'relative', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '20px 24px', marginBottom: 16, minHeight: HYPO_PAGE_MIN_HEIGHT, boxSizing: 'border-box' }}>
         {error && <div style={{ background: 'var(--red-50)', border: '1px solid var(--red-200)', borderRadius: 8, padding: '8px 12px', marginBottom: 14, fontSize: 12, color: 'var(--red-700)' }}>{error}</div>}
         {renderPage()}
         <HypoMissingPointer containerRef={pageContentRef} pageKey={page?.id}

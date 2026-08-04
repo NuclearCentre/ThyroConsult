@@ -12,7 +12,7 @@ const NavItem = ({ to, icon, label, badge, adminStyle }) => (
 );
 
 // ─── Patient Sidebar ───────────────────────────────────────
-export const PatientSidebar = ({ patient }) => {
+export const PatientSidebar = ({ patient, onAddRelative }) => {
   const { logout } = useAuth();
   const navigate = useNavigate();
   const handleLogout = async () => { await logout(); navigate('/login'); };
@@ -42,6 +42,21 @@ export const PatientSidebar = ({ patient }) => {
         <NavItem to="/patient/documents" icon="📁" label="My Reports" />
         <NavItem to="/patient/invoices" icon="🧾" label="Invoices" />
         <NavItem to="/patient/profile" icon="👤" label="My Profile" />
+        {/* Opens a modal, not a route — plain button styled to match
+            NavItem rather than reusing it, since NavItem is built
+            around react-router's NavLink. Only rendered when
+            onAddRelative is provided (root account, not itself a
+            managed relative profile — see PatientLayout). */}
+        {onAddRelative && (
+          <button
+            onClick={onAddRelative}
+            className="nav-item"
+            style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left' }}
+          >
+            <span style={{ fontSize: 16 }}>👪</span>
+            <span style={{ flex: 1 }}>Opinion for relative</span>
+          </button>
+        )}
       </div>
       <div style={{ borderTop: '1px solid var(--border)', padding: '12px 0' }}>
         <button onClick={handleLogout} className="nav-item" style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', fontSize: 14 }}>

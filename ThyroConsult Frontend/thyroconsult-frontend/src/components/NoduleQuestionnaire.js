@@ -296,6 +296,12 @@ const NODULE_PAGE_VALIDATORS = {
   Q36: d => !!d.depression_status && (d.depression_status !== "yes" || (ndDur({ since_date: d.depression_since_date, years: d.depression_years, months: d.depression_months }) && !!d.depression_treated && !!d.depression_diagnosed)),
   Q37: d => !!d.palp_tremor_status && (d.palp_tremor_status !== "yes" || ((d.palp_tremor_types || []).length > 0 && ndDur({ since_date: d.palp_tremor_since_date, years: d.palp_tremor_years, months: d.palp_tremor_months }))),
   Q38: d => !!d.anxiety_status && (d.anxiety_status !== "yes" || (!!d.anxiety_severity && ndDur({ since_date: d.anxiety_since_date, years: d.anxiety_years, months: d.anxiety_months }))),
+  Q39: d => ["pain", "numbness", "tingling"].every(type => {
+    const item = (d.carpal_tunnel_data || {})[type] || {};
+    if (!item.status) return false;
+    if (item.status !== "yes") return true;
+    return !!item.side && ndDur({ since_date: item.since?.date, years: item.since?.years, months: item.since?.months });
+  }),
 
   J1: d => !!d.dyslipidaemia_status && (d.dyslipidaemia_status !== "yes" || (ndDur({ since_date: d.dyslipidaemia_since_date, years: d.dyslipidaemia_years, months: d.dyslipidaemia_months }) && !!d.dyslipidaemia_on_med && (d.dyslipidaemia_on_med !== "yes" || (d.dyslipidaemia_meds || []).some(m => m.name)))),
   J2: d => !!d.anaemia_status && (d.anaemia_status !== "yes" || !!d.anaemia_type),
@@ -420,7 +426,7 @@ export default function NoduleQuestionnaire({
       "Q22", "Q23", "Q24", "Q25", "Q26", "Q27",
 
       // MODULE H — Systemic symptoms (shown only if TSH normal)
-      ...(tshNormal ? ["Q28","Q29","Q30","Q31","Q32","Q33","Q34","Q35","Q36","Q37","Q38"] : []),
+      ...(tshNormal ? ["Q28","Q29","Q30","Q31","Q32","Q33","Q34","Q35","Q36","Q37","Q38","Q39"] : []),
 
       // MODULE J — Comorbidities, risk factors & finish
       "J1", "J2", "J3", "J4", "J5", "J6", "J7", "J8", "J9",
@@ -458,6 +464,7 @@ export default function NoduleQuestionnaire({
   // four condition questionnaires where a returning patient's answers
   // were never restored under any circumstances, not even buggily.
   const [draftLoadError, setDraftLoadError] = useState('');
+  const loadedForRef = useRef(null);
   const loadDraft = useCallback(() => {
     if (patientId && episodeId) {
       setDraftLoadError('');
@@ -473,7 +480,27 @@ export default function NoduleQuestionnaire({
         });
     }
   }, [patientId, episodeId]);
-  useEffect(() => { loadDraft(); }, [loadDraft]);
+  useEffect(() => {
+    const key = `${patientId}::${episodeId}`;
+    if (loadedForRef.current !== null && loadedForRef.current !== key) {
+      // Different patient or episode than whatever this instance last
+      // loaded — reset to blank BEFORE loading the new draft. Without
+      // this, since `data` is sent back to the server as-is on save, any
+      // field the previous patient's session touched that the new
+      // episode doesn't set would not just display wrong, it could get
+      // saved into the new patient's record on next submit. Also resets
+      // branchConfirmed — a leftover "confirmed" flag from a previous
+      // patient's TSH branch could otherwise auto-confirm this patient's.
+      setData({});
+      setCurrentPage(0);
+      setReviewMode(false);
+      setSavedPageId(null);
+      setResumedFrom(false);
+      setBranchConfirmed(false);
+    }
+    loadedForRef.current = key;
+    loadDraft();
+  }, [patientId, episodeId, loadDraft]);
 
   // ── Autosave ───────────────────────────────────────────────────────────────
   // Replaces saving only when the patient clicked Next. Saves
@@ -594,9 +621,9 @@ export default function NoduleQuestionnaire({
           <h3>What is your occupation or profession?</h3>
           <NoduleRadioGroup value={get("occupation")} onChange={v => set("occupation", v)} options={[
             { value: "teacher", label: "Teacher" }, { value: "singer", label: "Singer" },
-            { value: "actor", label: "Actor" }, { value: "lawyer", label: "Lawyer" },
+            { value: "actor", label: "Actor" }, { value: "vocal_instructor", label: "Vocal instructor" },
             { value: "call_centre", label: "Call centre agent" }, { value: "sales", label: "Sales professional" },
-            { value: "doctor", label: "Doctor / Healthcare" }, { value: "other", label: "Other" },
+            { value: "other", label: "Other" },
           ]} />
           {get("occupation") === "other" && (
             <NoduleField label="Please specify"><NoduleInput value={get("occupation_other")} onChange={v => set("occupation_other", v)} placeholder="Your occupation" /></NoduleField>
@@ -1317,7 +1344,7 @@ export default function NoduleQuestionnaire({
       case "Q26": return (
         <div>
           <h3>Have you noticed any hoarseness or change in your voice?</h3>
-          {["teacher","singer","actor","lawyer","call_centre","sales"].includes(get("occupation")) && (
+          {["teacher","singer","actor","vocal_instructor","call_centre","sales"].includes(get("occupation")) && (
             <div style={{ background: "#fff3cd", border: "1px solid #f5a623", borderRadius: 8, padding: 10, fontSize: 12, color: "#7d5200", marginBottom: 12 }}>
               ⚠ Voice-dependent profession detected — please answer carefully. Hoarseness from a thyroid nodule may indicate recurrent laryngeal nerve involvement.
             </div>
@@ -1434,6 +1461,39 @@ export default function NoduleQuestionnaire({
       );
       case "Q37": return renderMultiSxScreen("Q37", "Do you experience palpitations, tremors, or excessive sweating?", "palp_tremor", ["Palpitations (fast heartbeat)","Tremor of hands","Excessive sweating"]);
       case "Q38": return renderSxScreen("Q38", "Do you feel unusually anxious, restless, or irritable?", "anxiety", true);
+
+      case "Q39": return (
+        <div>
+          <h3>Do you have any of the following in your wrists or hands?</h3>
+          <p style={{ fontSize: 13, color: "#666", marginBottom: 12 }}>(Carpal tunnel symptoms)</p>
+          {[["pain", "Pain"], ["numbness", "Numbness"], ["tingling", "Tingling"]].map(([type, label]) => {
+            const item = (get("carpal_tunnel_data", {}) || {})[type] || {};
+            const updateItem = (patch) => {
+              const all = { ...(get("carpal_tunnel_data", {}) || {}) };
+              all[type] = { ...(all[type] || {}), ...patch };
+              set("carpal_tunnel_data", all);
+            };
+            return (
+              <div key={type} style={{ marginBottom: 14, paddingBottom: 14, borderBottom: "1px solid #e5e9f0" }}>
+                <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 4 }}>
+                  <div style={{ fontSize: 14, fontWeight: 500, minWidth: 90 }}>{label}</div>
+                  <NoduleRadioGroup value={item.status || ""} onChange={v => updateItem({ status: v })} inline options={[{ value: "no", label: "No" }, { value: "unsure", label: "Unsure" }, { value: "yes", label: "Yes" }]} />
+                </div>
+                {item.status === "yes" && (
+                  <NoduleSectionCard title={`${label} details`}>
+                    <NoduleField label="Which hand?"><NoduleRadioGroup value={item.side || ""} onChange={v => updateItem({ side: v })} inline options={[{ value: "right", label: "Right" }, { value: "left", label: "Left" }, { value: "both", label: "Both" }]} /></NoduleField>
+                    <NoduleDurationPicker minDate={patientDob} label="Since when?" sinceDate={item.since?.date} onSinceDate={v => updateItem({ since: { ...(item.since || {}), date: v } })} years={item.since?.years} onYears={v => updateItem({ since: { ...(item.since || {}), years: v } })} months={item.since?.months} onMonths={v => updateItem({ since: { ...(item.since || {}), months: v } })} />
+                  </NoduleSectionCard>
+                )}
+              </div>
+            );
+          })}
+          <NoduleOutputBox text={Object.entries(get("carpal_tunnel_data", {}) || {}).filter(([, v]) => v?.status === "yes").length > 0
+            ? Object.entries(get("carpal_tunnel_data", {}) || {}).filter(([, v]) => v?.status === "yes")
+              .map(([k, v]) => `${k.charAt(0).toUpperCase() + k.slice(1)} in ${v.side || "?"} wrist since last ${durationText(v.since?.years, v.since?.months, v.since?.date)}.`).join(" ")
+            : ""} />
+        </div>
+      );
 
       // ══════════════════════════════════════════════════════
       // MODULE J — COMORBIDITIES, RISK FACTORS & FINISH

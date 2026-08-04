@@ -410,7 +410,7 @@ const HYPER_PAGE_VALIDATORS = {
   H1: d => !!d.dyslipidaemia_status && (d.dyslipidaemia_status !== "yes" || (!!d.dyslipidaemia_since_months && !!d.dyslipidaemia_on_med && (d.dyslipidaemia_on_med !== "yes" || (d.dyslipidaemia_med_data || []).some(m => m.name)))),
   H2: d => !!d.diabetes_status && (d.diabetes_status !== "yes" || (!!d.diabetes_type && !!d.diabetes_since_months && !!d.diabetes_on_med && (d.diabetes_on_med !== "yes" || (d.diabetes_med_data || []).some(m => m.name)))),
   H3: d => !!d.anaemia_status && (d.anaemia_status !== "yes" || ((d.anaemia_types || []).length > 0 && !!d.anaemia_on_med && (d.anaemia_on_med !== "yes" || (d.anaemia_med_data || []).some(m => m.name)))),
-  H4: d => !!d.pcos_status && (d.pcos_status !== "yes" || (!!d.pcos_label && !!d.pcos_since_months && !!d.pcos_on_med && (d.pcos_on_med !== "yes" || (d.pcos_med_data || []).some(m => m.name)))),
+  H4: d => !!d.pcos_status && (d.pcos_status !== "yes" || (!!(d.pcos_since_date || d.pcos_years || d.pcos_months) && !!d.pcos_on_med && (d.pcos_on_med !== "yes" || (d.pcos_meds || []).some(m => m.name)))),
   H5: d => !!d.infertility_status,
   H6: d => !!d.depression_status && (d.depression_status !== "yes" || !!d.depression_on_med_status),
   H8: d => !!d.osteoporosis_status && (d.osteoporosis_status !== "yes" || (!!d.osteoporosis_dexa_status && !!d.osteoporosis_on_med && (d.osteoporosis_on_med !== "yes" || (d.osteoporosis_med_data || []).some(m => m.name)))),
@@ -619,6 +619,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
   // NOTE: backend returns the row flat, not wrapped in { data } — reading
   // r.data here meant previously-saved answers were never restored.
   const [draftLoadError, setDraftLoadError] = useState('');
+  const loadedForRef = useRef(null);
   const loadDraft = useCallback(() => {
     setDraftLoadError('');
     conditionAPI.getHyperQ(patientId, episodeId)
@@ -632,7 +633,24 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
         setDraftLoadError('Could not load your saved answers. Your previous answers have NOT been lost — please retry before continuing, rather than re-entering everything.');
       });
   }, [patientId, episodeId]);
-  useEffect(() => { loadDraft(); }, [loadDraft]);
+  useEffect(() => {
+    const key = `${patientId}::${episodeId}`;
+    if (loadedForRef.current !== null && loadedForRef.current !== key) {
+      // Different patient or episode than whatever this instance last
+      // loaded — reset to blank BEFORE loading the new draft. Without
+      // this, since `data` is sent back to the server as-is on save, any
+      // field the previous patient's session touched that the new
+      // episode doesn't set would not just display wrong, it could get
+      // saved into the new patient's record on next submit.
+      setData({});
+      setCurrentPage(0);
+      setReviewMode(false);
+      setSavedPageId(null);
+      setResumedFrom(false);
+    }
+    loadedForRef.current = key;
+    loadDraft();
+  }, [patientId, episodeId, loadDraft]);
 
   // ── Rehydrate uploaded reports on every load — resume AND post-submit ──
   // Same fix as HypoQuestionnaire: documents are never deleted (see
@@ -905,10 +923,10 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
                       set("med_dose_mg", "");
                     }}
                     placeholder="Select brand..."
-                    options={Object.keys(ANTITHYROID_DRUG_BRANDS).sort().map(b => ({ value: b, label: b }))}
+                    options={[...Object.keys(ANTITHYROID_DRUG_BRANDS).sort().map(b => ({ value: b, label: b })), { value: "other", label: "Others" }]}
                   />
                 </HyperField>
-                <HyperField label="Drug name (generic)" hint="Auto-filled from brand">
+                <HyperField label="Drug name (generic)" hint={get("med_brand_name") === "other" ? "Enter medicine name" : "Auto-filled from brand"}>
                   <HyperInput value={get("med_drug_name")} onChange={v => set("med_drug_name", v)} placeholder="e.g. Carbimazole" />
                 </HyperField>
                 <HyperField label="Tablets at a time">
@@ -925,6 +943,11 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
                     onChange={dose => set("med_dose_mg", String(dose))}
                     options={ANTITHYROID_DRUG_BRANDS[get("med_brand_name")].doses}
                   />
+                </HyperField>
+              )}
+              {get("med_brand_name") === "other" && (
+                <HyperField label="Current dose (mg)">
+                  <HyperInput type="number" value={get("med_dose_mg")} onChange={v => set("med_dose_mg", v)} placeholder="e.g. 5" min={0} />
                 </HyperField>
               )}
               {(get("med_timing", []) || []).map((t, i) => (
@@ -944,7 +967,8 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
             const allMealTime = timings.length > 0 && timings.every(t => t.includes("after_breakfast") || t.includes("after_lunch") || t.includes("after_dinner"));
             const timingText = allMealTime ? "after meals" : timings.map(t => (t || "").replace(/_/g, " ")).join(", ");
             const dur = durationText(get("med_since_years"), get("med_since_months_val"), get("med_since_date"));
-            return `On Tab. ${get("med_brand_name") || ""} (${get("med_drug_name") || ""}) — ${get("med_dose_mg") || "?"} mg — ${get("med_tablets") || "?"} tablet${parseInt(get("med_tablets")) > 1 ? "s" : ""} — ${get("med_times_per_day") || "?"} times per day${timingText ? " " + timingText : ""}. ${get("med_compliance") ? (get("med_compliance").replace(/_/g, " ").charAt(0).toUpperCase() + get("med_compliance").replace(/_/g, " ").slice(1)) + "." : ""}${dur ? " Since " + dur + "." : ""}`;
+            const brandLabel = get("med_brand_name") === "other" ? "" : get("med_brand_name") || "";
+            return `On Tab. ${brandLabel}${brandLabel ? " " : ""}(${get("med_drug_name") || ""}) — ${get("med_dose_mg") || "?"} mg — ${get("med_tablets") || "?"} tablet${parseInt(get("med_tablets")) > 1 ? "s" : ""} — ${get("med_times_per_day") || "?"} times per day${timingText ? " " + timingText : ""}. ${get("med_compliance") ? (get("med_compliance").replace(/_/g, " ").charAt(0).toUpperCase() + get("med_compliance").replace(/_/g, " ").slice(1)) + "." : ""}${dur ? " Since " + dur + "." : ""}`;
           })()} />
         </div>
       );
@@ -1606,23 +1630,38 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
       case "H4": return (
         <div>
           <h3>Have you been diagnosed with polycystic ovarian syndrome (PCOS) / Polyendocrine Metabolic Ovarian Syndrome (PMOS)?</h3>
+          <p style={{ fontSize: 13, color: "#666", marginBottom: 12 }}>Polycystic Ovarian Syndrome (PCOS) / Polyendocrine Metabolic Ovarian Syndrome (PMOS)</p>
           <HyperYesNoUnsure value={get("pcos_status")} onChange={v => set("pcos_status", v)} />
           {get("pcos_status") === "yes" && (
             <HyperSectionCard title="PCOS / PMOS details">
-              <HyperField label="Which diagnosis?"><HyperRadioGroup value={get("pcos_label")} onChange={v => set("pcos_label", v)} options={[{ value: "pcos", label: "PCOS" }, { value: "pmos", label: "PMOS" }]} inline /></HyperField>
-              <HyperField label="Since when (months)"><HyperInput type="number" value={get("pcos_since_months")} onChange={v => set("pcos_since_months", v)} min={0} placeholder="e.g. 120" /></HyperField>
+              <HyperDurationPicker minDate={get("dob")} label="Since when?" sinceDate={get("pcos_since_date")} onSinceDate={v => set("pcos_since_date", v)} years={get("pcos_years")} onYears={v => set("pcos_years", v)} months={get("pcos_months")} onMonths={v => set("pcos_months", v)} />
               <HyperField label="On medication?"><HyperYesNoUnsure value={get("pcos_on_med")} onChange={v => set("pcos_on_med", v)} /></HyperField>
               {get("pcos_on_med") === "yes" && (
                 <div>
-                  {(get("pcos_med_data", [{ name: "", dose_mg: "", freq_per_day: "" }]) || []).map((med, i) => (
-                    <HyperMedBlock key={i} med={med} index={i} doseLabel="Dose (mg)" showSince={false} onChange={v => { const a = [...(get("pcos_med_data", []) || [])]; a[i] = v; set("pcos_med_data", a); }} onRemove={i > 0 ? () => { const a = [...(get("pcos_med_data", []) || [])]; a.splice(i, 1); set("pcos_med_data", a); } : null} />
-                  ))}
-                  <button onClick={() => set("pcos_med_data", [...(get("pcos_med_data", []) || []), { name: "", dose_mg: "", freq_per_day: "" }])} style={{ padding: "6px 14px", background: "#eef4ff", border: "1.5px solid #3a7bd5", borderRadius: 6, color: "#3a7bd5", cursor: "pointer", fontSize: 13 }}>+ Add medicine</button>
+                  {(get("pcos_meds", [{ name: "", dose: "", freq: "", since: {} }]) || []).map((med, i) => {
+                    const updateMed = (patch) => { const a = [...(get("pcos_meds", []) || [])]; a[i] = { ...a[i], ...patch }; set("pcos_meds", a); };
+                    const updateSince = (patch) => updateMed({ since: { ...(med.since || {}), ...patch } });
+                    return (
+                      <div key={i} style={{ border: "1px solid #d0d7e8", borderRadius: 8, padding: 14, marginBottom: 10, background: "#fafbff" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                          <span style={{ fontWeight: 600, fontSize: 13, color: "#3a7bd5" }}>Medicine {i + 1}</span>
+                          {i > 0 && <button onClick={() => { const a = [...(get("pcos_meds", []) || [])]; a.splice(i, 1); set("pcos_meds", a); }} style={{ background: "none", border: "none", color: "#e74c3c", cursor: "pointer", fontSize: 13 }}>✕ Remove</button>}
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 8 }}>
+                          <HyperField label="Medicine name"><HyperInput value={med.name} onChange={v => updateMed({ name: v })} placeholder="e.g. Metformin" /></HyperField>
+                          <HyperField label="Dose (mg)"><HyperInput type="number" value={med.dose} onChange={v => updateMed({ dose: v })} placeholder="e.g. 500" /></HyperField>
+                          <HyperField label="Times per day"><HyperInput type="number" value={med.freq} onChange={v => updateMed({ freq: v })} min={1} max={6} /></HyperField>
+                        </div>
+                        <HyperDurationPicker minDate={get("dob")} label="Taking since" sinceDate={med.since?.date} onSinceDate={v => updateSince({ date: v })} years={med.since?.years} onYears={v => updateSince({ years: v })} months={med.since?.months} onMonths={v => updateSince({ months: v })} />
+                      </div>
+                    );
+                  })}
+                  <button onClick={() => set("pcos_meds", [...(get("pcos_meds", []) || []), { name: "", dose: "", freq: "", since: {} }])} style={{ padding: "6px 14px", background: "#eef4ff", border: "1.5px solid #3a7bd5", borderRadius: 6, color: "#3a7bd5", cursor: "pointer", fontSize: 13 }}>+ Add medicine</button>
                 </div>
               )}
             </HyperSectionCard>
           )}
-          <HyperOutputBox text={get("pcos_status") === "yes" ? `K/c/o ${(get("pcos_label") || "PCOS").toUpperCase()} since last ${Math.floor((parseInt(get("pcos_since_months")) || 0) / 12)} years.${get("pcos_on_med") === "yes" && (get("pcos_med_data", []) || []).some(m => m.name) ? " On " + (get("pcos_med_data", []) || []).filter(m => m.name).map(m => `Tab. ${m.name}${m.dose_mg ? " (" + m.dose_mg + " mg)" : ""} — ${m.freq_per_day || "?"} times a day`).join(" and ") + "." : ""}` : ""} />
+          <HyperOutputBox text={get("pcos_status") === "yes" ? `K/c/o PCOS/PMOS since last ${durationText(get("pcos_years"), get("pcos_months"), get("pcos_since_date"))}.${get("pcos_on_med") === "yes" && (get("pcos_meds", []) || []).some(m => m.name) ? " On " + (get("pcos_meds", []) || []).filter(m => m.name).map(m => `Tab. ${m.name}${m.dose ? " (" + m.dose + " mg)" : ""}${m.freq ? " — " + m.freq + " times a day" : ""}`).join(" and ") + "." : ""}` : ""} />
         </div>
       );
 

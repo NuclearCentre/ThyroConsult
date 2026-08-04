@@ -250,31 +250,71 @@ const getEpisodes = async (req, res) => {
     const result = await query(
       `SELECT pce.*,
               d.first_name AS doc_first, d.last_name AS doc_last,
-              d.specialisation
+              d.specialisation,
+              hq.completion_percent,
+              latest_op.status AS opinion_status,
+              latest_op.submitted_at AS opinion_submitted_at
        FROM patient_condition_episodes pce
        LEFT JOIN doctors d ON d.id = pce.primary_doctor_id
+       LEFT JOIN hypo_questionnaire hq ON hq.episode_id = pce.id AND pce.condition = 'hypothyroidism'
+       LEFT JOIN LATERAL (
+         SELECT status, submitted_at FROM opinions
+         WHERE episode_id = pce.id
+         ORDER BY submitted_at DESC NULLS LAST
+         LIMIT 1
+       ) latest_op ON TRUE
        WHERE pce.patient_id = $1
        ORDER BY pce.created_at DESC`,
       [patientId]
     );
 
-    const episodes = result.rows.map(r => ({
-      ...r,
-      // Several frontend components (PatientPortal.js, PhysicianDashboard.js,
-      // FollowUpVisit.js, MissingReports.js) read episode.condition_type and
-      // episode.submitted_at, but patient_condition_episodes' real columns
-      // are `condition` and `questionnaire_completed_at` — alias both here
-      // so every consumer of this endpoint gets consistent field names.
-      condition_type: r.condition,
-      submitted_at: r.questionnaire_completed_at,
-      doctorName: r.doc_first ? `Dr. ${d(r.doc_first)} ${d(r.doc_last)}` : null,
-      doc_first: undefined,
-      doc_last: undefined,
-      diagnosedBy: d(r.diagnosed_by),
-      diagnosed_by: undefined,
-      diagnosisNotes: d(r.diagnosis_notes),
-      diagnosis_notes: undefined,
-    }));
+    const episodes = result.rows.map(r => {
+      // Three-state label the dashboard actually shows: 'resume' while the
+      // questionnaire is incomplete, 'submitted' once complete but before
+      // the doctor's opinion is ready, 'opinion_sought' once it is.
+      // Matches opinionController's own existing definition of "ready" —
+      // status IN ('submitted','acknowledged') — reused here rather than
+      // inventing a second definition of the same thing.
+      const opinionReady = ['submitted', 'acknowledged'].includes(r.opinion_status);
+      const patientStatusLabel =
+        r.questionnaire_status !== 'completed' ? 'resume' :
+        opinionReady ? 'opinion_sought' : 'submitted';
+
+      const monthsSinceOpinion = (opinionReady && r.opinion_submitted_at)
+        ? (Date.now() - new Date(r.opinion_submitted_at).getTime()) / (1000 * 60 * 60 * 24 * 30.44)
+        : null;
+
+      return {
+        ...r,
+        // Several frontend components (PatientPortal.js, PhysicianDashboard.js,
+        // FollowUpVisit.js, MissingReports.js) read episode.condition_type and
+        // episode.submitted_at, but patient_condition_episodes' real columns
+        // are `condition` and `questionnaire_completed_at` — alias both here
+        // so every consumer of this endpoint gets consistent field names.
+        condition_type: r.condition,
+        submitted_at: r.questionnaire_completed_at,
+        doctorName: r.doc_first ? `Dr. ${d(r.doc_first)} ${d(r.doc_last)}` : null,
+        doc_first: undefined,
+        doc_last: undefined,
+        diagnosedBy: d(r.diagnosed_by),
+        diagnosed_by: undefined,
+        diagnosisNotes: d(r.diagnosis_notes),
+        diagnosis_notes: undefined,
+        // percentComplete only currently populated for hypothyroidism
+        // (completion_percent is reported by HypoQuestionnaire.js's own
+        // progress calc — see saveHypoQuestionnaire). Hyper/TC/Nodule
+        // will report the same field once they're wired up the same way.
+        percentComplete: r.completion_percent ?? null,
+        patientStatusLabel,
+        opinionStatus: r.opinion_status || null,
+        opinionSubmittedAt: r.opinion_submitted_at || null,
+        // >3 months since the doctor's opinion — gate for "New opinion"
+        // vs "Want follow-up?" on the frontend (per Nuclear's explicit
+        // confirmation this is measured from opinion submission, not
+        // questionnaire submission or last follow-up).
+        eligibleForNewOpinion: monthsSinceOpinion !== null && monthsSinceOpinion > 3,
+      };
+    });
 
     res.json({ episodes, total: episodes.length });
   } catch (err) {
@@ -663,7 +703,7 @@ const HYPO_Q_JSONB_COLUMNS = new Set(['rai_administrations', 'sym_carpal_data', 
 const saveHypoQuestionnaire = async (req, res) => {
   const patientId = req.user.patientId;
   const { episodeId } = req.params;
-  const { _draft, _currentPage, ...body } = req.body;
+  const { _draft, _currentPage, _progressPercent, ...body } = req.body;
 
   try {
     const ep = await query(
@@ -673,6 +713,19 @@ const saveHypoQuestionnaire = async (req, res) => {
     );
     if (!ep.rows.length) return res.status(404).json({ error: 'Hypothyroidism episode not found' });
 
+    // Same dead-code gap as markQuestionnaireComplete below (see its
+    // comment) — this transition used to live exclusively in
+    // saveCoreQuestionnaire, which is never called by the live app.
+    // Fires on the first save, draft or final; harmless to run on every
+    // save since the WHERE clause makes it a no-op once already past
+    // 'not_started'.
+    await query(
+      `UPDATE patient_condition_episodes
+       SET questionnaire_status = 'in_progress', updated_at = NOW()
+       WHERE id = $1 AND questionnaire_status = 'not_started'`,
+      [episodeId]
+    );
+
     const defined = {};
     for (const col of HYPO_Q_COLUMNS) {
       if (body[col] === undefined) continue;
@@ -680,6 +733,15 @@ const saveHypoQuestionnaire = async (req, res) => {
     }
     defined.is_draft = !!_draft;
     if (_currentPage !== undefined) defined.current_page = _currentPage;
+    // Reported by the frontend's own progress calc (allPages.length,
+    // fully accounting for gender/hysterectomy/menopause/cause/surgery
+    // branching) rather than re-derived here — the frontend is the only
+    // place that branching logic lives without duplicating it a second
+    // time and risking drift. Deliberately allowed to go down as well as
+    // up: if the patient goes back and changes an earlier answer such
+    // that a previously-shown page no longer applies, the percentage
+    // should reflect that honestly, not just ratchet upward.
+    if (_progressPercent !== undefined) defined.completion_percent = _progressPercent;
 
     const existing = await query(
       'SELECT id FROM hypo_questionnaire WHERE episode_id = $1', [episodeId]
@@ -972,7 +1034,7 @@ const getHyperQuestionnaire = async (req, res) => {
 // hand-edit column names here.
 // ─────────────────────────────────────────────────────────
 const TC_Q_COLUMNS = [
-  'anaemia_meds', 'diabetes_meds', 'dyslipidaemia_meds', 'htn_meds', 'pcos_meds',
+  'anaemia_meds', 'diabetes_meds', 'dyslipidaemia_meds', 'htn_meds', 'pcos_meds', 'carpal_tunnel_data',
   'abdominal_months', 'abdominal_since_date', 'abdominal_status', 'abdominal_types',
   'abdominal_years', 'acidity_days', 'acidity_med_dose', 'acidity_med_freq', 'acidity_med_name',
   'acidity_med_since_date', 'acidity_med_since_months', 'acidity_med_since_years',
@@ -1116,7 +1178,7 @@ const TC_Q_COLUMNS = [
   'vit_d3_value', 'weight_change_status', 'weight_direction', 'weight_kg', 'weight_months',
   'weight_since_date', 'weight_years'
 ];
-const TC_Q_JSONB_COLUMNS = new Set(['rai_administrations', 'anaemia_meds', 'diabetes_meds', 'dyslipidaemia_meds', 'htn_meds', 'pcos_meds']);
+const TC_Q_JSONB_COLUMNS = new Set(['rai_administrations', 'anaemia_meds', 'diabetes_meds', 'dyslipidaemia_meds', 'htn_meds', 'pcos_meds', 'carpal_tunnel_data']);
 
 const saveTcQuestionnaire = async (req, res) => {
   const patientId = req.user.patientId;
@@ -1202,7 +1264,7 @@ const getTcQuestionnaire = async (req, res) => {
 // hand-edit column names here.
 // ─────────────────────────────────────────────────────────
 const NODULE_Q_COLUMNS = [
-  'anaemia_meds', 'diabetes_meds', 'dyslipidaemia_meds', 'htn_meds', 'pcos_meds',
+  'anaemia_meds', 'diabetes_meds', 'dyslipidaemia_meds', 'htn_meds', 'pcos_meds', 'carpal_tunnel_data',
   'acidity_days', 'acidity_med_dose', 'acidity_med_freq', 'acidity_med_name',
   'acidity_med_since_date', 'acidity_med_since_months', 'acidity_med_since_years',
   'acidity_months', 'acidity_on_med', 'acidity_since_date', 'acidity_status', 'acidity_years',
@@ -1327,7 +1389,7 @@ const NODULE_Q_COLUMNS = [
   'vit_d3_unit', 'vit_d3_value', 'voice_fatigue_status', 'weight_change_status',
   'weight_direction', 'weight_kg', 'weight_months', 'weight_since_date', 'weight_years'
 ];
-const NODULE_Q_JSONB_COLUMNS = new Set(['rai_administrations', 'anaemia_meds', 'diabetes_meds', 'dyslipidaemia_meds', 'htn_meds', 'pcos_meds']);
+const NODULE_Q_JSONB_COLUMNS = new Set(['rai_administrations', 'anaemia_meds', 'diabetes_meds', 'dyslipidaemia_meds', 'htn_meds', 'pcos_meds', 'carpal_tunnel_data']);
 
 const saveNoduleQuestionnaire = async (req, res) => {
   const patientId = req.user.patientId;
@@ -1618,14 +1680,27 @@ const getDoctorConditionView = async (req, res) => {
 // ─────────────────────────────────────────────────────────
 
 async function markQuestionnaireComplete(episodeId) {
-  // Check if both core + condition-specific questionnaire are filled
-  const core = await query(
-    'SELECT id FROM core_questionnaire WHERE episode_id = $1', [episodeId]
-  );
+  // NOTE: previously also required a core_questionnaire row to exist
+  // before marking complete (`if (!ep.rows.length || !core.rows.length)
+  // return;`). core_questionnaire is only ever written to by
+  // saveCoreQuestionnaire, which is called exclusively from
+  // CoreQuestionnaire.js — confirmed dead code, never imported by the
+  // live PatientPortal.js flow. Each condition questionnaire (Hypo/
+  // Hyper/TC/Nodule) captures its own demographics directly in its own
+  // Module A instead — Core was absorbed into each, not kept as a
+  // separate step. That old requirement meant this function silently
+  // no-op'd via a bare `return` — no error, no log — every single time,
+  // for every condition, regardless of how many times a questionnaire's
+  // own handleSubmit correctly called it. This is why questionnaire_
+  // status could reach "100% complete" (completion_percent, reported by
+  // the questionnaire itself) while staying stuck at 'not_started'
+  // forever — it never even reached 'in_progress', since that
+  // transition also only lived inside the same dead saveCoreQuestionnaire
+  // path.
   const ep = await query(
     'SELECT condition FROM patient_condition_episodes WHERE id = $1', [episodeId]
   );
-  if (!ep.rows.length || !core.rows.length) return;
+  if (!ep.rows.length) return;
 
   const { condition } = ep.rows[0];
   const tableMap = {

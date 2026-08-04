@@ -69,6 +69,7 @@ export default function PhysicianQueue({ onSelectEpisode }) {
   const [error, setError]       = useState(null);
   const [filter, setFilter]     = useState('all'); // all | pending | overdue
   const [refreshing, setRefreshing] = useState(false);
+  const [closingId, setClosingId] = useState(null);
 
   const loadQueue = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -84,6 +85,25 @@ export default function PhysicianQueue({ onSelectEpisode }) {
       setRefreshing(false);
     }
   }, []);
+
+  // Was missing entirely — the "Close Episode" button's onClick always
+  // called onSelectEpisode (same handler as every other status), which
+  // just reopens the opinion screen. There was no actual close action
+  // anywhere. physicianAPI.closeEpisode already existed and the backend
+  // route was already registered — this was purely a missing wire, not
+  // a missing feature.
+  const handleClose = async (episodeId) => {
+    setClosingId(episodeId);
+    setError(null);
+    try {
+      await physicianAPI.closeEpisode(episodeId);
+      await loadQueue(true); // closed episode drops out of the queue
+    } catch (err) {
+      setError('Failed to close episode. Please try again.');
+    } finally {
+      setClosingId(null);
+    }
+  };
 
   useEffect(() => {
     loadQueue();
@@ -242,16 +262,23 @@ export default function PhysicianQueue({ onSelectEpisode }) {
 
                 {/* Action */}
                 <button
-                  onClick={e => { e.stopPropagation(); onSelectEpisode && onSelectEpisode(ep); }}
+                  onClick={e => {
+                    e.stopPropagation();
+                    if (ep.opinionStatus === 'acknowledged') handleClose(ep.episodeId);
+                    else onSelectEpisode && onSelectEpisode(ep);
+                  }}
+                  disabled={closingId === ep.episodeId}
                   style={{
                     padding: '8px 20px', borderRadius: 8,
                     background: ep.isCritical ? '#ef4444' : '#3a7bd5',
-                    color: '#fff', border: 'none', cursor: 'pointer',
+                    color: '#fff', border: 'none', cursor: closingId === ep.episodeId ? 'not-allowed' : 'pointer',
                     fontSize: 13, fontWeight: 600,
                     whiteSpace: 'nowrap',
+                    opacity: closingId === ep.episodeId ? 0.6 : 1,
                   }}
                 >
-                  {ep.opinionStatus === 'draft' ? 'Continue Opinion' :
+                  {closingId === ep.episodeId ? 'Closing…' :
+                   ep.opinionStatus === 'draft' ? 'Continue Opinion' :
                    ep.opinionStatus === 'submitted' ? 'Amend / Close' :
                    ep.opinionStatus === 'acknowledged' ? 'Close Episode' :
                    'Write Opinion'}

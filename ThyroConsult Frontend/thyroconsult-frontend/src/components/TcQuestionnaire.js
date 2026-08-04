@@ -343,7 +343,12 @@ const TC_PAGE_VALIDATORS = {
   F20: d => !!d.blackout_status && (d.blackout_status !== "yes" || (!!d.blackout_count && !!d.blackout_last_date && !!d.blackout_assessed && (d.blackout_assessed !== "yes" || !!d.blackout_dx))),
   F21: d => !!d.hearing_status && (d.hearing_status !== "yes" || (!!d.hearing_type && tcDur({ since_date: d.hearing_since_date, years: d.hearing_years, months: d.hearing_months }))),
   F22: d => !!d.delayed_reflexes_status,
-  F23: d => !!d.carpal_tunnel_status && (d.carpal_tunnel_status !== "yes" || ((d.carpal_tunnel_symptoms || []).length > 0 && !!d.carpal_tunnel_side && tcDur({ since_date: d.carpal_tunnel_since_date, years: d.carpal_tunnel_years, months: d.carpal_tunnel_months }))),
+  F23: d => ["pain", "numbness", "tingling"].every(type => {
+    const item = (d.carpal_tunnel_data || {})[type] || {};
+    if (!item.status) return false;
+    if (item.status !== "yes") return true;
+    return !!item.side && tcDur(item.since);
+  }),
   F24: d => !!d.macroglossia_status,
 
 
@@ -495,6 +500,7 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
 
   // ── Load draft on mount ───────────────────────────────────────────────────
   const [draftLoadError, setDraftLoadError] = useState('');
+  const loadedForRef = useRef(null);
   const loadDraft = useCallback(() => {
     if (patientId && episodeId) {
       setDraftLoadError('');
@@ -504,13 +510,33 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
             setData(d);
             if (d.current_page) setSavedPageId(d.current_page);
           }
+          // If d is empty (a genuinely brand-new episode), data was
+          // already reset to {} by the patient/episode-switch check
+          // below — nothing further to do here.
         })
         .catch(() => {
           setDraftLoadError('Could not load your saved answers. Your previous answers have NOT been lost — please retry before continuing, rather than re-entering everything.');
         });
     }
   }, [patientId, episodeId]);
-  useEffect(() => { loadDraft(); }, [loadDraft]);
+  useEffect(() => {
+    const key = `${patientId}::${episodeId}`;
+    if (loadedForRef.current !== null && loadedForRef.current !== key) {
+      // Different patient or episode than whatever this instance last
+      // loaded — reset to blank BEFORE loading the new draft. setData(d)
+      // above already replaces state wholesale on a successful load, but
+      // that only runs when the server returns a non-empty row — a
+      // genuinely brand-new/empty episode would skip it and leave the
+      // previous patient's data in place otherwise.
+      setData({});
+      setCurrentPage(0);
+      setReviewMode(false);
+      setSavedPageId(null);
+      setResumedFrom(false);
+    }
+    loadedForRef.current = key;
+    loadDraft();
+  }, [patientId, episodeId, loadDraft]);
 
   // ── Autosave ───────────────────────────────────────────────────────────────
   // Replaces the previous approach of saving (always as a draft) only
@@ -614,9 +640,9 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
           <h3>What is your occupation or profession?</h3>
           <TcRadioGroup value={get("occupation")} onChange={v => set("occupation", v)} options={[
             { value: "teacher", label: "Teacher" }, { value: "singer", label: "Singer" },
-            { value: "actor", label: "Actor" }, { value: "lawyer", label: "Lawyer" },
+            { value: "actor", label: "Actor" }, { value: "vocal_instructor", label: "Vocal instructor" },
             { value: "call_centre", label: "Call centre agent" }, { value: "sales", label: "Sales professional" },
-            { value: "doctor", label: "Doctor / Healthcare" }, { value: "other", label: "Other" },
+            { value: "other", label: "Other" },
           ]} />
           {get("occupation") === "other" && (
             <TcField label="Please specify"><TcInput value={get("occupation_other")} onChange={v => set("occupation_other", v)} placeholder="Your occupation" /></TcField>
@@ -1211,7 +1237,7 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
                                 set("thyroid_med_dose", "");
                               }}
                               placeholder="Select brand..."
-                              options={Object.keys(THYROID_MED_BRANDS).sort().map(b => ({ value: b, label: b }))}
+                              options={[...Object.keys(THYROID_MED_BRANDS).sort().map(b => ({ value: b, label: b })), { value: "other", label: "Others" }]}
                             />
                           </TcField>
                         )}
@@ -1228,7 +1254,7 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
                                 set("liothyronine_dose", "");
                               }}
                               placeholder="Select brand..."
-                              options={Object.keys(LIOTHYRONINE_BRANDS).sort().map(b => ({ value: b, label: b }))}
+                              options={[...Object.keys(LIOTHYRONINE_BRANDS).sort().map(b => ({ value: b, label: b })), { value: "other", label: "Others" }]}
                             />
                           </TcField>
                         )}
@@ -1238,15 +1264,15 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 4 }}>
                       <div>
                         {(get("thyroid_med_treatment_type") === "levo_only" || get("thyroid_med_treatment_type") === "combination") && get("thyroid_med_brand") && (
-                          <TcField label="Drug name" hint="Auto-filled from brand">
-                            <TcInput value={get("thyroid_med_name")} onChange={v => set("thyroid_med_name", v)} />
+                          <TcField label="Drug name" hint={get("thyroid_med_brand") === "other" ? "Enter medicine name" : "Auto-filled from brand"}>
+                            <TcInput value={get("thyroid_med_name")} onChange={v => set("thyroid_med_name", v)} placeholder={get("thyroid_med_brand") === "other" ? "e.g. Thyroxine Sodium" : undefined} />
                           </TcField>
                         )}
                       </div>
                       <div>
                         {(get("thyroid_med_treatment_type") === "lio_only" || get("thyroid_med_treatment_type") === "combination") && get("liothyronine_brand") && (
-                          <TcField label="Drug name" hint="Auto-filled from brand">
-                            <TcInput value={get("liothyronine_name")} onChange={v => set("liothyronine_name", v)} />
+                          <TcField label="Drug name" hint={get("liothyronine_brand") === "other" ? "Enter medicine name" : "Auto-filled from brand"}>
+                            <TcInput value={get("liothyronine_name")} onChange={v => set("liothyronine_name", v)} placeholder={get("liothyronine_brand") === "other" ? "e.g. Liothyronine Sodium" : undefined} />
                           </TcField>
                         )}
                       </div>
@@ -1263,6 +1289,11 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
                             />
                           </TcField>
                         )}
+                        {(get("thyroid_med_treatment_type") === "levo_only" || get("thyroid_med_treatment_type") === "combination") && get("thyroid_med_brand") === "other" && (
+                          <TcField label="Current dose (mcg)">
+                            <TcInput type="number" value={get("thyroid_med_dose")} onChange={v => set("thyroid_med_dose", v)} placeholder="e.g. 75" min={0} />
+                          </TcField>
+                        )}
                       </div>
                       <div>
                         {(get("thyroid_med_treatment_type") === "lio_only" || get("thyroid_med_treatment_type") === "combination") && get("liothyronine_brand") && LIOTHYRONINE_BRANDS[get("liothyronine_brand")] && (
@@ -1272,6 +1303,11 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
                               onChange={dose => set("liothyronine_dose", String(dose))}
                               options={LIOTHYRONINE_BRANDS[get("liothyronine_brand")].doses}
                             />
+                          </TcField>
+                        )}
+                        {(get("thyroid_med_treatment_type") === "lio_only" || get("thyroid_med_treatment_type") === "combination") && get("liothyronine_brand") === "other" && (
+                          <TcField label="Current dose (mcg)">
+                            <TcInput type="number" value={get("liothyronine_dose")} onChange={v => set("liothyronine_dose", v)} placeholder="e.g. 5" min={0} />
                           </TcField>
                         )}
                       </div>
@@ -1329,8 +1365,8 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
             <TcOutputBox text={(() => {
               if (get("thyroid_med_status") !== "yes") return "";
               const parts = [];
-              if (get("thyroid_med_brand") && get("thyroid_med_dose")) parts.push(`Tab. ${get("thyroid_med_brand")} — ${get("thyroid_med_dose")} mcg`);
-              if (get("liothyronine_brand") && get("liothyronine_dose")) parts.push(`Tab. ${get("liothyronine_brand")} — ${get("liothyronine_dose")} mcg`);
+              if (get("thyroid_med_brand") && get("thyroid_med_dose")) parts.push(`Tab. ${get("thyroid_med_brand") === "other" ? (get("thyroid_med_name") || "Other") : get("thyroid_med_brand")} — ${get("thyroid_med_dose")} mcg`);
+              if (get("liothyronine_brand") && get("liothyronine_dose")) parts.push(`Tab. ${get("liothyronine_brand") === "other" ? (get("liothyronine_name") || "Other") : get("liothyronine_brand")} — ${get("liothyronine_dose")} mcg`);
               if (get("thyroid_med_treatment_type") === "other" && get("thyroid_med_name")) parts.push(`${get("thyroid_med_name")} — ${get("thyroid_med_dose") || "?"} mcg`);
               return parts.join(" + ");
             })()} />
@@ -1597,18 +1633,34 @@ export default function TcQuestionnaire({ episodeId, patientId, patientDob, pati
       );
       case "F23": return (
         <div>
-          <h3>Do you have pain, numbness, or tingling in your wrists or hands? (carpal tunnel symptoms)</h3>
-          <TcYesNoUnsure value={get("carpal_tunnel_status")} onChange={v => set("carpal_tunnel_status", v)} />
-          {get("carpal_tunnel_status") === "yes" && (
-            <TcSectionCard title="Carpal tunnel details">
-              <TcField label="Symptoms (select all that apply)">
-                <TcCheckGroup values={get("carpal_tunnel_symptoms", [])} onChange={v => set("carpal_tunnel_symptoms", v)} options={[{ value: "pain", label: "Pain" }, { value: "numbness", label: "Numbness" }, { value: "tingling", label: "Tingling" }]} />
-              </TcField>
-              <TcField label="Which hand?"><TcRadioGroup value={get("carpal_tunnel_side")} onChange={v => set("carpal_tunnel_side", v)} inline options={[{ value: "right", label: "Right" }, { value: "left", label: "Left" }, { value: "both", label: "Both" }]} /></TcField>
-              <TcDurationPicker minDate={patientDob} label="Since when?" sinceDate={get("carpal_tunnel_since_date")} onSinceDate={v => set("carpal_tunnel_since_date", v)} years={get("carpal_tunnel_years")} onYears={v => set("carpal_tunnel_years", v)} months={get("carpal_tunnel_months")} onMonths={v => set("carpal_tunnel_months", v)} />
-            </TcSectionCard>
-          )}
-          <TcOutputBox text={get("carpal_tunnel_status") === "yes" ? `${get("carpal_tunnel_symptoms", []).join(" and ")} in ${get("carpal_tunnel_side") || ""} wrist since last ${durationText(get("carpal_tunnel_years"), get("carpal_tunnel_months"), get("carpal_tunnel_since_date"))}.` : ""} />
+          <h3>Do you have any of the following in your wrists or hands?</h3>
+          <p style={{ fontSize: 13, color: "#666", marginBottom: 12 }}>(Carpal tunnel symptoms)</p>
+          {[["pain", "Pain"], ["numbness", "Numbness"], ["tingling", "Tingling"]].map(([type, label]) => {
+            const item = (get("carpal_tunnel_data", {}) || {})[type] || {};
+            const updateItem = (patch) => {
+              const all = { ...(get("carpal_tunnel_data", {}) || {}) };
+              all[type] = { ...(all[type] || {}), ...patch };
+              set("carpal_tunnel_data", all);
+            };
+            return (
+              <div key={type} style={{ marginBottom: 14, paddingBottom: 14, borderBottom: "1px solid #e5e9f0" }}>
+                <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 4 }}>
+                  <div style={{ fontSize: 14, fontWeight: 500, minWidth: 90 }}>{label}</div>
+                  <TcRadioGroup value={item.status || ""} onChange={v => updateItem({ status: v })} inline options={[{ value: "no", label: "No" }, { value: "unsure", label: "Unsure" }, { value: "yes", label: "Yes" }]} />
+                </div>
+                {item.status === "yes" && (
+                  <TcSectionCard title={`${label} details`}>
+                    <TcField label="Which hand?"><TcRadioGroup value={item.side || ""} onChange={v => updateItem({ side: v })} inline options={[{ value: "right", label: "Right" }, { value: "left", label: "Left" }, { value: "both", label: "Both" }]} /></TcField>
+                    <TcDurationPicker minDate={patientDob} label="Since when?" sinceDate={item.since?.date} onSinceDate={v => updateItem({ since: { ...(item.since || {}), date: v } })} years={item.since?.years} onYears={v => updateItem({ since: { ...(item.since || {}), years: v } })} months={item.since?.months} onMonths={v => updateItem({ since: { ...(item.since || {}), months: v } })} />
+                  </TcSectionCard>
+                )}
+              </div>
+            );
+          })}
+          <TcOutputBox text={Object.entries(get("carpal_tunnel_data", {}) || {}).filter(([, v]) => v?.status === "yes").length > 0
+            ? Object.entries(get("carpal_tunnel_data", {}) || {}).filter(([, v]) => v?.status === "yes")
+              .map(([k, v]) => `${k.charAt(0).toUpperCase() + k.slice(1)} in ${v.side || "?"} wrist since last ${durationText(v.since?.years, v.since?.months, v.since?.date)}.`).join(" ")
+            : ""} />
         </div>
       );
       case "F24": return (

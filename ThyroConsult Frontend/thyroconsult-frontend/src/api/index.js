@@ -160,6 +160,20 @@ export const authAPI = {
 
   refresh:        (refreshToken)        => post('/auth/refresh', { refreshToken }),
   logout:         (refreshToken)        => post('/auth/logout', { refreshToken }),
+
+  // "Opinion for relative" — relative shares this account's login, no
+  // separate userid/password. See authController.js migration 038.
+  registerRelative: (data)              => post('/auth/relatives', data),
+  // data: { firstName, middleName, lastName, relation, dob, gender, bloodGroup }
+  // relation: 'child' | 'spouse' | 'parent' | 'sibling' | 'other'
+
+  getRelatives:   ()                    => get('/auth/relatives'),
+
+  switchProfile:  (targetPatientId)     => post('/auth/switch-profile', { targetPatientId }),
+  // Returns { accessToken, refreshToken, patientId, managedBy } — caller
+  // must call setTokens(accessToken, refreshToken) with the response,
+  // same as after login, since this issues a fresh token pair.
+
   setTokens,
   clearTokens,
   getToken,
