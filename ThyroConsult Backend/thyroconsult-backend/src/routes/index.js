@@ -70,6 +70,15 @@ router.get ('/patient/profile',
 router.put ('/patient/profile',
   verifyToken, requireRole('patient'), patientController.updatePatient);
 
+// Patient's own photo, for the dashboard avatar. getPatientPhoto ignores
+// any :id here anyway (role-checked to always be req.user.id for a
+// patient), but no :id in the URL at all keeps that obvious from the
+// route shape too.
+router.get ('/patient/photo',
+  verifyToken, requireRole('patient'),
+  auditPhiAccess('patient_photo'),
+  patientController.getPatientPhoto);
+
 router.post('/patient/photo',
   verifyToken, requireRole('patient'),
   uploadLimiter, uploadPhoto.single('photo'), handleUploadError,
@@ -152,6 +161,14 @@ router.get ('/condition/episodes/:id',
   verifyToken, requireRole('patient'), conditionController.getEpisodes);
 router.get ('/condition/episode/:episodeId',
   verifyToken, requireRole('patient'), conditionController.getEpisode);
+// Patient's own "My Answers" view — same formatted Q&A list the
+// physician sees via getEpisodeForReview, scoped to the patient's own
+// episode. Rendered in the patient's preferred language is NOT done
+// here (translation happens at PDF-generation time per the platform
+// language rule) — this returns the English answers the patient
+// themselves entered.
+router.get ('/condition/episode/:episodeId/questionnaire-answers',
+  verifyToken, requireRole('patient'), conditionController.getQuestionnaireAnswers);
 
 router.get ('/condition/core/:patientId/:episodeId',
   verifyToken, requireRole('patient'), conditionController.getCoreQuestionnaire);
@@ -339,6 +356,14 @@ router.get ('/physician/queue',
   verifyToken, requireRole('doctor'), opinionController.getPhysicianQueue);
 router.get ('/physician/episode/:episodeId',
   verifyToken, requireRole('doctor'), opinionController.getEpisodeForReview);
+// Patient's live photo for identification during opinion review.
+// getPatientPhoto verifies this doctor actually has an assigned episode
+// for :id before serving it — a doctor cannot view an arbitrary
+// patient's photo just by guessing/changing the id in the URL.
+router.get ('/physician/patient/:id/photo',
+  verifyToken, requireRole('doctor'),
+  auditPhiAccess('patient_photo'),
+  patientController.getPatientPhoto);
 
 router.post('/physician/episode/:episodeId/opinion/draft',
   verifyToken, requireRole('doctor'), sessionTimeout, opinionController.saveDraftOpinion);
@@ -382,9 +407,17 @@ router.get ('/physician/followup/:episodeId',
   verifyToken, requireRole('doctor'), physicianController.getFollowUpVisit);
 router.post('/physician/followup/:episodeId/:visitId/review',
   verifyToken, requireRole('doctor'), sessionTimeout, physicianController.reviewFollowUpVisit);
-// PILOT (item 3) — compiled question-by-question PDF, Hypo only for now.
+// PILOT (item 3) — compiled question-by-question PDF. Hypo + Hyper have
+// formatters; other conditions get a graceful "not yet available" PDF
+// (see questionnaireReportService.js's FORMATTERS map).
 router.get('/physician/episode/:episodeId/questionnaire-report',
   verifyToken, requireRole('doctor'), questionnaireReportController.downloadQuestionnaireReport);
+// AI-drafted bullet-point key findings (reading aid, not a full opinion
+// draft — physician still writes their own clinical_summary/impression/
+// advice). POST because it triggers an external API call, not a GET-safe
+// idempotent read.
+router.post('/physician/episode/:episodeId/opinion/ai-key-findings',
+  verifyToken, requireRole('doctor'), sessionTimeout, opinionController.getAiKeyFindings);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DOCTOR (appointments)

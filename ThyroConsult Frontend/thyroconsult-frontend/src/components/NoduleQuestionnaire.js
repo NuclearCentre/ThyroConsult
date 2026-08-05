@@ -149,6 +149,14 @@ const NoduleMedBlock = ({ med, index, onChange, onRemove }) => (
 // Underlying answers still save normally regardless of this.
 const NoduleOutputBox = () => null;
 
+// Applied as minHeight (not fixed height) to the question content area for
+// visual consistency with Hypo/Hyper's card height. Note: Nodule's
+// Prev/Next bar is position:fixed at the bottom (unlike Hypo/Hyper's
+// in-flow nav), so this isn't preventing a button-jump bug here — it's
+// purely visual, per explicit request. Same measured value as
+// HYPO_PAGE_MIN_HEIGHT.
+const NODULE_PAGE_MIN_HEIGHT = 328;
+
 const NoduleSectionCard = ({ title, children }) => (
   <div style={{ marginTop: 20, padding: "16px 20px", border: "1.5px solid #d0d7e8", borderRadius: 10, background: "#fff" }}>
     {title && <p style={{ margin: "0 0 14px", fontWeight: 700, color: "#534AB7", fontSize: 13, textTransform: "uppercase", letterSpacing: 0.5 }}>{title}</p>}
@@ -232,7 +240,7 @@ const NODULE_PAGE_VALIDATORS = {
   Q6: d => !!d.nodule_size_change && (d.nodule_size_change !== "yes" || (!!d.nodule_growth_direction && (d.nodule_growth_direction !== "larger" || (!!d.nodule_growth_years || !!d.nodule_growth_months) && !!d.nodule_growth_rate))),
   Q7: d => !!d.doctor_consulted_status && (d.doctor_consulted_status !== "yes" || (!!d.doctor_consulted_date && (d.doctor_advised_tests || []).length > 0)),
   Q8: d => !!d.repeat_usg_advised && (d.repeat_usg_advised !== "yes" || (!!d.repeat_usg_done && (d.repeat_usg_done !== "no" || !!d.repeat_usg_due_date))),
-  Q9: d => (d.consultation_trigger || []).length > 0 && (!(d.consultation_trigger || []).includes("other") || !!d.consultation_trigger_other),
+  Q9: d => (d.opinion_trigger || []).length > 0 && (!(d.opinion_trigger || []).includes("other") || !!d.opinion_trigger_other),
 
   Q10: d => !!d.mgmt_plan_discussed && (d.mgmt_plan_discussed !== "yes" || (d.mgmt_plan_types || []).length > 0),
   Q11: d => !!d.outcomes_discussed,
@@ -263,8 +271,14 @@ const NODULE_PAGE_VALIDATORS = {
   B3: d => !!d.menstrual_change_status && (d.menstrual_change_status !== "yes" || !!d.menstrual_pattern),
   B4: d => !!d.lmp_date,
   B5: d => {
-    const lmpDaysAgo = d.lmp_date ? Math.floor((Date.now() - new Date(d.lmp_date)) / 86400000) : 0;
-    if (lmpDaysAgo < 31) return true;
+    // An unanswered LMP (d.lmp_date falsy) must NOT fall back to "0 days
+    // ago" — that made this page silently count as complete with zero
+    // input, since 0 < 31 always short-circuited to true before any date
+    // was ever entered. Same fix applied to Hyper/TC's identical B5.
+    if (d.lmp_date) {
+      const lmpDaysAgo = Math.floor((Date.now() - new Date(d.lmp_date)) / 86400000);
+      if (lmpDaysAgo < 31) return true;
+    }
     return !!d.pregnancy_status;
   },
 
@@ -367,6 +381,14 @@ export default function NoduleQuestionnaire({
   const [currentPage, setCurrentPage] = useState(0);
   const [saving, setSaving]         = useState(false);
   const [saveMsg, setSaveMsg]       = useState("");
+  const [lastSavedAt, setLastSavedAt] = useState(null);
+  // Resets on every page change — without this, lastSavedAt stays truthy
+  // forever once the FIRST autosave anywhere in the session fires (e.g.
+  // the draft-load-triggered save on mount), so "✓ Saved" kept showing
+  // on brand-new, still-blank pages the patient hadn't touched yet —
+  // reporting "something was saved at some point," not "this page is
+  // saved." Same fix as HypoQuestionnaire.js's lastSavedAt.
+  useEffect(() => { setLastSavedAt(null); }, [currentPage]);
   const [tshBranch, setTshBranch]   = useState(null); // null | "high" | "low" | "normal"
   const [branchConfirmed, setBranchConfirmed] = useState(false);
   const [savedPageId, setSavedPageId] = useState(null);
@@ -439,6 +461,16 @@ export default function NoduleQuestionnaire({
   const totalPages = allPages.length;
   const pageId     = allPages[currentPage] || "Q3";
   const progress   = Math.round(((currentPage + 1) / totalPages) * 100);
+  // What's actually reported to the backend as completion_percent —
+  // counts pages that genuinely pass their own validator (same check
+  // handleSubmit uses), not just position in the flow. Matches
+  // HypoQuestionnaire.js's validationProgress fix — see its comment.
+  const validationProgress = Math.round(
+    (allPages.filter(id => {
+      const v = NODULE_PAGE_VALIDATORS[id];
+      return v ? v(data) : true;
+    }).length / totalPages) * 100
+  );
 
   // Blocks proceeding past a screen whose year-of-event field is before
   // the patient's own birth year.
@@ -512,8 +544,8 @@ export default function NoduleQuestionnaire({
     if (!patientId || !episodeId) return;
     const t = setTimeout(async () => {
       try {
-        await conditionAPI.saveNoduleQ(patientId, episodeId, { ...data, _draft: true, _currentPage: pageId });
-        setSaveMsg("✓ Saved");
+        await conditionAPI.saveNoduleQ(patientId, episodeId, { ...data, _draft: true, _currentPage: pageId, _progressPercent: validationProgress });
+        setLastSavedAt(Date.now());
       } catch { /* silent — retries on next change */ }
     }, 1500);
     return () => clearTimeout(t);
@@ -529,11 +561,11 @@ export default function NoduleQuestionnaire({
     if (!patientId || !episodeId) return;
     setSaving(true);
     try {
-      await conditionAPI.saveNoduleQ(patientId, episodeId, { ...data, _draft: false });
+      await conditionAPI.saveNoduleQ(patientId, episodeId, { ...data, _draft: false, _progressPercent: validationProgress });
       onComplete && onComplete(result);
     } catch { setSaveMsg("Submission failed. Please try again."); }
     finally { setSaving(false); }
-  }, [data, patientId, episodeId, onComplete]);
+  }, [data, patientId, episodeId, onComplete, validationProgress]);
 
   // Every question needs an answer before the questionnaire can actually
   // be submitted — finds the first incomplete page (in display order, so
@@ -737,7 +769,7 @@ export default function NoduleQuestionnaire({
         <div>
           <h3>What was the reason you decided to seek an online opinion now?</h3>
           <NoduleField label="Select all that apply">
-            <NoduleCheckGroup values={get("consultation_trigger", [])} onChange={v => set("consultation_trigger", v)} options={[
+            <NoduleCheckGroup values={get("opinion_trigger", [])} onChange={v => set("opinion_trigger", v)} options={[
               { value: "new_swelling", label: "Noticed a new swelling or lump" },
               { value: "size_increase", label: "Existing swelling has increased in size" },
               { value: "pain", label: "Pain or discomfort in neck" },
@@ -751,10 +783,10 @@ export default function NoduleQuestionnaire({
               { value: "other", label: "Other" },
             ]} />
           </NoduleField>
-          {get("consultation_trigger", []).includes("other") && (
-            <NoduleField label="Please specify"><NoduleInput value={get("consultation_trigger_other")} onChange={v => set("consultation_trigger_other", v)} /></NoduleField>
+          {get("opinion_trigger", []).includes("other") && (
+            <NoduleField label="Please specify"><NoduleInput value={get("opinion_trigger_other")} onChange={v => set("opinion_trigger_other", v)} /></NoduleField>
           )}
-          <NoduleOutputBox text={get("consultation_trigger", []).length ? `Consultation triggered by: ${get("consultation_trigger", []).map(t => t.replace(/_/g, " ")).join(", ")}.` : ""} />
+          <NoduleOutputBox text={get("opinion_trigger", []).length ? `Opinion requested because: ${get("opinion_trigger", []).map(t => t.replace(/_/g, " ")).join(", ")}.` : ""} />
         </div>
       );
 
@@ -1038,8 +1070,12 @@ export default function NoduleQuestionnaire({
 
       case "B5": {
         const lmpDate = get("lmp_date");
-        const lmpDaysAgo = lmpDate ? Math.floor((Date.now() - new Date(lmpDate)) / 86400000) : 0;
-        if (lmpDaysAgo < 31) return (
+        // Same fix as the B5 validator: an unanswered lmpDate must NOT
+        // fall back to "0 days ago" — that silently showed the "not
+        // applicable" message on every blank LMP, before any date was
+        // ever entered.
+        const lmpDaysAgo = lmpDate ? Math.floor((Date.now() - new Date(lmpDate)) / 86400000) : null;
+        if (lmpDaysAgo !== null && lmpDaysAgo < 31) return (
           <div>
             <h3>Are you currently pregnant or trying to conceive?</h3>
             <p style={{ fontSize: 13, color: "#888" }}>LMP was less than 31 days ago — pregnancy question not applicable.</p>
@@ -1820,7 +1856,7 @@ export default function NoduleQuestionnaire({
         </div>
         <div style={{ fontSize: 11, color: "#bbb", marginTop: 4 }}>
           {pageId}
-          {saveMsg && <span style={{ marginLeft: 12, color: (saveMsg.includes("failed") || saveMsg.includes("Please answer")) ? "#e74c3c" : "#27ae60" }}>{saveMsg}</span>}
+          {saveMsg && <span style={{ marginLeft: 12, color: "#e74c3c" }}>{saveMsg}</span>}
           {tshBranch === "high" && get("tsh_status") === "yes" && <span style={{ marginLeft: 12, color: "#185FA5", fontWeight: 600 }}>TSH high — Hypo route</span>}
           {tshBranch === "low"  && get("tsh_status") === "yes" && <span style={{ marginLeft: 12, color: "#854F0B", fontWeight: 600 }}>TSH low — Hyper route</span>}
           {tshBranch === "normal" && get("tsh_status") === "yes" && <span style={{ marginLeft: 12, color: "#27ae60", fontWeight: 600 }}>TSH normal — continuing</span>}
@@ -1828,25 +1864,11 @@ export default function NoduleQuestionnaire({
       </div>
 
       {/* Question */}
-      <div ref={pageContentRef} style={{ position: "relative", paddingTop: 24, paddingBottom: incompleteList.length > 0 ? 130 : 80 }}>
+      <div ref={pageContentRef} style={{ position: "relative", paddingTop: 24, paddingBottom: 80, minHeight: NODULE_PAGE_MIN_HEIGHT, boxSizing: "border-box" }}>
         {renderPage()}
         <NoduleMissingPointer containerRef={pageContentRef} pageKey={pageId}
           active={reviewMode && incompleteList.some(({ idx }) => idx === currentPage)} />
       </div>
-
-      {/* Bottom strip listing every unanswered question — stacked just
-          above the already-fixed nav bar. */}
-      {incompleteList.length > 0 && (
-        <div style={{ position: "fixed", bottom: 60, left: 0, right: 0, zIndex: 40, background: "#fff", borderTop: "2px solid #e6a3a3", boxShadow: "0 -2px 12px rgba(0,0,0,0.10)", padding: "10px 20px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", maxWidth: 680, margin: "0 auto" }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: "#a83232", marginRight: 4 }}>{incompleteList.length} unanswered — jump to:</span>
-          {incompleteList.map(({ id, idx }) => (
-            <button key={id} onClick={() => { setSaveMsg(""); setCurrentPage(idx); }}
-              style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 12, cursor: "pointer", border: `1.5px solid ${idx === currentPage ? "#534AB7" : "#e6a3a3"}`, background: idx === currentPage ? "#EEEDFE" : "#fff", color: idx === currentPage ? "#534AB7" : "#a83232" }}>
-              Q{idx + 1}
-            </button>
-          ))}
-        </div>
-      )}
 
       {/* Navigation */}
       <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "#fff", borderTop: "1px solid #f0f0f0", padding: "12px 24px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -1858,7 +1880,7 @@ export default function NoduleQuestionnaire({
           ← Back
         </button>
 
-        {saveMsg === "✓ Saved" && <span style={{ fontSize: 12, color: "#888" }}>✓ Saved</span>}
+        {lastSavedAt && <span style={{ fontSize: 12, color: "#888" }}>✓ Saved</span>}
 
         <button
           onClick={next}

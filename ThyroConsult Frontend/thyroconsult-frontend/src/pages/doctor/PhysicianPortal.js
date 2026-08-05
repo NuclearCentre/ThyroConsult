@@ -101,7 +101,10 @@ const OpinionsTab = () => {
         episodeId={selectedEpisode.episodeId}
         existingOpinion={reviewData.opinion}
         questionnaire={reviewData.questionnaire}
+        formattedAnswers={reviewData.formattedAnswers}
         conditionType={reviewData.episode?.condition}
+        patientId={reviewData.episode?.patient_id}
+        patientName={reviewData.episode ? `${reviewData.episode.first_name} ${reviewData.episode.last_name}` : ''}
         onSaved={() => {}}
         onSubmitted={backToQueue}
         onBack={backToQueue}

@@ -2,7 +2,7 @@
 // Doctor writes / amends structured opinion
 // Sections: Clinical Summary | Impression | Advice | Investigations + Remarks
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { physicianAPI, adviseLetterAPI } from '../../api/index';
 
 // ─── Tiny reusable field ──────────────────────────────────────────────────
@@ -372,9 +372,165 @@ function TranslationReviewSection({ episodeId, questionnaire, conditionType }) {
   );
 }
 
+// ─── Compiled Q&A view — the full formatted questionnaire, collapsed by
+// default (it can be 50+ lines) so it doesn't push the opinion form
+// below the fold, but available in one click for the physician to
+// actually see what the patient answered before writing anything. ───────
+function QuestionnaireAnswersSection({ formattedAnswers }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!Array.isArray(formattedAnswers) || !formattedAnswers.length) return null;
+
+  return (
+    <SectionCard number="📋" title={`Patient's Questionnaire Answers (${formattedAnswers.length})`} accent="#6d28d9">
+      <button
+        onClick={() => setExpanded(e => !e)}
+        style={{
+          padding: '6px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+          border: '1px solid #6d28d9', background: '#fff', color: '#6d28d9',
+          cursor: 'pointer', marginBottom: expanded ? 14 : 4,
+        }}
+      >
+        {expanded ? 'Hide answers' : 'Show all answers'}
+      </button>
+      {expanded && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {formattedAnswers.map(a => (
+            <div key={a.id} style={{ paddingBottom: 8, borderBottom: '1px solid #f3f4f6' }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 2 }}>{a.question}</div>
+              <div style={{ fontSize: 13.5, color: '#1e293b' }}>{a.answer}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
+// ─── AI-drafted key findings — a reading aid, NOT a full opinion draft
+// (explicit product decision: the physician writes their own
+// clinical_summary/impression/advice; this just surfaces bullet points
+// pulled from the patient's own answers so nothing gets missed). Never
+// auto-inserted into the form fields — physician reads and writes
+// separately. ─────────────────────────────────────────────────────────
+function AiKeyFindingsSection({ episodeId, formattedAnswers }) {
+  const [findings,  setFindings]  = useState(null);
+  const [loading,   setLoading]   = useState(false);
+  const [errorMsg,  setErrorMsg]  = useState('');
+
+  if (!Array.isArray(formattedAnswers) || !formattedAnswers.length) return null;
+
+  const generate = async () => {
+    setLoading(true);
+    setErrorMsg('');
+    try {
+      const res = await physicianAPI.getAiKeyFindings(episodeId);
+      setFindings(res.findings || []);
+    } catch (err) {
+      setErrorMsg('Could not generate key findings. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <SectionCard number="🤖" title="AI Key Findings (reading aid)" accent="#0d9488">
+      <p style={{ margin: '0 0 12px', fontSize: 13, color: '#6b7280' }}>
+        Pulls the clinically relevant findings out of the patient's own answers above — a starting
+        point to read, not a draft opinion. Write your own Clinical Summary / Impression / Advice below.
+      </p>
+      {findings === null && (
+        <button
+          onClick={generate}
+          disabled={loading}
+          style={{
+            padding: '7px 16px', borderRadius: 6, fontSize: 12.5, fontWeight: 600,
+            border: '1px solid #0d9488', background: '#fff', color: '#0d9488',
+            cursor: loading ? 'wait' : 'pointer',
+          }}
+        >
+          {loading ? 'Generating…' : 'Generate key findings'}
+        </button>
+      )}
+      {errorMsg && <p style={{ color: '#ef4444', fontSize: 12.5, margin: '6px 0 0' }}>{errorMsg}</p>}
+      {findings !== null && (
+        <div>
+          {findings.length === 0 ? (
+            <p style={{ fontSize: 13, color: '#6b7280', fontStyle: 'italic' }}>No significant findings extracted.</p>
+          ) : (
+            <ul style={{ margin: 0, paddingLeft: 20 }}>
+              {findings.map((f, i) => (
+                <li key={i} style={{ fontSize: 13.5, color: '#1e293b', marginBottom: 6 }}>{f}</li>
+              ))}
+            </ul>
+          )}
+          <button
+            onClick={generate}
+            disabled={loading}
+            style={{
+              marginTop: 8, padding: '5px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+              border: '1px solid #d1d5db', background: '#fff', color: '#6b7280',
+              cursor: loading ? 'wait' : 'pointer',
+            }}
+          >
+            {loading ? 'Regenerating…' : 'Regenerate'}
+          </button>
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
+// ─── Patient's live photo, for identification — the whole reason the
+// registration wizard collects it ("used solely for patient
+// identification by your doctor"), which had no display surface at all
+// until now. Placed prominently, near the top of the review screen —
+// this is meant to be glanced at once per episode, not dug for. ────────
+function PatientPhotoPanel({ patientId, patientName }) {
+  const [photoUrl, setPhotoUrl] = useState(null);
+  const [status, setStatus] = useState('loading'); // 'loading' | 'ok' | 'none'
+
+  useEffect(() => {
+    if (!patientId) { setStatus('none'); return; }
+    let objectUrl;
+    let cancelled = false;
+    setStatus('loading');
+    setPhotoUrl(null);
+    physicianAPI.getPatientPhotoBlob(patientId)
+      .then(blob => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setPhotoUrl(objectUrl);
+        setStatus('ok');
+      })
+      .catch(() => { if (!cancelled) setStatus('none'); });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [patientId]);
+
+  if (status === 'none') return null; // no photo on record — don't clutter the review screen with an empty box
+
+  return (
+    <SectionCard number="🪪" title="Patient Identification" accent="#0f766e">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+        {status === 'loading' ? (
+          <div style={{ width: 96, height: 96, borderRadius: 12, background: '#f3f4f6', flexShrink: 0 }} />
+        ) : (
+          <img src={photoUrl} alt="Patient" style={{ width: 96, height: 96, borderRadius: 12, objectFit: 'cover', border: '1px solid #e5e7eb', flexShrink: 0 }} />
+        )}
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: '#1e293b' }}>{patientName}</div>
+          <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>Live photo captured at registration, for identification only.</div>
+        </div>
+      </div>
+    </SectionCard>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────
 
-export default function OpinionWriter({ episodeId, existingOpinion, questionnaire, conditionType, onSaved, onSubmitted, onBack }) {
+export default function OpinionWriter({ episodeId, existingOpinion, questionnaire, formattedAnswers, conditionType, patientId, patientName, onSaved, onSubmitted, onBack }) {
   const [form, setForm] = useState({
     clinicalSummary: '',
     impression:      '',
@@ -482,8 +638,17 @@ export default function OpinionWriter({ episodeId, existingOpinion, questionnair
         </div>
       </div>
 
+      {/* Patient identification photo — first, so identity is confirmed before clinical content */}
+      <PatientPhotoPanel patientId={patientId} patientName={patientName} />
+
+      {/* Compiled Q&A view of everything the patient answered */}
+      <QuestionnaireAnswersSection formattedAnswers={formattedAnswers} />
+
       {/* Patient's translated free-text answers, if any needed translation */}
       <TranslationReviewSection episodeId={episodeId} questionnaire={questionnaire} conditionType={conditionType} />
+
+      {/* AI-drafted key findings — reading aid, not a full opinion draft */}
+      <AiKeyFindingsSection episodeId={episodeId} formattedAnswers={formattedAnswers} />
 
       {/* Section 1 — Clinical Summary */}
       <SectionCard number="1" title="Clinical Summary" accent="#3a7bd5">

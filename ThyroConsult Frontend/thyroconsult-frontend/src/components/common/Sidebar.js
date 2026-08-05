@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { Logo } from './index';
 import { useAuth } from '../../context/AuthContext';
+import { patientAPI } from '../../api';
 
 const NavItem = ({ to, icon, label, badge, adminStyle }) => (
   <NavLink to={to} className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`} style={{ textDecoration: 'none' }}>
@@ -10,6 +11,45 @@ const NavItem = ({ to, icon, label, badge, adminStyle }) => (
     {badge && <span style={{ fontSize: 10, background: '#E24B4A', color: '#fff', borderRadius: 20, padding: '1px 6px' }}>{badge}</span>}
   </NavLink>
 );
+
+// Sidebar avatar — shows the patient's actual captured live photo when
+// one exists, falling back to initials (the previous, only, behaviour)
+// on any failure: no photo captured yet (404), network error, whatever.
+// Re-fetches whenever patientCode changes, which is the one field in
+// `patient` guaranteed to differ between profiles (switching into a
+// relative, switching back) — avoids showing a stale photo held over
+// from the previous profile.
+const SidebarAvatar = ({ patient }) => {
+  const [photoUrl, setPhotoUrl] = useState(null);
+
+  useEffect(() => {
+    let objectUrl;
+    let cancelled = false;
+    setPhotoUrl(null);
+    patientAPI.getPhotoBlob()
+      .then(blob => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setPhotoUrl(objectUrl);
+      })
+      .catch(() => { /* no photo on record yet, or fetch failed — initials fallback below covers it */ });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [patient?.patientCode]);
+
+  if (photoUrl) {
+    return (
+      <img src={photoUrl} alt="" style={{ width: 34, height: 34, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+    );
+  }
+  return (
+    <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'var(--teal-50)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 600, color: 'var(--teal-800)', flexShrink: 0 }}>
+      {patient.firstName?.[0]}{patient.lastName?.[0]}
+    </div>
+  );
+};
 
 // ─── Patient Sidebar ───────────────────────────────────────
 export const PatientSidebar = ({ patient, onAddRelative }) => {
@@ -23,9 +63,7 @@ export const PatientSidebar = ({ patient, onAddRelative }) => {
         <Logo />
         {patient && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14, padding: '10px 12px', background: 'var(--gray-50)', borderRadius: 'var(--radius-md)' }}>
-            <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'var(--teal-50)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 600, color: 'var(--teal-800)', flexShrink: 0 }}>
-              {patient.firstName?.[0]}{patient.lastName?.[0]}
-            </div>
+            <SidebarAvatar patient={patient} />
             <div>
               <div style={{ fontSize: 13, fontWeight: 500 }}>{patient.firstName} {patient.lastName}</div>
               <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{patient.patientCode}</div>

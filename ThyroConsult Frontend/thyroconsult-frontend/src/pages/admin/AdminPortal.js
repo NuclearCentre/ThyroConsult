@@ -23,7 +23,7 @@ const AdminDashboard = () => {
     adminAPI.getPlatformStats().then(r => setStats(r)).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <div style={{ display:'flex', justifyContent:'center', padding:60 }}><Spinner size={32} /></div>;
+  if (loading) return <div style={{ display:'flex', justifyContent:'center', padding:60 }}><Spinner size={64} borderColor="#000" stripColor="#fff" /></div>;
 
   const platform = stats?.platform || {};
 

@@ -33,8 +33,8 @@ export const SecureBadge = () => (
 // existing <Spinner size={32} /> call site keeps working unchanged — plus
 // a new `active` prop: pass active={false} once the operation completes
 // and the strip stops moving and fades out.
-export const Spinner = ({ size = 20, color = 'var(--teal-400)', active = true }) => (
-  <ThyroidLoader size={size} color={color} active={active} />
+export const Spinner = ({ size = 20, color = 'var(--teal-400)', active = true, borderColor, stripColor }) => (
+  <ThyroidLoader size={size} color={color} active={active} borderColor={borderColor} stripColor={stripColor} />
 );
 
 // ─── Loading Screen ────────────────────────────────────────

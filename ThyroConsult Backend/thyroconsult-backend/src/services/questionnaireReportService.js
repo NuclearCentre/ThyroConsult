@@ -16,6 +16,9 @@
 
 const PDFDocument = require('pdfkit');
 const { formatHypoAnswers } = require('./hypoReportFormatter');
+const { formatHyperAnswers } = require('./hyperReportFormatter');
+const { formatTcAnswers } = require('./tcReportFormatter');
+const { formatNoduleAnswers, MODULE_BY_ID: NODULE_MODULE_BY_ID } = require('./noduleReportFormatter');
 
 // ─── Brand config — identical to receiptService.js ─────────────────────────
 const BRAND = {
@@ -34,11 +37,37 @@ const CONDITION_LABELS = {
   nodule: 'Thyroid Nodule',
 };
 
+// Module letters mean different things per condition (e.g. Module E is
+// "Cause & Goitre" for Hypo/Hyper but "Cancer Staging & Treatment" for
+// TC) — condition-specific overrides layer on top of the shared
+// defaults below rather than a single flat map, so each PDF's section
+// headers actually describe that condition's own questionnaire.
 const MODULE_LABELS = {
   A: 'Demographics', B: 'Reproductive History', C: 'Thyroid History',
   D: 'Laboratory Investigations', E: 'Cause & Goitre', F: 'Symptoms',
-  H: 'Comorbidities & Additional Notes',
+  G: 'Treatment & Monitoring', H: 'Comorbidities & Additional Notes',
 };
+const MODULE_LABELS_BY_CONDITION = {
+  thyroid_cancer: {
+    ...MODULE_LABELS,
+    E: 'Cancer Staging, Surgery & Treatment',
+  },
+  // Nodule's module lettering diverges from the shared defaults
+  // significantly past D — E/F/G/H mean different things here, and I/J
+  // don't exist in the shared map at all — so this is a full override,
+  // not a partial one like TC's.
+  nodule: {
+    A: 'Demographics', B: 'Reproductive History', C: 'Thyroid History',
+    D: 'Laboratory Investigations', E: 'Nodule Discovery',
+    F: 'Prior Treatment & Opinions', G: 'Local Nodule Symptoms',
+    H: 'Systemic & Hormonal Symptoms', I: 'Management Plan & Patient Concern',
+    J: 'Comorbidities, Risk Factors & Additional Notes',
+  },
+};
+function moduleLabel(condition, mod) {
+  const map = MODULE_LABELS_BY_CONDITION[condition] || MODULE_LABELS;
+  return map[mod] || `Module ${mod}`;
+}
 
 function fmtDate(d) {
   if (!d) return '—';
@@ -116,15 +145,30 @@ function qaBlock(doc, question, answer) {
 
 const FORMATTERS = {
   hypothyroidism: formatHypoAnswers,
-  // hyperthyroidism / thyroid_cancer / nodule formatters added once
-  // this pilot is confirmed correct and replicated.
+  hyperthyroidism: formatHyperAnswers,
+  thyroid_cancer: formatTcAnswers,
+  nodule: formatNoduleAnswers,
 };
 
-const PAGE_MODULE = {}; // filled from hypoReportFormatter's PAGES below
+const PAGE_MODULE = {}; // filled from each condition's own PAGES below
 try {
-  const { PAGES } = require('./hypoReportFormatter');
-  PAGES.forEach(p => { PAGE_MODULE[p.id] = p.id.replace(/[0-9a-z]/g, ''); });
+  const { PAGES: HYPO_PAGES } = require('./hypoReportFormatter');
+  HYPO_PAGES.forEach(p => { PAGE_MODULE[p.id] = p.id.replace(/[0-9a-z]/g, ''); });
 } catch (e) { /* non-fatal */ }
+try {
+  const { PAGES: HYPER_PAGES } = require('./hyperReportFormatter');
+  HYPER_PAGES.forEach(p => { PAGE_MODULE[p.id] = p.id.replace(/[0-9a-z]/g, ''); });
+} catch (e) { /* non-fatal */ }
+try {
+  const { PAGES: TC_PAGES } = require('./tcReportFormatter');
+  TC_PAGES.forEach(p => { PAGE_MODULE[p.id] = p.id.replace(/[0-9a-z]/g, ''); });
+} catch (e) { /* non-fatal */ }
+// Nodule's page ids (Q3, B1, J4b...) don't self-encode a module letter
+// the way the other three's do, so this one uses its own explicit
+// MODULE_BY_ID map instead of the regex-strip trick above. Merged into
+// the same PAGE_MODULE dict so the render loop below doesn't need to
+// know which condition it's dealing with.
+Object.assign(PAGE_MODULE, NODULE_MODULE_BY_ID);
 
 // ══════════════════════════════════════════════════════════════════════════
 // PUBLIC: generate the compiled questionnaire-answers PDF
@@ -167,7 +211,7 @@ function generateQuestionnaireReport({ episode, patient, row, outputPath }) {
          .text('PATIENT QUESTIONNAIRE SUMMARY', { align: 'center' });
       doc.moveDown();
       doc.fillColor('#888').font('Helvetica-Oblique').fontSize(9)
-         .text(`This report is not yet available for ${CONDITION_LABELS[episode.condition] || episode.condition}. Currently only Hypothyroidism is supported (pilot).`, { align: 'center' });
+         .text(`This report is not yet available for ${CONDITION_LABELS[episode.condition] || episode.condition}.`, { align: 'center' });
       drawFooter(doc, String(episode.id).slice(0, 8).toUpperCase());
       doc.end();
       return;
@@ -194,7 +238,7 @@ function generateQuestionnaireReport({ episode, patient, row, outputPath }) {
       const mod = PAGE_MODULE[id] || '';
       if (mod !== currentModule) {
         currentModule = mod;
-        sectionHeading(doc, MODULE_LABELS[mod] || `Module ${mod}`);
+        sectionHeading(doc, moduleLabel(episode.condition, mod));
       }
       qaBlock(doc, question, answer);
     });

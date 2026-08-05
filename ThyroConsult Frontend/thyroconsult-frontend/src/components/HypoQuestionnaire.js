@@ -2913,7 +2913,7 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
       </div>
 
       {/* Navigation */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: incompleteList.length > 0 ? 60 : 0 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <button className="btn btn-secondary" onClick={goPrev}>
           ← {currentPage === 0 ? 'Back' : 'Previous'}
         </button>
@@ -2928,36 +2928,6 @@ export const HypoQuestionnaire = ({ patientId, episodeId, patientGender, patient
           </button>
         </div>
       </div>
-
-      {/* Item 3: fixed bottom strip listing every unanswered question —
-          appears once Submit has been clicked and something's missing,
-          disappears once everything's fixed (fully derived from
-          incompleteList, so it reappears automatically if Submit is
-          clicked again and something's still missing). */}
-      {incompleteList.length > 0 && (
-        <div style={{
-          position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 40,
-          background: '#fff', borderTop: '2px solid var(--red-300, #e6a3a3)',
-          boxShadow: '0 -2px 12px rgba(0,0,0,0.10)', padding: '10px 20px',
-          display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
-        }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--red-700, #a83232)', marginRight: 4 }}>
-            {incompleteList.length} unanswered — jump to:
-          </span>
-          {incompleteList.map(({ p, idx }) => (
-            <button key={p.id} onClick={() => { setError(''); setCurrentPage(idx); }}
-              title={p.title}
-              style={{
-                fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 12, cursor: 'pointer',
-                border: `1.5px solid ${idx === currentPage ? 'var(--teal-500)' : 'var(--red-300, #e6a3a3)'}`,
-                background: idx === currentPage ? 'var(--teal-50)' : '#fff',
-                color: idx === currentPage ? 'var(--teal-700)' : 'var(--red-700, #a83232)',
-              }}>
-              Q{idx + 1}
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   );
 };

@@ -16,7 +16,7 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
   if (loading) {
     return (
       <div className="loading-screen">
-        <Spinner size={32} />
+        <Spinner size={64} borderColor="#000" stripColor="#fff" />
       </div>
     );
   }
@@ -36,7 +36,7 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
 // ─── Root redirect based on role ──────────────────────────
 const RootRedirect = () => {
   const { user, loading } = useAuth();
-  if (loading) return <div className="loading-screen"><Spinner size={32} /></div>;
+  if (loading) return <div className="loading-screen"><Spinner size={64} borderColor="#000" stripColor="#fff" /></div>;
   if (!user) return <Navigate to="/login" replace />;
   if (user.role === 'doctor') return <Navigate to="/doctor/dashboard" replace />;
   if (user.role === 'admin' || user.role === 'super_admin') return <Navigate to="/admin/stats" replace />;

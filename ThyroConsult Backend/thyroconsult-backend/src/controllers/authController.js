@@ -423,7 +423,7 @@ const savePhoto = async (req, res) => {
 
     // Resize and compress for storage
     const processed = await sharp(buffer)
-      .resize(400, 400, { fit: 'cover', position: 'face' })
+      .resize(400, 400, { fit: 'cover', position: 'center' }) // sharp has no 'face' position/gravity value — that was never a real option, it just silently threw "Expected valid position/gravity/strategy... but received face of type string" on every single call. 'center' is the right fix here (not 'attention'/entropy-based smart cropping): the capture UI already guides the user to "Centre your face within the frame" before the shot is taken, so a plain center-crop matches what's already framed.
       .jpeg({ quality: 85 })
       .toBuffer();
 
@@ -602,7 +602,22 @@ const refreshToken = async (req, res) => {
     const { user_id, user_role } = result.rows[0];
     await query('UPDATE refresh_tokens SET revoked = TRUE, revoked_at = NOW() WHERE token_hash = $1', [tokenHash]);
 
-    const tokens = await generateTokenPair(user_id, user_role, req.ip, req.get('user-agent'));
+    // The original access token's `managedBy` claim (set by switchProfile
+    // when this session switched into a relative) only ever lived in that
+    // JWT — refresh_tokens has no column for it, so a plain
+    // generateTokenPair(user_id, user_role, ...) here would silently drop
+    // it on every refresh, 15 minutes into any relative-profile session.
+    // Re-derive it from the authoritative source instead: patients.
+    // managed_by_patient_id for whichever patient this refresh token
+    // actually belongs to. null for a root account's own session, exactly
+    // matching generateTokenPair's default.
+    let managedBy = null;
+    if (user_role === 'patient') {
+      const patientCheck = await query('SELECT managed_by_patient_id FROM patients WHERE id = $1', [user_id]);
+      managedBy = patientCheck.rows[0]?.managed_by_patient_id || null;
+    }
+
+    const tokens = await generateTokenPair(user_id, user_role, req.ip, req.get('user-agent'), managedBy);
 
     res.json({ accessToken: tokens.accessToken, refreshToken: tokens.refreshToken });
   } catch (err) {
@@ -630,7 +645,7 @@ const logout = async (req, res) => {
 // ─── Create a relative/dependent profile under the logged-in account ──────
 const registerRelative = async (req, res) => {
   const parentId = req.user.id;
-  const { firstName, middleName, lastName, relation, dob, gender, bloodGroup, preferredLanguage } = req.body;
+  const { firstName, middleName, lastName, relation, dob, gender, bloodGroup, bloodGroupOther, preferredLanguage } = req.body;
 
   try {
     // A managed profile cannot itself add further relatives — keeps the
@@ -666,6 +681,11 @@ const registerRelative = async (req, res) => {
       dob_auto_calculated: false,
       gender,
       blood_group: bloodGroup || null,
+      // 'other' is a short flag in blood_group itself (fits the existing
+      // VARCHAR(5) column); the actual free-text name the patient typed
+      // (e.g. "Bombay blood group") lives here instead — see migration
+      // 044.
+      blood_group_other: bloodGroup === 'other' ? (bloodGroupOther || null) : null,
       country: 'IN',
       managed_by_patient_id: parentId,
       relation_to_manager: relation,

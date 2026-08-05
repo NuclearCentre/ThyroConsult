@@ -8,6 +8,19 @@ const { notificationTemplates } = require('../services/notificationTemplates');
 const { decryptPHI } = require('../utils/encryption');
 const { calculateAge } = require('../utils/calculateAge');
 const { translateOpinionToPatientLanguage } = require('../services/translationService');
+const { generateKeyFindings } = require('../services/opinionSummaryService');
+
+// Formatters that turn a raw questionnaire row into an ordered
+// [{id, question, answer}] list for the in-app Q&A view and the AI
+// key-findings draft. Only conditions with a formatter built so far are
+// registered here — see hyperReportFormatter.js's own header comment for
+// the pattern to replicate to TC/Nodule.
+const QA_FORMATTERS = {
+  hypothyroidism: require('../services/hypoReportFormatter').formatHypoAnswers,
+  hyperthyroidism: require('../services/hyperReportFormatter').formatHyperAnswers,
+  thyroid_cancer: require('../services/tcReportFormatter').formatTcAnswers,
+  nodule: require('../services/noduleReportFormatter').formatNoduleAnswers,
+};
 
 /**
  * Translate a just-submitted/amended opinion into the patient's
@@ -242,6 +255,16 @@ exports.getEpisodeForReview = async (req, res) => {
       }
     }
 
+    // Ordered, human-readable Q&A list for the in-app review view — built
+    // from the ENGLISH-translated questionnaireData above (not a second
+    // raw fetch), so free-text answers already reflect the physician's
+    // English-only portal rule. Only populated for conditions with a
+    // formatter built so far (see QA_FORMATTERS above); other conditions
+    // get an empty array so the frontend can render its existing raw
+    // fallback view without a null-check crash.
+    const qaFormatter = QA_FORMATTERS[episode.condition];
+    const formattedAnswers = (qaFormatter && questionnaireData) ? qaFormatter(questionnaireData) : [];
+
     // Uploaded documents — migration 022 added episode_id + field_label to
     // `documents`, so this now shows documents actually tagged to THIS
     // episode (uploaded against a specific question inside the Hypo/
@@ -275,6 +298,7 @@ exports.getEpisodeForReview = async (req, res) => {
       data: {
         episode,
         questionnaire: questionnaireData,
+        formattedAnswers,
         documents,
         opinion: opinionResult.rows[0] || null,
       }
@@ -282,6 +306,52 @@ exports.getEpisodeForReview = async (req, res) => {
   } catch (err) {
     console.error('getEpisodeForReview error:', err);
     res.status(500).json({ success: false, message: 'Failed to load episode' });
+  }
+};
+
+// ─── 3b. Doctor: AI-drafted key findings (reading aid, not a full
+// opinion draft) — re-derives formattedAnswers rather than trusting a
+// value the frontend could have sent back, so a stale/tampered payload
+// can't be fed to the AI call. ─────────────────────────────────────────
+exports.getAiKeyFindings = async (req, res) => {
+  try {
+    const { episodeId } = req.params;
+    const doctorId = req.user.id;
+
+    const epResult = await db.query(
+      `SELECT pce.condition FROM patient_condition_episodes pce
+       WHERE pce.id = $1 AND pce.primary_doctor_id = $2`,
+      [episodeId, doctorId]
+    );
+    if (!epResult.rows.length) {
+      return res.status(404).json({ success: false, message: 'Episode not found or not assigned to you' });
+    }
+    const { condition } = epResult.rows[0];
+
+    const qaFormatter = QA_FORMATTERS[condition];
+    if (!qaFormatter) {
+      return res.status(400).json({ success: false, message: `AI key findings not yet available for this condition` });
+    }
+
+    const tableMap = {
+      hypothyroidism: 'hypo_questionnaire',
+      hyperthyroidism: 'hyper_questionnaire',
+      thyroid_cancer: 'tc_questionnaire',
+      nodule: 'nodule_questionnaire',
+    };
+    const qResult = await db.query(`SELECT * FROM ${tableMap[condition]} WHERE episode_id = $1`, [episodeId]);
+    const row = qResult.rows[0] || null;
+    const formattedAnswers = row ? qaFormatter(row) : [];
+
+    if (!formattedAnswers.length) {
+      return res.json({ success: true, findings: [] });
+    }
+
+    const findings = await generateKeyFindings(formattedAnswers, condition);
+    res.json({ success: true, findings });
+  } catch (err) {
+    console.error('getAiKeyFindings error:', err);
+    res.status(500).json({ success: false, message: 'Failed to generate AI key findings' });
   }
 };
 

@@ -122,9 +122,34 @@ const updatePatient = async (req, res) => {
 };
 
 // ─── GET patient photo ─────────────────────────────────────
+// SECURITY: this used to accept req.params.id unconditionally (falling
+// back to req.user.id only if absent) — meaning a logged-in patient
+// could view ANY other patient's photo just by passing a different id
+// in the URL, and any doctor could view any patient's photo regardless
+// of assignment. Fixed here rather than left as when this was dead code
+// with no route pointing at it: a patient can only ever get their own
+// (req.user.id, :id ignored even if present); a doctor must be assigned
+// to at least one of that patient's episodes.
 const getPatientPhoto = async (req, res) => {
   try {
-    const patientId = req.params.id || req.user.id;
+    const requestedId = req.params.id;
+    let patientId;
+    if (req.user.role === 'patient') {
+      patientId = req.user.id;
+    } else if (req.user.role === 'doctor') {
+      if (!requestedId) return res.status(400).json({ error: 'Patient id required' });
+      const assigned = await query(
+        `SELECT 1 FROM patient_condition_episodes WHERE patient_id = $1 AND primary_doctor_id = $2 LIMIT 1`,
+        [requestedId, req.user.id]
+      );
+      if (!assigned.rows.length) {
+        return res.status(403).json({ error: 'Not authorised to view this patient\'s photo' });
+      }
+      patientId = requestedId;
+    } else {
+      return res.status(403).json({ error: 'Not authorised' });
+    }
+
     const result = await query(
       'SELECT photo_path, photo_captured_at FROM patients WHERE id = $1',
       [patientId]
@@ -623,7 +648,7 @@ const uploadPhoto = async (req, res) => {
     }
 
     const processed = await sharp(req.file.buffer)
-      .resize(400, 400, { fit: 'cover', position: 'face' })
+      .resize(400, 400, { fit: 'cover', position: 'center' }) // sharp has no 'face' position/gravity value — that was never a real option, it just silently threw "Expected valid position/gravity/strategy... but received face of type string" on every single call. 'center' is the right fix here (not 'attention'/entropy-based smart cropping): the capture UI already guides the user to "Centre your face within the frame" before the shot is taken, so a plain center-crop matches what's already framed.
       .jpeg({ quality: 85 })
       .toBuffer();
 
@@ -680,7 +705,7 @@ const uploadGuardianPhoto = async (req, res) => {
     }
 
     const processed = await sharp(req.file.buffer)
-      .resize(400, 400, { fit: 'cover', position: 'face' })
+      .resize(400, 400, { fit: 'cover', position: 'center' }) // sharp has no 'face' position/gravity value — that was never a real option, it just silently threw "Expected valid position/gravity/strategy... but received face of type string" on every single call. 'center' is the right fix here (not 'attention'/entropy-based smart cropping): the capture UI already guides the user to "Centre your face within the frame" before the shot is taken, so a plain center-crop matches what's already framed.
       .jpeg({ quality: 85 })
       .toBuffer();
 

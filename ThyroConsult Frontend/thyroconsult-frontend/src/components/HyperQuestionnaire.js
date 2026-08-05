@@ -277,6 +277,15 @@ const HyperOutputBox = () => null;
 // questionnaire module. This questionnaire's own question order/
 // branching/sequence is unchanged — only the upload widget moved.
 
+// Applied as minHeight (not fixed height) to the question card so
+// Previous/Next sit at a consistent vertical position across most pages —
+// same fix and same measured value as HYPO_PAGE_MIN_HEIGHT in
+// HypoQuestionnaire.js (calibrated on the Wrists/Hands page, all three
+// symptoms collapsed to "No"). Pages that genuinely need more room
+// (dropdowns, medication blocks, expanded Yes-branches) are expected to
+// exceed this and push the buttons lower — that's accepted, not a bug.
+const HYPER_PAGE_MIN_HEIGHT = 328;
+
 const HyperSectionCard = ({ title, children }) => (
   <div style={{ marginTop: 20, padding: "16px 20px", border: "1.5px solid #d0d7e8", borderRadius: 10, background: "#fff" }}>
     {title && <p style={{ margin: "0 0 14px", fontWeight: 700, color: "#3a7bd5", fontSize: 13, textTransform: "uppercase", letterSpacing: 0.5 }}>{title}</p>}
@@ -341,18 +350,24 @@ const HYPER_PAGE_VALIDATORS = {
 
   B1: d => !!d.hysterectomy_status && (d.hysterectomy_status !== "yes" || (!!d.hysterectomy_year && !!d.hysterectomy_reason && (d.hysterectomy_reason !== "other" || !!d.hysterectomy_reason_other))),
   B2: d => !!d.menopause_status && (d.menopause_status !== "post" || !!d.menopause_year),
-  B3: d => !!d.menstrual_status && (d.menstrual_status !== "yes" || !!d.menstrual_pattern),
+  B3: d => !!d.menstrual_change_status && (d.menstrual_change_status !== "yes" || !!d.menstrual_pattern),
   B4: d => !!d.lmp_date,
   B5: d => {
-    const lmpDaysAgo = d.lmp_date ? Math.floor((new Date() - new Date(d.lmp_date)) / 86400000) : 0;
-    if (lmpDaysAgo < 31) return true; // page just shows an info message, nothing to answer
+    // Same fix as the B5 render case: an unanswered LMP (d.lmp_date
+    // falsy) must NOT fall back to "0 days ago" — that made this page
+    // silently count as complete with zero input, since 0 < 31 always
+    // short-circuited to true before any date was ever entered.
+    if (d.lmp_date) {
+      const lmpDaysAgo = Math.floor((new Date() - new Date(d.lmp_date)) / 86400000);
+      if (lmpDaysAgo < 31) return true; // page just shows an info message, nothing to answer
+    }
     return !!d.pregnancy_status;
   },
 
   C1: d => !!d.thyroid_dx_status && (d.thyroid_dx_status !== "yes" || (!!d.thyroid_dx_type && !!d.thyroid_dx_year)),
   C2a: d => !!d.thyroid_surgery_status && (d.thyroid_surgery_status !== "yes" || (!!d.thyroid_surgery_type && (d.thyroid_surgery_type !== "hemi" || !!d.thyroid_surgery_side))),
-  C2b: d => !!d.rai_status && (d.rai_status !== "yes" || ((d.rai_courses || []).some(c => c.dose_mci && c.year) && !!d.rai_post_hypothyroid)),
-  C3: d => !!d.med_status && (d.med_status !== "yes" || (!!d.med_drug_name && !!d.med_brand_name && !!d.med_dose_mg && !!d.med_tablets && !!d.med_compliance)),
+  C2b: d => !!d.rai_received && (d.rai_received !== "yes" || ((d.rai_courses || []).some(c => c.dose_mci && c.year) && !!d.rai_post_hypothyroid)),
+  C3: d => !!d.med_status && (d.med_status !== "yes" || (!!d.med_drug_name && !!d.med_brand_name && !!d.med_dose_mg && !!d.med_tablets_at_a_time && !!d.med_compliance)),
   C4: d => !!d.family_thyroid_status && (d.family_thyroid_status !== "yes" || (d.family_thyroid_data || []).some(e => e.relation && e.condition)),
   C5: d => !!d.autoimmune_status && (d.autoimmune_status !== "yes" || (d.autoimmune_data || []).some(e => e.condition)),
 
@@ -366,10 +381,10 @@ const HYPER_PAGE_VALIDATORS = {
   D5: d => !!d.antibody_status,
   D6: d => !!d.imaging_status && (d.imaging_status !== "yes" || ((d.imaging_types || []).length > 0 && !!d.imaging_date)),
 
-  E1: d => !!d.hyper_cause_known && (d.hyper_cause_known !== "yes" || (!!d.hyper_cause_type && dur({ since_date: d.hyper_cause_since_date, years: d.hyper_cause_since_years, months: d.hyper_cause_since_months_val }))),
+  E1: d => !!d.hyper_cause_known && (d.hyper_cause_known !== "yes" || (!!d.hyper_cause_type && dur({ since_date: d.hyper_cause_since_date, years: d.hyper_cause_since_years, months: d.hyper_cause_since_months }))),
   E2: d => !!d.graves_confirmed && (d.graves_confirmed !== "yes" || (!!d.trab_positive && !!d.ophthal_status && !!d.dermopathy_status && !!d.acropathy_status)),
   E3: d => !!d.toxic_nodule_confirmed && (d.toxic_nodule_confirmed !== "yes" || (!!d.toxic_nodule_type && !!d.e3_fnac_status && (d.e3_fnac_status !== "yes" || (!!d.e3_fnac_date && !!d.e3_fnac_result)))),
-  E4: d => !!d.goitre_status && (d.goitre_status !== "yes" || (!!d.goitre_size_label && !!d.goitre_pressure_status && (d.goitre_pressure_status !== "yes" || (d.goitre_pressure_types || []).length > 0))),
+  E4: d => !!d.goitre_present && (d.goitre_present !== "yes" || (!!d.goitre_size_label && !!d.goitre_pressure_status && (d.goitre_pressure_status !== "yes" || (d.goitre_pressure_types || []).length > 0))),
   E5: d => !!d.fnac_status && (d.fnac_status !== "yes" || (!!d.fnac_date && !!d.fnac_result)),
 
   // ── Module F — symptom pages (renderSymptomPage/renderHairNailPage) ──
@@ -403,17 +418,17 @@ const HYPER_PAGE_VALIDATORS = {
   // ── Module G — treatment & monitoring ──
   G2: d => !!d.definitive_tx_status && (d.definitive_tx_status !== "yes" || !!d.definitive_tx_type),
   G3: d => !!d.dose_changed_status && (d.dose_changed_status !== "yes" || (!!d.dose_changed_date && !!d.dose_change_direction && !!d.dose_changed_reason)),
-  G4: d => !!d.beta_blocker_status && (d.beta_blocker_status !== "yes" || (!!d.beta_blocker_name && !!d.beta_blocker_dose && !!d.beta_blocker_freq)),
+  G4: d => !!d.on_beta_blocker && (d.on_beta_blocker !== "yes" || (!!d.beta_blocker_name && !!d.beta_blocker_dose && !!d.beta_blocker_freq)),
   G5: d => !!d.monitoring_status && (d.monitoring_status !== "yes" || !!d.review_frequency_val),
 
   // ── Module H — comorbidities ──
-  H1: d => !!d.dyslipidaemia_status && (d.dyslipidaemia_status !== "yes" || (!!d.dyslipidaemia_since_months && !!d.dyslipidaemia_on_med && (d.dyslipidaemia_on_med !== "yes" || (d.dyslipidaemia_med_data || []).some(m => m.name)))),
-  H2: d => !!d.diabetes_status && (d.diabetes_status !== "yes" || (!!d.diabetes_type && !!d.diabetes_since_months && !!d.diabetes_on_med && (d.diabetes_on_med !== "yes" || (d.diabetes_med_data || []).some(m => m.name)))),
-  H3: d => !!d.anaemia_status && (d.anaemia_status !== "yes" || ((d.anaemia_types || []).length > 0 && !!d.anaemia_on_med && (d.anaemia_on_med !== "yes" || (d.anaemia_med_data || []).some(m => m.name)))),
+  H1: d => !!d.dyslipidaemia_status && (d.dyslipidaemia_status !== "yes" || (!!d.dyslipidaemia_since_months && !!d.dyslipidaemia_on_med && (d.dyslipidaemia_on_med !== "yes" || (d.dyslipidaemia_meds || []).some(m => m.name)))),
+  H2: d => !!d.diabetes_status && (d.diabetes_status !== "yes" || (!!d.diabetes_type && !!d.diabetes_since_months && !!d.diabetes_on_med && (d.diabetes_on_med !== "yes" || (d.diabetes_meds || []).some(m => m.name)))),
+  H3: d => !!d.anaemia_status && (d.anaemia_status !== "yes" || ((d.anaemia_types || []).length > 0 && !!d.anaemia_on_med && (d.anaemia_on_med !== "yes" || (d.anaemia_meds || []).some(m => m.name)))),
   H4: d => !!d.pcos_status && (d.pcos_status !== "yes" || (!!(d.pcos_since_date || d.pcos_years || d.pcos_months) && !!d.pcos_on_med && (d.pcos_on_med !== "yes" || (d.pcos_meds || []).some(m => m.name)))),
   H5: d => !!d.infertility_status,
-  H6: d => !!d.depression_status && (d.depression_status !== "yes" || !!d.depression_on_med_status),
-  H8: d => !!d.osteoporosis_status && (d.osteoporosis_status !== "yes" || (!!d.osteoporosis_dexa_status && !!d.osteoporosis_on_med && (d.osteoporosis_on_med !== "yes" || (d.osteoporosis_med_data || []).some(m => m.name)))),
+  H6: d => !!d.depression_status && (d.depression_status !== "yes" || !!d.depression_on_med),
+  H8: d => !!d.osteoporosis_status && (d.osteoporosis_status !== "yes" || (!!d.osteoporosis_dexa && !!d.osteoporosis_on_med && (d.osteoporosis_on_med !== "yes" || (d.osteoporosis_meds || []).some(m => m.name)))),
   H9: () => true, // optional free-text notes
   DONE: () => true,
 };
@@ -471,6 +486,14 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
   const [savedPageId, setSavedPageId] = useState(null);
+  const [lastSavedAt, setLastSavedAt] = useState(null);
+  // Resets on every page change — without this, lastSavedAt stays truthy
+  // forever once the FIRST autosave anywhere in the session fires (e.g.
+  // the draft-load-triggered save on mount), so "✓ Saved" kept showing
+  // on brand-new, still-blank pages the patient hadn't touched yet —
+  // reporting "something was saved at some point," not "this page is
+  // saved." Same fix as HypoQuestionnaire.js's lastSavedAt.
+  useEffect(() => { setLastSavedAt(null); }, [currentPage]);
   const [resumedFrom, setResumedFrom] = useState(false);
 
   const set = useCallback((key, value) => setData(prev => ({ ...prev, [key]: value })), []);
@@ -511,13 +534,22 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
       ...(isFemale ? ["H4"] : []),
       ...(!hideInfertility ? ["H5"] : []),
       "H6", "H8", "H9",
-      "DONE",
     ];
     return pages;
   }, [isFemale, hidePregnancy, get("hyper_cause_type"), get("med_status"), get("e3_fnac_status"), get("hysterectomy_status")]);
 
   const pageId = allPages[currentPage];
   const progress = Math.round((currentPage / (allPages.length - 1)) * 100);
+  // What's actually reported to the backend as completion_percent —
+  // counts pages that genuinely pass their own validator (same check
+  // handleSubmit uses), not just position in the flow. Matches
+  // HypoQuestionnaire.js's validationProgress fix — see its comment.
+  const validationProgress = Math.round(
+    (allPages.filter(id => {
+      const v = HYPER_PAGE_VALIDATORS[id];
+      return v ? v(data) : true;
+    }).length / allPages.length) * 100
+  );
 
   // Blocks proceeding past a screen whose year-of-event field is before
   // the patient's own birth year.
@@ -573,7 +605,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
   const submitFinal = async () => {
     setSaving(true);
     try {
-      await conditionAPI.saveHyperQ(patientId, episodeId, { ...data, _draft: false });
+      await conditionAPI.saveHyperQ(patientId, episodeId, { ...data, _draft: false, _progressPercent: validationProgress });
       onComplete && onComplete();
     } catch (e) { setSaveMsg("Submission failed. Please try again."); }
     setSaving(false);
@@ -582,8 +614,8 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
   // Every question needs an answer before the questionnaire can actually
   // be submitted — finds the first incomplete page (in display order, so
   // it respects branching) and routes there instead of submitting.
-  // Without this, "Submit to my doctor" on the DONE page would save
-  // whatever was filled in regardless of gaps.
+  // Without this, clicking "Submit questionnaire" on the last page would
+  // save whatever was filled in regardless of gaps.
   const handleSubmit = () => {
     const incompleteIdx = allPages.findIndex(id => { const v = HYPER_PAGE_VALIDATORS[id]; return v ? !v(data) : false; });
     if (incompleteIdx !== -1) {
@@ -607,8 +639,8 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
     if (!patientId || !episodeId) return;
     const t = setTimeout(async () => {
       try {
-        await conditionAPI.saveHyperQ(patientId, episodeId, { ...data, _draft: true, _currentPage: pageId });
-        setSaveMsg("✓ Saved");
+        await conditionAPI.saveHyperQ(patientId, episodeId, { ...data, _draft: true, _currentPage: pageId, _progressPercent: validationProgress });
+        setLastSavedAt(Date.now());
       } catch (e) { /* silent — retries on next change */ }
     }, 1500);
     return () => clearTimeout(t);
@@ -718,7 +750,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
       case "A3": return (
         <div>
           <h3>What is your marital status?</h3>
-          <HyperRadioGroup value={get("marital_status")} onChange={v => set("marital_status", v)} options={[{ value: "unmarried", label: "Unmarried" }, { value: "married", label: "Married" }, { value: "divorced", label: "Divorced" }, { value: "widowed", label: "Widowed" }]} inline />
+          <HyperRadioGroup value={get("marital_status")} onChange={v => set("marital_status", v)} options={[{ value: "unmarried", label: "Unmarried" }, { value: "married", label: "Married" }, { value: "divorced", label: "Divorced" }, { value: "widowed", label: "Widowed" }]} />
           <HyperOutputBox text={get("marital_status") ? get("marital_status").charAt(0).toUpperCase() + get("marital_status").slice(1) : ""} />
         </div>
       );
@@ -767,8 +799,8 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
       case "B3": return (
         <div>
           <h3>Have you noticed any changes in your menstrual cycle?</h3>
-          <HyperYesNoUnsure value={get("menstrual_status")} onChange={v => set("menstrual_status", v)} />
-          {get("menstrual_status") === "yes" && (
+          <HyperYesNoUnsure value={get("menstrual_change_status")} onChange={v => set("menstrual_change_status", v)} />
+          {get("menstrual_change_status") === "yes" && (
             <HyperSectionCard title="Menstrual changes">
               <HyperField label="Pattern">
                 <HyperRadioGroup value={get("menstrual_pattern")} onChange={v => set("menstrual_pattern", v)} options={[{ value: "regular", label: "Regular" }, { value: "irregular", label: "Irregular" }]} inline />
@@ -779,7 +811,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
               <HyperDurationPicker minDate={get("dob")} sinceDate={get("menstrual_since_date")} onSinceDate={v => set("menstrual_since_date", v)} years={get("menstrual_years")} onYears={v => set("menstrual_years", v)} months={get("menstrual_months")} onMonths={v => set("menstrual_months", v)} />
             </HyperSectionCard>
           )}
-          <HyperOutputBox text={get("menstrual_status") === "yes" ? `${get("menstrual_pattern") || ""} ${(get("menstrual_flow", []).join(" and ")) || ""} flow since last ${durationText(get("menstrual_years"), get("menstrual_months"), get("menstrual_since_date"))}` : ""} />
+          <HyperOutputBox text={get("menstrual_change_status") === "yes" ? `${get("menstrual_pattern") || ""} ${(get("menstrual_flow", []).join(" and ")) || ""} flow since last ${durationText(get("menstrual_years"), get("menstrual_months"), get("menstrual_since_date"))}` : ""} />
         </div>
       );
 
@@ -795,8 +827,15 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
 
       case "B5": return (() => {
         const lmpDate = get("lmp_date");
-        const lmpDaysAgo = lmpDate ? Math.floor((new Date() - new Date(lmpDate)) / 86400000) : 0;
-        if (lmpDaysAgo < 31) return <div><p style={{ color: "#888" }}>LMP was less than 31 days ago — pregnancy question not applicable.</p></div>;
+        // Only short-circuit into the "not applicable" message when an
+        // LMP date was actually entered and is genuinely recent — an
+        // unanswered B4 must NOT be treated as "0 days ago" (which is
+        // < 31 and was silently showing this message on every blank
+        // LMP, before any date was ever entered).
+        if (lmpDate) {
+          const lmpDaysAgo = Math.floor((new Date() - new Date(lmpDate)) / 86400000);
+          if (lmpDaysAgo < 31) return <div><p style={{ color: "#888" }}>LMP was less than 31 days ago — pregnancy question not applicable.</p></div>;
+        }
         // EDD = LMP + 9 months + 7 days
         const eddDate = lmpDate ? (() => { const d = new Date(lmpDate); d.setMonth(d.getMonth() + 9); d.setDate(d.getDate() + 7); return d; })() : null;
         return (
@@ -864,8 +903,8 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
       case "C2b": return (
         <div>
           <h3>Have you had radioiodine (RAI) therapy in the past?</h3>
-          <HyperYesNoUnsure value={get("rai_status")} onChange={v => set("rai_status", v)} />
-          {get("rai_status") === "yes" && (
+          <HyperYesNoUnsure value={get("rai_received")} onChange={v => set("rai_received", v)} />
+          {get("rai_received") === "yes" && (
             <HyperSectionCard title="RAI therapy details">
               <HyperField label="How many times have you received radioiodine?">
                 <HyperSelect value={get("rai_count", "1")} onChange={v => { set("rai_count", v); const n = parseInt(v); const existing = get("rai_courses", []); const updated = Array.from({ length: n }, (_, i) => existing[i] || { dose_mci: "", month: "", year: "" }); set("rai_courses", updated); }} options={[1,2,3,4,5].map(n => ({ value: String(n), label: String(n) }))} />
@@ -897,7 +936,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
             </HyperSectionCard>
           )}
           <HyperOutputBox text={(() => {
-            if (get("rai_status") !== "yes") return "";
+            if (get("rai_received") !== "yes") return "";
             const courses = (get("rai_courses", []) || []).filter(c => c.dose_mci && c.year).sort((a, b) => parseInt(a.year) - parseInt(b.year) || parseInt(a.month) - parseInt(b.month));
             if (courses.length === 0) return "";
             if (courses.length === 1) return `Post low-dose radioiodine therapy — ${courses[0].dose_mci} mCi given on ${courses[0].month || ""}/${courses[0].year}`;
@@ -930,7 +969,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
                   <HyperInput value={get("med_drug_name")} onChange={v => set("med_drug_name", v)} placeholder="e.g. Carbimazole" />
                 </HyperField>
                 <HyperField label="Tablets at a time">
-                  <HyperInput type="number" value={get("med_tablets")} onChange={v => set("med_tablets", v)} placeholder="e.g. 2" min={1} max={10} />
+                  <HyperInput type="number" value={get("med_tablets_at_a_time")} onChange={v => set("med_tablets_at_a_time", v)} placeholder="e.g. 2" min={1} max={10} />
                 </HyperField>
                 <HyperField label="Times per day">
                   <HyperSelect value={get("med_times_per_day", "1")} onChange={v => { set("med_times_per_day", v); const n = parseInt(v); const existing = get("med_timing", []); const updated = Array.from({ length: n }, (_, i) => existing[i] || { dose_number: i + 1, timing: "" }); set("med_timing", updated); }} options={[1,2,3,4].map(n => ({ value: String(n), label: `${n} time${n > 1 ? "s" : ""}` }))} />
@@ -958,7 +997,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
               <HyperField label="Compliance">
                 <HyperRadioGroup value={get("med_compliance")} onChange={v => set("med_compliance", v)} options={[{ value: "regular", label: "Regular" }, { value: "irregular", label: "Irregular" }, { value: "skips_sometimes", label: "Skips sometimes" }]} inline />
               </HyperField>
-              <HyperDurationPicker minDate={get("dob")} label="Taking since" sinceDate={get("med_since_date")} onSinceDate={v => set("med_since_date", v)} years={get("med_since_years")} onYears={v => set("med_since_years", v)} months={get("med_since_months_val")} onMonths={v => set("med_since_months_val", v)} />
+              <HyperDurationPicker minDate={get("dob")} label="Taking since" sinceDate={get("med_since_date")} onSinceDate={v => set("med_since_date", v)} years={get("med_since_years")} onYears={v => set("med_since_years", v)} months={get("med_since_months")} onMonths={v => set("med_since_months", v)} />
             </HyperSectionCard>
           )}
           <HyperOutputBox text={(() => {
@@ -966,9 +1005,9 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
             const timings = (get("med_timing", []) || []).map(t => t.timing || "");
             const allMealTime = timings.length > 0 && timings.every(t => t.includes("after_breakfast") || t.includes("after_lunch") || t.includes("after_dinner"));
             const timingText = allMealTime ? "after meals" : timings.map(t => (t || "").replace(/_/g, " ")).join(", ");
-            const dur = durationText(get("med_since_years"), get("med_since_months_val"), get("med_since_date"));
+            const dur = durationText(get("med_since_years"), get("med_since_months"), get("med_since_date"));
             const brandLabel = get("med_brand_name") === "other" ? "" : get("med_brand_name") || "";
-            return `On Tab. ${brandLabel}${brandLabel ? " " : ""}(${get("med_drug_name") || ""}) — ${get("med_dose_mg") || "?"} mg — ${get("med_tablets") || "?"} tablet${parseInt(get("med_tablets")) > 1 ? "s" : ""} — ${get("med_times_per_day") || "?"} times per day${timingText ? " " + timingText : ""}. ${get("med_compliance") ? (get("med_compliance").replace(/_/g, " ").charAt(0).toUpperCase() + get("med_compliance").replace(/_/g, " ").slice(1)) + "." : ""}${dur ? " Since " + dur + "." : ""}`;
+            return `On Tab. ${brandLabel}${brandLabel ? " " : ""}(${get("med_drug_name") || ""}) — ${get("med_dose_mg") || "?"} mg — ${get("med_tablets_at_a_time") || "?"} tablet${parseInt(get("med_tablets_at_a_time")) > 1 ? "s" : ""} — ${get("med_times_per_day") || "?"} times per day${timingText ? " " + timingText : ""}. ${get("med_compliance") ? (get("med_compliance").replace(/_/g, " ").charAt(0).toUpperCase() + get("med_compliance").replace(/_/g, " ").slice(1)) + "." : ""}${dur ? " Since " + dur + "." : ""}`;
           })()} />
         </div>
       );
@@ -1164,10 +1203,10 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
               <HyperField label="Cause">
                 <HyperRadioGroup value={get("hyper_cause_type")} onChange={v => set("hyper_cause_type", v)} options={[{ value: "graves_disease", label: "Graves' disease" }, { value: "toxic_mng", label: "Toxic multinodular goitre (Toxic MNG)" }, { value: "aftn", label: "Single toxic nodule (AFTN)" }, { value: "subacute_thyroiditis", label: "Subacute thyroiditis" }, { value: "postpartum_thyroiditis", label: "Post-partum thyroiditis" }, { value: "drug_induced", label: "Drug-induced (e.g. amiodarone, lithium)" }, { value: "other", label: "Other" }]} />
               </HyperField>
-              <HyperDurationPicker minDate={get("dob")} label="Diagnosed / known since" sinceDate={get("hyper_cause_since_date")} onSinceDate={v => set("hyper_cause_since_date", v)} years={get("hyper_cause_since_years")} onYears={v => set("hyper_cause_since_years", v)} months={get("hyper_cause_since_months_val")} onMonths={v => set("hyper_cause_since_months_val", v)} />
+              <HyperDurationPicker minDate={get("dob")} label="Diagnosed / known since" sinceDate={get("hyper_cause_since_date")} onSinceDate={v => set("hyper_cause_since_date", v)} years={get("hyper_cause_since_years")} onYears={v => set("hyper_cause_since_years", v)} months={get("hyper_cause_since_months")} onMonths={v => set("hyper_cause_since_months", v)} />
             </HyperSectionCard>
           )}
-          <HyperOutputBox text={get("hyper_cause_known") === "yes" && get("hyper_cause_type") ? `${(get("hyper_cause_type") || "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())} since ${durationText(get("hyper_cause_since_years"), get("hyper_cause_since_months_val"), get("hyper_cause_since_date"))}` : ""} />
+          <HyperOutputBox text={get("hyper_cause_known") === "yes" && get("hyper_cause_type") ? `${(get("hyper_cause_type") || "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())} since ${durationText(get("hyper_cause_since_years"), get("hyper_cause_since_months"), get("hyper_cause_since_date"))}` : ""} />
         </div>
       );
 
@@ -1188,7 +1227,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
                   <HyperField label="Eye findings (multi-select)">
                     <HyperCheckGroup values={get("ophthal_findings", [])} onChange={v => set("ophthal_findings", v)} options={[{ value: "proptosis", label: "Bulging eyes (proptosis)" }, { value: "puffy_eyelids", label: "Puffy eyelids" }, { value: "double_vision", label: "Double vision" }, { value: "eye_pain", label: "Eye pain" }, { value: "reduced_vision", label: "Reduced vision" }, { value: "redness", label: "Redness of eyes" }]} />
                   </HyperField>
-                  <HyperDurationPicker minDate={get("dob")} sinceDate={get("ophthal_since_date")} onSinceDate={v => set("ophthal_since_date", v)} years={get("ophthal_since_years")} onYears={v => set("ophthal_since_years", v)} months={get("ophthal_since_months_val")} onMonths={v => set("ophthal_since_months_val", v)} />
+                  <HyperDurationPicker minDate={get("dob")} sinceDate={get("ophthal_since_date")} onSinceDate={v => set("ophthal_since_date", v)} years={get("ophthal_since_years")} onYears={v => set("ophthal_since_years", v)} months={get("ophthal_since_months")} onMonths={v => set("ophthal_since_months", v)} />
                   <HyperField label="Assessed by an ophthalmologist?">
                     <HyperRadioGroup value={get("ophthal_assessed")} onChange={v => set("ophthal_assessed", v)} options={[{ value: "yes", label: "Yes" }, { value: "no", label: "No" }]} inline />
                   </HyperField>
@@ -1207,7 +1246,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
               </HyperField>
             </HyperSectionCard>
           )}
-          <HyperOutputBox text={get("graves_confirmed") === "yes" ? `Graves' disease — TRAb ${get("trab_positive") || "not tested"}.${get("ophthal_status") === "yes" ? ` Graves' ophthalmopathy: ${(get("ophthal_findings", []) || []).join(", ")} since ${durationText(get("ophthal_since_years"), get("ophthal_since_months_val"), get("ophthal_since_date"))}.${get("ophthal_assessed") === "yes" ? " Assessed by ophthalmologist." : ""}` : ""}${get("dermopathy_status") === "yes" ? ` Graves' dermopathy since ${durationText(get("dermopathy_years"), get("dermopathy_months"))}.` : ""}${get("acropathy_status") === "yes" ? " Graves' acropathy present." : ""}` : ""} />
+          <HyperOutputBox text={get("graves_confirmed") === "yes" ? `Graves' disease — TRAb ${get("trab_positive") || "not tested"}.${get("ophthal_status") === "yes" ? ` Graves' ophthalmopathy: ${(get("ophthal_findings", []) || []).join(", ")} since ${durationText(get("ophthal_since_years"), get("ophthal_since_months"), get("ophthal_since_date"))}.${get("ophthal_assessed") === "yes" ? " Assessed by ophthalmologist." : ""}` : ""}${get("dermopathy_status") === "yes" ? ` Graves' dermopathy since ${durationText(get("dermopathy_years"), get("dermopathy_months"))}.` : ""}${get("acropathy_status") === "yes" ? " Graves' acropathy present." : ""}` : ""} />
         </div>
       );
 
@@ -1227,14 +1266,14 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
                 <div style={{ paddingLeft: 16, borderLeft: "3px solid #3a7bd5", marginTop: 8 }}>
                   <HyperField label="FNAC date"><HyperInput type="date" value={get("e3_fnac_date")} onChange={v => set("e3_fnac_date", v)} max={new Date().toISOString().split("T")[0]} /></HyperField>
                   <HyperField label="FNAC result">
-                    <HyperRadioGroup value={get("e3_fnac_result")} onChange={v => set("e3_fnac_result", v)} options={[{ value: "benign", label: "Benign" }, { value: "malignant", label: "Malignant" }, { value: "indeterminate", label: "Indeterminate" }, { value: "unknown", label: "Unknown" }]} inline />
+                    <HyperRadioGroup value={get("e3_fnac_result")} onChange={v => set("e3_fnac_result", v)} options={[{ value: "benign", label: "Benign" }, { value: "malignant", label: "Malignant" }, { value: "indeterminate", label: "Indeterminate" }, { value: "unknown", label: "Unknown" }]} />
                   </HyperField>
                 </div>
               )}
-              <HyperField label="Size of nodule if known (cm — optional)"><HyperInput type="number" value={get("e3_nodule_size")} onChange={v => set("e3_nodule_size", v)} placeholder="e.g. 2.3" min={0} max={20} /></HyperField>
+              <HyperField label="Size of nodule if known (cm — optional)"><HyperInput type="number" value={get("e3_nodule_size_cm")} onChange={v => set("e3_nodule_size_cm", v)} placeholder="e.g. 2.3" min={0} max={20} /></HyperField>
             </HyperSectionCard>
           )}
-          <HyperOutputBox text={get("toxic_nodule_confirmed") === "yes" && get("toxic_nodule_type") ? `K/c/o ${get("toxic_nodule_type") === "aftn" ? "AFTN" : "Toxic MNG"}.${get("e3_fnac_status") === "yes" && get("e3_fnac_result") ? ` FNAC — ${get("e3_fnac_result")}${get("e3_fnac_date") ? " (" + fmtDate(get("e3_fnac_date")) + ")" : ""}.` : ""}${get("e3_nodule_size") ? ` Nodule size ${get("e3_nodule_size")} cm.` : ""}` : ""} />
+          <HyperOutputBox text={get("toxic_nodule_confirmed") === "yes" && get("toxic_nodule_type") ? `K/c/o ${get("toxic_nodule_type") === "aftn" ? "AFTN" : "Toxic MNG"}.${get("e3_fnac_status") === "yes" && get("e3_fnac_result") ? ` FNAC — ${get("e3_fnac_result")}${get("e3_fnac_date") ? " (" + fmtDate(get("e3_fnac_date")) + ")" : ""}.` : ""}${get("e3_nodule_size_cm") ? ` Nodule size ${get("e3_nodule_size_cm")} cm.` : ""}` : ""} />
         </div>
       );
 
@@ -1242,13 +1281,13 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
         <div>
           <h3>Do you have or have you been told you have a goitre?</h3>
           <p style={{ color: "#666", fontSize: 14 }}>Enlarged thyroid / swelling in the front of the neck</p>
-          <HyperYesNoUnsure value={get("goitre_status")} onChange={v => set("goitre_status", v)} />
-          {get("goitre_status") === "yes" && (
+          <HyperYesNoUnsure value={get("goitre_present")} onChange={v => set("goitre_present", v)} />
+          {get("goitre_present") === "yes" && (
             <HyperSectionCard title="Goitre details">
               <HyperField label="Size">
-                <HyperRadioGroup value={get("goitre_size_label")} onChange={v => set("goitre_size_label", v)} options={[{ value: "small", label: "Small" }, { value: "medium", label: "Medium" }, { value: "large", label: "Large" }, { value: "unsure", label: "Unsure" }]} inline />
+                <HyperRadioGroup value={get("goitre_size_label")} onChange={v => set("goitre_size_label", v)} options={[{ value: "small", label: "Small" }, { value: "medium", label: "Medium" }, { value: "large", label: "Large" }, { value: "unsure", label: "Unsure" }]} />
               </HyperField>
-              <HyperDurationPicker minDate={get("dob")} sinceDate={get("goitre_since_date")} onSinceDate={v => set("goitre_since_date", v)} years={get("goitre_since_years")} onYears={v => set("goitre_since_years", v)} months={get("goitre_since_months_val")} onMonths={v => set("goitre_since_months_val", v)} />
+              <HyperDurationPicker minDate={get("dob")} sinceDate={get("goitre_since_date")} onSinceDate={v => set("goitre_since_date", v)} years={get("goitre_since_years")} onYears={v => set("goitre_since_years", v)} months={get("goitre_since_months")} onMonths={v => set("goitre_since_months", v)} />
               <HyperField label="Is the goitre causing any pressure symptoms?">
                 <HyperYesNoUnsure value={get("goitre_pressure_status")} onChange={v => set("goitre_pressure_status", v)} />
               </HyperField>
@@ -1259,7 +1298,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
               )}
             </HyperSectionCard>
           )}
-          <HyperOutputBox text={get("goitre_status") === "yes" ? `${get("goitre_size_label") ? get("goitre_size_label").charAt(0).toUpperCase() + get("goitre_size_label").slice(1) + "-sized" : ""} goitre${durationText(get("goitre_since_years"), get("goitre_since_months_val"), get("goitre_since_date")) ? " since " + durationText(get("goitre_since_years"), get("goitre_since_months_val"), get("goitre_since_date")) : ""}.${get("goitre_pressure_status") === "yes" && (get("goitre_pressure_types", []) || []).length > 0 ? " Pressure symptom: " + (get("goitre_pressure_types", []) || []).join(", ").replace(/_/g, " ") + "." : ""}` : ""} />
+          <HyperOutputBox text={get("goitre_present") === "yes" ? `${get("goitre_size_label") ? get("goitre_size_label").charAt(0).toUpperCase() + get("goitre_size_label").slice(1) + "-sized" : ""} goitre${durationText(get("goitre_since_years"), get("goitre_since_months"), get("goitre_since_date")) ? " since " + durationText(get("goitre_since_years"), get("goitre_since_months"), get("goitre_since_date")) : ""}.${get("goitre_pressure_status") === "yes" && (get("goitre_pressure_types", []) || []).length > 0 ? " Pressure symptom: " + (get("goitre_pressure_types", []) || []).join(", ").replace(/_/g, " ") + "." : ""}` : ""} />
         </div>
       );
 
@@ -1271,7 +1310,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
             <HyperSectionCard title="FNAC details">
               <HyperField label="Date"><HyperInput type="date" value={get("fnac_date")} onChange={v => set("fnac_date", v)} max={new Date().toISOString().split("T")[0]} /></HyperField>
               <HyperField label="Result">
-                <HyperRadioGroup value={get("fnac_result")} onChange={v => set("fnac_result", v)} options={[{ value: "benign", label: "Benign" }, { value: "malignant", label: "Malignant" }, { value: "indeterminate", label: "Indeterminate" }, { value: "unknown", label: "Unknown" }]} inline />
+                <HyperRadioGroup value={get("fnac_result")} onChange={v => set("fnac_result", v)} options={[{ value: "benign", label: "Benign" }, { value: "malignant", label: "Malignant" }, { value: "indeterminate", label: "Indeterminate" }, { value: "unknown", label: "Unknown" }]} />
               </HyperField>
             </HyperSectionCard>
           )}
@@ -1450,7 +1489,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
 
       case "F21": return renderSymptomPage("F21","Do you feel dizzy or light-headed when you stand up quickly? (postural giddiness)","giddiness",
         <>
-          <HyperField label="Frequency"><HyperRadioGroup value={get("sym_giddiness_freq")} onChange={v => set("sym_giddiness_freq", v)} options={[{ value: "rarely", label: "Rarely" }, { value: "sometimes", label: "Sometimes" }, { value: "often", label: "Often" }, { value: "every_time", label: "Every time I stand" }]} inline /></HyperField>
+          <HyperField label="Frequency"><HyperRadioGroup value={get("sym_giddiness_freq")} onChange={v => set("sym_giddiness_freq", v)} options={[{ value: "rarely", label: "Rarely" }, { value: "sometimes", label: "Sometimes" }, { value: "often", label: "Often" }, { value: "every_time", label: "Every time I stand" }]} /></HyperField>
           <HyperDurationPicker minDate={get("dob")} sinceDate={get("sym_giddiness_since_date")} onSinceDate={v => set("sym_giddiness_since_date", v)} years={get("sym_giddiness_years")} onYears={v => set("sym_giddiness_years", v)} months={get("sym_giddiness_months")} onMonths={v => set("sym_giddiness_months", v)} />
         </>,
         `Postural giddiness since last ${durationText(get("sym_giddiness_years"), get("sym_giddiness_months"), get("sym_giddiness_since_date"))}`
@@ -1533,20 +1572,20 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
         <div>
           <h3>Are you currently taking a beta-blocker for heart rate control?</h3>
           <p style={{ color: "#666", fontSize: 14 }}>e.g. Propranolol, Atenolol</p>
-          <HyperYesNoUnsure value={get("beta_blocker_status")} onChange={v => set("beta_blocker_status", v)} />
-          {get("beta_blocker_status") === "yes" && (
+          <HyperYesNoUnsure value={get("on_beta_blocker")} onChange={v => set("on_beta_blocker", v)} />
+          {get("on_beta_blocker") === "yes" && (
             <HyperSectionCard title="Beta-blocker details">
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <HyperField label="Drug name"><HyperInput value={get("beta_blocker_name")} onChange={v => set("beta_blocker_name", v)} placeholder="e.g. Propranolol" /></HyperField>
                 <HyperField label="Dose (mg)"><HyperInput type="number" value={get("beta_blocker_dose")} onChange={v => set("beta_blocker_dose", v)} placeholder="e.g. 40" min={0} /></HyperField>
               </div>
               <HyperField label="Frequency">
-                <HyperRadioGroup value={get("beta_blocker_freq")} onChange={v => set("beta_blocker_freq", v)} options={[{ value: "once", label: "Once daily" }, { value: "twice", label: "Twice daily" }, { value: "three_times", label: "Three times daily" }, { value: "as_needed", label: "As needed" }]} inline />
+                <HyperRadioGroup value={get("beta_blocker_freq")} onChange={v => set("beta_blocker_freq", v)} options={[{ value: "once", label: "Once daily" }, { value: "twice", label: "Twice daily" }, { value: "three_times", label: "Three times daily" }, { value: "as_needed", label: "As needed" }]} />
               </HyperField>
-              <HyperDurationPicker minDate={get("dob")} label="Since when?" sinceDate={get("beta_blocker_since_date")} onSinceDate={v => set("beta_blocker_since_date", v)} years={get("beta_blocker_since_years")} onYears={v => set("beta_blocker_since_years", v)} months={get("beta_blocker_since_months_val")} onMonths={v => set("beta_blocker_since_months_val", v)} />
+              <HyperDurationPicker minDate={get("dob")} label="Since when?" sinceDate={get("beta_blocker_since_date")} onSinceDate={v => set("beta_blocker_since_date", v)} years={get("beta_blocker_since_years")} onYears={v => set("beta_blocker_since_years", v)} months={get("beta_blocker_since_months")} onMonths={v => set("beta_blocker_since_months", v)} />
             </HyperSectionCard>
           )}
-          <HyperOutputBox text={get("beta_blocker_status") === "yes" && get("beta_blocker_name") ? `Tab. ${get("beta_blocker_name")} ${get("beta_blocker_dose") || "?"} mg — ${get("beta_blocker_freq") ? get("beta_blocker_freq").replace(/_/g, " ").replace("once", "once daily").replace("twice", "twice daily").replace("three times", "three times daily") : ""}.${durationText(get("beta_blocker_since_years"), get("beta_blocker_since_months_val"), get("beta_blocker_since_date")) ? " Since " + durationText(get("beta_blocker_since_years"), get("beta_blocker_since_months_val"), get("beta_blocker_since_date")) + "." : ""}` : ""} />
+          <HyperOutputBox text={get("on_beta_blocker") === "yes" && get("beta_blocker_name") ? `Tab. ${get("beta_blocker_name")} ${get("beta_blocker_dose") || "?"} mg — ${get("beta_blocker_freq") ? get("beta_blocker_freq").replace(/_/g, " ").replace("once", "once daily").replace("twice", "twice daily").replace("three times", "three times daily") : ""}.${durationText(get("beta_blocker_since_years"), get("beta_blocker_since_months"), get("beta_blocker_since_date")) ? " Since " + durationText(get("beta_blocker_since_years"), get("beta_blocker_since_months"), get("beta_blocker_since_date")) + "." : ""}` : ""} />
         </div>
       );
 
@@ -1557,7 +1596,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
           {get("monitoring_status") === "yes" && (
             <HyperSectionCard title="Monitoring plan">
               <HyperField label="Review frequency">
-                <HyperRadioGroup value={get("review_frequency_val")} onChange={v => set("review_frequency_val", v)} options={[{ value: "4_6_weeks", label: "Every 4–6 weeks" }, { value: "3_months", label: "Every 3 months" }, { value: "6_months", label: "Every 6 months" }, { value: "other", label: "Other" }]} inline />
+                <HyperRadioGroup value={get("review_frequency_val")} onChange={v => set("review_frequency_val", v)} options={[{ value: "4_6_weeks", label: "Every 4–6 weeks" }, { value: "3_months", label: "Every 3 months" }, { value: "6_months", label: "Every 6 months" }, { value: "other", label: "Other" }]} />
               </HyperField>
               <HyperField label="Next review date (optional)"><HyperInput type="date" value={get("next_review_date_val")} onChange={v => set("next_review_date_val", v)} min={new Date().toISOString().split("T")[0]} /></HyperField>
             </HyperSectionCard>
@@ -1580,15 +1619,15 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
               <HyperField label="On medication to control cholesterol?"><HyperYesNoUnsure value={get("dyslipidaemia_on_med")} onChange={v => set("dyslipidaemia_on_med", v)} /></HyperField>
               {get("dyslipidaemia_on_med") === "yes" && (
                 <div>
-                  {(get("dyslipidaemia_med_data", [{ name: "", dose_mg: "", freq_per_day: "", since_months: "" }]) || []).map((med, i) => (
-                    <HyperMedBlock key={i} med={med} index={i} onChange={v => { const a = [...(get("dyslipidaemia_med_data", []) || [])]; a[i] = v; set("dyslipidaemia_med_data", a); }} onRemove={i > 0 ? () => { const a = [...(get("dyslipidaemia_med_data", []) || [])]; a.splice(i, 1); set("dyslipidaemia_med_data", a); } : null} />
+                  {(get("dyslipidaemia_meds", [{ name: "", dose_mg: "", freq_per_day: "", since_months: "" }]) || []).map((med, i) => (
+                    <HyperMedBlock key={i} med={med} index={i} onChange={v => { const a = [...(get("dyslipidaemia_meds", []) || [])]; a[i] = v; set("dyslipidaemia_meds", a); }} onRemove={i > 0 ? () => { const a = [...(get("dyslipidaemia_meds", []) || [])]; a.splice(i, 1); set("dyslipidaemia_meds", a); } : null} />
                   ))}
-                  <button onClick={() => set("dyslipidaemia_med_data", [...(get("dyslipidaemia_med_data", []) || []), { name: "", dose_mg: "", freq_per_day: "", since_months: "" }])} style={{ padding: "6px 14px", background: "#eef4ff", border: "1.5px solid #3a7bd5", borderRadius: 6, color: "#3a7bd5", cursor: "pointer", fontSize: 13 }}>+ Add medicine</button>
+                  <button onClick={() => set("dyslipidaemia_meds", [...(get("dyslipidaemia_meds", []) || []), { name: "", dose_mg: "", freq_per_day: "", since_months: "" }])} style={{ padding: "6px 14px", background: "#eef4ff", border: "1.5px solid #3a7bd5", borderRadius: 6, color: "#3a7bd5", cursor: "pointer", fontSize: 13 }}>+ Add medicine</button>
                 </div>
               )}
             </HyperSectionCard>
           )}
-          <HyperOutputBox text={get("dyslipidaemia_status") === "yes" ? `Dyslipidaemia / Hypercholesterolaemia since last ${Math.floor((parseInt(get("dyslipidaemia_since_months")) || 0) / 12)} years${(parseInt(get("dyslipidaemia_since_months")) || 0) % 12 > 0 ? " " + ((parseInt(get("dyslipidaemia_since_months")) || 0) % 12) + " months" : ""}.${get("dyslipidaemia_on_med") === "yes" && (get("dyslipidaemia_med_data", []) || []).some(m => m.name) ? " On " + (get("dyslipidaemia_med_data", []) || []).filter(m => m.name).map(m => `Tab. ${m.name}${m.dose_mg ? " " + m.dose_mg + " mg" : ""}${m.freq_per_day ? " " + m.freq_per_day + " times/day" : ""}`).join(", ") + "." : ""}` : ""} />
+          <HyperOutputBox text={get("dyslipidaemia_status") === "yes" ? `Dyslipidaemia / Hypercholesterolaemia since last ${Math.floor((parseInt(get("dyslipidaemia_since_months")) || 0) / 12)} years${(parseInt(get("dyslipidaemia_since_months")) || 0) % 12 > 0 ? " " + ((parseInt(get("dyslipidaemia_since_months")) || 0) % 12) + " months" : ""}.${get("dyslipidaemia_on_med") === "yes" && (get("dyslipidaemia_meds", []) || []).some(m => m.name) ? " On " + (get("dyslipidaemia_meds", []) || []).filter(m => m.name).map(m => `Tab. ${m.name}${m.dose_mg ? " " + m.dose_mg + " mg" : ""}${m.freq_per_day ? " " + m.freq_per_day + " times/day" : ""}`).join(", ") + "." : ""}` : ""} />
         </div>
       );
 
@@ -1601,14 +1640,14 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
           <HyperField label="On medication?"><HyperYesNoUnsure value={get("diabetes_on_med")} onChange={v => set("diabetes_on_med", v)} /></HyperField>
           {get("diabetes_on_med") === "yes" && (
             <div>
-              {(get("diabetes_med_data", [{ name: "", dose_mg: "", freq_per_day: "" }]) || []).map((med, i) => (
-                <HyperMedBlock key={i} med={med} index={i} showSince={false} onChange={v => { const a = [...(get("diabetes_med_data", []) || [])]; a[i] = v; set("diabetes_med_data", a); }} onRemove={i > 0 ? () => { const a = [...(get("diabetes_med_data", []) || [])]; a.splice(i, 1); set("diabetes_med_data", a); } : null} />
+              {(get("diabetes_meds", [{ name: "", dose_mg: "", freq_per_day: "" }]) || []).map((med, i) => (
+                <HyperMedBlock key={i} med={med} index={i} showSince={false} onChange={v => { const a = [...(get("diabetes_meds", []) || [])]; a[i] = v; set("diabetes_meds", a); }} onRemove={i > 0 ? () => { const a = [...(get("diabetes_meds", []) || [])]; a.splice(i, 1); set("diabetes_meds", a); } : null} />
               ))}
-              <button onClick={() => set("diabetes_med_data", [...(get("diabetes_med_data", []) || []), { name: "", dose_mg: "", freq_per_day: "" }])} style={{ padding: "6px 14px", background: "#eef4ff", border: "1.5px solid #3a7bd5", borderRadius: 6, color: "#3a7bd5", cursor: "pointer", fontSize: 13 }}>+ Add medicine</button>
+              <button onClick={() => set("diabetes_meds", [...(get("diabetes_meds", []) || []), { name: "", dose_mg: "", freq_per_day: "" }])} style={{ padding: "6px 14px", background: "#eef4ff", border: "1.5px solid #3a7bd5", borderRadius: 6, color: "#3a7bd5", cursor: "pointer", fontSize: 13 }}>+ Add medicine</button>
             </div>
           )}
         </>,
-        `K/c/o ${(get("diabetes_type") || "").replace(/_/g, " ")} diabetes since last ${Math.floor((parseInt(get("diabetes_since_months")) || 0) / 12)} years.${get("diabetes_on_med") === "yes" && (get("diabetes_med_data", []) || []).some(m => m.name) ? " On " + (get("diabetes_med_data", []) || []).filter(m => m.name).map(m => `Tab. ${m.name}${m.dose_mg ? " (" + m.dose_mg + " mg)" : ""} — ${m.freq_per_day || "?"} times a day`).join(" and ") + "." : ""}`
+        `K/c/o ${(get("diabetes_type") || "").replace(/_/g, " ")} diabetes since last ${Math.floor((parseInt(get("diabetes_since_months")) || 0) / 12)} years.${get("diabetes_on_med") === "yes" && (get("diabetes_meds", []) || []).some(m => m.name) ? " On " + (get("diabetes_meds", []) || []).filter(m => m.name).map(m => `Tab. ${m.name}${m.dose_mg ? " (" + m.dose_mg + " mg)" : ""} — ${m.freq_per_day || "?"} times a day`).join(" and ") + "." : ""}`
       );
 
       case "H3": return renderComorbiditySinglePage("H3","Have you been diagnosed with anaemia?","anaemia",
@@ -1617,14 +1656,14 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
           <HyperField label="On medication?"><HyperYesNoUnsure value={get("anaemia_on_med")} onChange={v => set("anaemia_on_med", v)} /></HyperField>
           {get("anaemia_on_med") === "yes" && (
             <div>
-              {(get("anaemia_med_data", [{ name: "", freq_per_day: "", since_months: "" }]) || []).map((med, i) => (
-                <HyperMedBlock key={i} med={med} index={i} doseLabel="Dose (optional)" onChange={v => { const a = [...(get("anaemia_med_data", []) || [])]; a[i] = v; set("anaemia_med_data", a); }} onRemove={i > 0 ? () => { const a = [...(get("anaemia_med_data", []) || [])]; a.splice(i, 1); set("anaemia_med_data", a); } : null} />
+              {(get("anaemia_meds", [{ name: "", freq_per_day: "", since_months: "" }]) || []).map((med, i) => (
+                <HyperMedBlock key={i} med={med} index={i} doseLabel="Dose (optional)" onChange={v => { const a = [...(get("anaemia_meds", []) || [])]; a[i] = v; set("anaemia_meds", a); }} onRemove={i > 0 ? () => { const a = [...(get("anaemia_meds", []) || [])]; a.splice(i, 1); set("anaemia_meds", a); } : null} />
               ))}
-              <button onClick={() => set("anaemia_med_data", [...(get("anaemia_med_data", []) || []), { name: "", freq_per_day: "", since_months: "" }])} style={{ padding: "6px 14px", background: "#eef4ff", border: "1.5px solid #3a7bd5", borderRadius: 6, color: "#3a7bd5", cursor: "pointer", fontSize: 13 }}>+ Add medicine</button>
+              <button onClick={() => set("anaemia_meds", [...(get("anaemia_meds", []) || []), { name: "", freq_per_day: "", since_months: "" }])} style={{ padding: "6px 14px", background: "#eef4ff", border: "1.5px solid #3a7bd5", borderRadius: 6, color: "#3a7bd5", cursor: "pointer", fontSize: 13 }}>+ Add medicine</button>
             </div>
           )}
         </>,
-        `K/c/o ${(get("anaemia_types", []) || []).map(t => t.replace(/_/g, " ")).join(" + ")} anaemia.${get("anaemia_on_med") === "yes" && (get("anaemia_med_data", []) || []).some(m => m.name) ? " On " + (get("anaemia_med_data", []) || []).filter(m => m.name).map(m => `Tab. ${m.name}`).join(" and ") + "." : ""}`
+        `K/c/o ${(get("anaemia_types", []) || []).map(t => t.replace(/_/g, " ")).join(" + ")} anaemia.${get("anaemia_on_med") === "yes" && (get("anaemia_meds", []) || []).some(m => m.name) ? " On " + (get("anaemia_meds", []) || []).filter(m => m.name).map(m => `Tab. ${m.name}`).join(" and ") + "." : ""}`
       );
 
       case "H4": return (
@@ -1674,24 +1713,24 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
       );
 
       case "H6": return renderComorbiditySinglePage("H6","Have you been formally diagnosed with depression by a doctor or psychiatrist?","depression",
-        <HyperField label="Currently on medication for depression?"><HyperRadioGroup value={get("depression_on_med_status")} onChange={v => set("depression_on_med_status", v)} options={[{ value: "yes", label: "Yes" }, { value: "no", label: "No" }]} inline /></HyperField>,
-        `K/c/o depression.${get("depression_on_med_status") === "yes" ? " On medication." : ""}`
+        <HyperField label="Currently on medication for depression?"><HyperRadioGroup value={get("depression_on_med")} onChange={v => set("depression_on_med", v)} options={[{ value: "yes", label: "Yes" }, { value: "no", label: "No" }]} inline /></HyperField>,
+        `K/c/o depression.${get("depression_on_med") === "yes" ? " On medication." : ""}`
       );
 
       case "H8": return renderComorbiditySinglePage("H8","Have you been diagnosed with osteoporosis or osteopenia (low bone density)?","osteoporosis",
         <>
-          <HyperField label="Confirmed by DEXA scan?"><HyperRadioGroup value={get("osteoporosis_dexa_status")} onChange={v => set("osteoporosis_dexa_status", v)} options={[{ value: "yes", label: "Yes" }, { value: "no", label: "No" }]} inline /></HyperField>
+          <HyperField label="Confirmed by DEXA scan?"><HyperRadioGroup value={get("osteoporosis_dexa")} onChange={v => set("osteoporosis_dexa", v)} options={[{ value: "yes", label: "Yes" }, { value: "no", label: "No" }]} inline /></HyperField>
           <HyperField label="On bone-protection medication?"><HyperYesNoUnsure value={get("osteoporosis_on_med")} onChange={v => set("osteoporosis_on_med", v)} /></HyperField>
           {get("osteoporosis_on_med") === "yes" && (
             <div>
-              {(get("osteoporosis_med_data", [{ name: "", freq_per_day: "", since_months: "" }]) || []).map((med, i) => (
-                <HyperMedBlock key={i} med={med} index={i} doseLabel="Dose (optional)" onChange={v => { const a = [...(get("osteoporosis_med_data", []) || [])]; a[i] = v; set("osteoporosis_med_data", a); }} onRemove={i > 0 ? () => { const a = [...(get("osteoporosis_med_data", []) || [])]; a.splice(i, 1); set("osteoporosis_med_data", a); } : null} />
+              {(get("osteoporosis_meds", [{ name: "", freq_per_day: "", since_months: "" }]) || []).map((med, i) => (
+                <HyperMedBlock key={i} med={med} index={i} doseLabel="Dose (optional)" onChange={v => { const a = [...(get("osteoporosis_meds", []) || [])]; a[i] = v; set("osteoporosis_meds", a); }} onRemove={i > 0 ? () => { const a = [...(get("osteoporosis_meds", []) || [])]; a.splice(i, 1); set("osteoporosis_meds", a); } : null} />
               ))}
-              <button onClick={() => set("osteoporosis_med_data", [...(get("osteoporosis_med_data", []) || []), { name: "", freq_per_day: "", since_months: "" }])} style={{ padding: "6px 14px", background: "#eef4ff", border: "1.5px solid #3a7bd5", borderRadius: 6, color: "#3a7bd5", cursor: "pointer", fontSize: 13 }}>+ Add medicine</button>
+              <button onClick={() => set("osteoporosis_meds", [...(get("osteoporosis_meds", []) || []), { name: "", freq_per_day: "", since_months: "" }])} style={{ padding: "6px 14px", background: "#eef4ff", border: "1.5px solid #3a7bd5", borderRadius: 6, color: "#3a7bd5", cursor: "pointer", fontSize: 13 }}>+ Add medicine</button>
             </div>
           )}
         </>,
-        `K/c/o Osteoporosis${get("osteoporosis_dexa_status") === "yes" ? " — DEXA confirmed" : ""}.${get("osteoporosis_on_med") === "yes" ? " On bone-protection medication." : ""}`
+        `K/c/o Osteoporosis${get("osteoporosis_dexa") === "yes" ? " — DEXA confirmed" : ""}.${get("osteoporosis_on_med") === "yes" ? " On bone-protection medication." : ""}`
       );
 
       case "H9": return (
@@ -1702,18 +1741,6 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
           <p style={{ fontWeight: 600, fontSize: 14, marginTop: 20, marginBottom: 4 }}>Want to add any more reports, images, or documents?</p>
           <p style={{ color: "#666", fontSize: 13, marginBottom: 8 }}>Anything not covered by the questions above — old reports, discharge summaries, referral letters, etc.</p>
           <AdditionalDocumentsUploader patientId={patientId} episodeId={episodeId} category="other" />
-        </div>
-      );
-
-      case "DONE": return (
-        <div style={{ textAlign: "center", padding: "40px 20px" }}>
-          <div style={{ fontSize: 56, marginBottom: 16 }}>✅</div>
-          <h2 style={{ color: "#27ae60" }}>Questionnaire complete!</h2>
-          <p style={{ color: "#555", fontSize: 16 }}>Thank you for completing the hyperthyroidism questionnaire. Your doctor will review your responses before your online opinion.</p>
-          <button onClick={handleSubmit} disabled={saving} style={{ marginTop: 24, padding: "14px 40px", background: "#27ae60", color: "#fff", border: "none", borderRadius: 10, fontSize: 16, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer" }}>
-            {saving ? "Submitting..." : "Submit to my doctor"}
-          </button>
-          {saveMsg && <p style={{ marginTop: 12, color: "#e74c3c" }}>{saveMsg}</p>}
         </div>
       );
 
@@ -1852,7 +1879,7 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
 
   // ─── Shell ─────────────────────────────────────────────────────────────────
   return (
-    <div style={{ maxWidth: 700, margin: "0 auto", fontFamily: "'DM Sans', Arial, sans-serif", color: "#1a1a2e" }}>
+    <div className="hyper-q-shell" style={{ maxWidth: 700, margin: "0 auto", fontFamily: "'DM Sans', Arial, sans-serif", color: "#1a1a2e" }}>
       {draftLoadError && (
         <div style={{ background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: 13, color: '#991b1b', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <span>{draftLoadError}</span>
@@ -1883,8 +1910,8 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
       </div>
 
       {/* Question card */}
-      <div ref={pageContentRef} style={{ position: "relative", background: "#fff", borderRadius: 12, border: "1.5px solid #e8edf5", padding: "28px 32px", marginTop: 16 }}>
-        {saveMsg && pageId !== "DONE" && (
+      <div ref={pageContentRef} style={{ position: "relative", background: "#fff", borderRadius: 12, border: "1.5px solid #e8edf5", padding: "28px 32px", marginTop: 16, minHeight: HYPER_PAGE_MIN_HEIGHT, boxSizing: "border-box" }}>
+        {saveMsg && (
           <div style={{ background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 8, padding: "8px 12px", marginBottom: 14, fontSize: 12, color: "#991b1b" }}>{saveMsg}</div>
         )}
         {renderPage()}
@@ -1893,34 +1920,22 @@ export default function HyperQuestionnaire({ episodeId, patientId, patientDob, p
       </div>
 
       {/* Navigation */}
-      {pageId !== "DONE" && (
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, padding: "0 4px", marginBottom: incompleteList.length > 0 ? 60 : 0 }}>
-          <button onClick={currentPage === 0 ? onBack : prev} disabled={currentPage === 0 && !onBack} style={{ padding: "10px 24px", background: (currentPage === 0 && !onBack) ? "#f0f4fb" : "#fff", border: "1.5px solid #d0d7e8", borderRadius: 8, cursor: (currentPage === 0 && !onBack) ? "default" : "pointer", color: (currentPage === 0 && !onBack) ? "#bbb" : "#444", fontSize: 14 }}>
-            ← Back
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, padding: "0 4px" }}>
+        <button onClick={currentPage === 0 ? onBack : prev} disabled={currentPage === 0 && !onBack} style={{ padding: "10px 24px", background: (currentPage === 0 && !onBack) ? "#f0f4fb" : "#fff", border: "1.5px solid #d0d7e8", borderRadius: 8, cursor: (currentPage === 0 && !onBack) ? "default" : "pointer", color: (currentPage === 0 && !onBack) ? "#bbb" : "#444", fontSize: 14 }}>
+          ← Back
+        </button>
+        {lastSavedAt && <span style={{ fontSize: 12, color: "#888" }}>✓ Saved</span>}
+        {currentPage === allPages.length - 1 && !reviewMode ? (
+          <button onClick={handleSubmit} disabled={saving || yearInvalid} style={{ padding: "10px 24px", background: "#27ae60", border: "none", borderRadius: 8, cursor: (saving || yearInvalid) ? "not-allowed" : "pointer", color: "#fff", fontSize: 14, fontWeight: 600 }}>
+            {saving ? <Spinner size={14} color="#fff" /> : "Submit questionnaire ✓"}
           </button>
-          {saveMsg === "✓ Saved" && <span style={{ fontSize: 12, color: "#888" }}>✓ Saved</span>}
-          <button onClick={next} disabled={(currentPage >= allPages.length - 1 && !reviewMode) || yearInvalid} style={{ padding: "10px 24px", background: "#3a7bd5", border: "none", borderRadius: 8, cursor: "pointer", color: "#fff", fontSize: 14, fontWeight: 600 }}>
+        ) : (
+          <button onClick={next} disabled={yearInvalid} style={{ padding: "10px 24px", background: "#3a7bd5", border: "none", borderRadius: 8, cursor: yearInvalid ? "not-allowed" : "pointer", color: "#fff", fontSize: 14, fontWeight: 600 }}>
             {reviewMode ? "Next unanswered →" : "Next →"}
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
-      {/* Bottom strip listing every unanswered question — appears once
-          Submit has been attempted and something's missing, disappears
-          once everything's fixed (fully derived from incompleteList, so
-          it reappears automatically if Submit is clicked again and
-          something's still missing). */}
-      {incompleteList.length > 0 && (
-        <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 40, background: "#fff", borderTop: "2px solid #e6a3a3", boxShadow: "0 -2px 12px rgba(0,0,0,0.10)", padding: "10px 20px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: "#a83232", marginRight: 4 }}>{incompleteList.length} unanswered — jump to:</span>
-          {incompleteList.map(({ id, idx }) => (
-            <button key={id} onClick={() => { setSaveMsg(""); setCurrentPage(idx); }}
-              style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 12, cursor: "pointer", border: `1.5px solid ${idx === currentPage ? "#3a7bd5" : "#e6a3a3"}`, background: idx === currentPage ? "#eef4ff" : "#fff", color: idx === currentPage ? "#3a7bd5" : "#a83232" }}>
-              Q{idx + 1}
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

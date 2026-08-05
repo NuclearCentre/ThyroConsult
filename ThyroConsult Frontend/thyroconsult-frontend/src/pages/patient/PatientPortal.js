@@ -3,7 +3,7 @@ import { Routes, Route } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer, Legend } from 'recharts';
 import { patientAPI, receiptAPI, paymentAPI, conditionAPI, authAPI } from '../../api';
 import { PatientSidebar } from '../../components/common/Sidebar';
-import { Badge, StatusBadge, EmptyState, Spinner, SectionHeader, SecureBadge } from '../../components/common/index';
+import { StatusBadge, EmptyState, Spinner, SectionHeader, SecureBadge } from '../../components/common/index';
 import { useAuth } from '../../context/AuthContext';
 import ConditionSelection from '../../components/ConditionSelection';
 import SelectDoctor from '../../components/SelectDoctor';
@@ -247,8 +247,44 @@ const AddConditionFlow = ({ patient, resumeEpisode, onClose, onDone }) => {
 // imported/rendered anywhere in the app — patients had no UI path to see
 // their episode status or read their online opinion. This modal is that
 // path, opened from each episode card in "My conditions".
+// ─── Patient's own formatted Q&A view ("My Answers") — same formatter
+// output the physician sees, scoped to the patient's own episode via
+// conditionAPI.getQuestionnaireAnswers's ownership check server-side. ───
+const MyAnswersView = ({ episodeId }) => {
+  const [answers, setAnswers] = useState(null);
+  const [available, setAvailable] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!episodeId) return;
+    conditionAPI.getQuestionnaireAnswers(episodeId)
+      .then(res => {
+        setAnswers(res.formattedAnswers || []);
+        setAvailable(res.available !== false);
+      })
+      .catch(() => setError('Could not load your answers. Please try again.'));
+  }, [episodeId]);
+
+  if (error) return <div style={{ padding: '12px 0', fontSize: 13, color: 'var(--red-700, #991b1b)' }}>{error}</div>;
+  if (answers === null) return <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}><Spinner /></div>;
+  if (!available) return <div style={{ padding: '12px 0', fontSize: 13, color: 'var(--text-secondary)' }}>Your answers view isn't available for this condition yet.</div>;
+  if (!answers.length) return <div style={{ padding: '12px 0', fontSize: 13, color: 'var(--text-secondary)' }}>No answers recorded yet.</div>;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {answers.map(a => (
+        <div key={a.id} style={{ paddingBottom: 10, borderBottom: '1px solid var(--border)' }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 3 }}>{a.question}</div>
+          <div style={{ fontSize: 14, color: 'var(--text-primary, #1e293b)' }}>{a.answer}</div>
+        </div>
+      ))}
+    </div>
+  );
+};
+
 const EpisodeStatusModal = ({ episodeId, onClose }) => {
   const [opinionReady, setOpinionReady] = useState(false);
+  const [tab, setTab] = useState('status'); // 'status' | 'answers'
 
   return (
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.45)', zIndex:1000, display:'flex', alignItems:'flex-start', justifyContent:'center', overflowY:'auto', padding:'40px 16px' }}>
@@ -259,8 +295,24 @@ const EpisodeStatusModal = ({ episodeId, onClose }) => {
           </div>
           <button onClick={onClose} style={{ background:'none', border:'none', fontSize:22, cursor:'pointer', color:'var(--text-tertiary)', lineHeight:1 }}>×</button>
         </div>
+        <div style={{ display: 'flex', gap: 8, padding: '14px 28px 0' }}>
+          <button
+            onClick={() => setTab('status')}
+            className={tab === 'status' ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm'}
+          >
+            Status
+          </button>
+          <button
+            onClick={() => setTab('answers')}
+            className={tab === 'answers' ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm'}
+          >
+            My Answers
+          </button>
+        </div>
         <div style={{ padding:'24px 28px' }}>
-          {opinionReady ? (
+          {tab === 'answers' ? (
+            <MyAnswersView episodeId={episodeId} />
+          ) : opinionReady ? (
             <OpinionViewer episodeId={episodeId} onAcknowledged={() => {}} />
           ) : (
             <PatientTimeline episodeId={episodeId} onOpinionReady={() => setOpinionReady(true)} />
@@ -450,15 +502,45 @@ const PatientLayout = ({ children, patient, onLanguageChange, keepAsDefault, onK
 // ─── "Opinion for relative" — profile switcher + creation modal ───────────
 // Option A: relative shares this account's login (no separate userid/
 // password) — see authController.js migration 038.
+// Base groups match "family history of thyroid disease" in the
+// questionnaires; Spouse, in-laws, and next-generation relatives
+// (nephew/niece, grandchildren) are added on top specifically for this
+// form — those don't carry genetic-risk relevance so the questionnaires
+// never needed them, but they're exactly who someone registers an
+// opinion for.
+const RELATIVE_RELATION_GROUPS = [
+  { group: 'Immediate family', members: ['Spouse', 'Mother', 'Father', 'Brother', 'Sister', 'Son', 'Daughter'] },
+  { group: 'In-laws', members: ['Father-in-law', 'Mother-in-law', 'Brother-in-law', 'Sister-in-law', 'Son-in-law', 'Daughter-in-law'] },
+  { group: 'Next generation', members: ['Grandson', 'Granddaughter', 'Nephew', 'Niece'] },
+  { group: 'Paternal side', members: ['Grandfather (P)', 'Grandmother (P)', 'Uncle (P)', 'Aunt (P)', 'Cousin brother (P)', 'Cousin sister (P)'] },
+  { group: 'Maternal side', members: ['Grandfather (M)', 'Grandmother (M)', 'Uncle (M)', 'Aunt (M)', 'Cousin brother (M)', 'Cousin sister (M)'] },
+];
+
+// Shared taller, rounded-corner box style for this form's inputs/selects
+// — kept local to this modal rather than changed on the shared ".input"
+// class, so it doesn't affect every other form in the app.
+const relBoxStyle = { width: '100%', padding: '14px 16px', borderRadius: 12, fontSize: 14 };
+
 const AddRelativeModal = ({ onClose, onCreated }) => {
-  const [form, setForm] = useState({ firstName: '', middleName: '', lastName: '', relation: '', dob: '', gender: '', bloodGroup: '' });
+  const [form, setForm] = useState({ firstName: '', middleName: '', lastName: '', relation: '', dob: '', gender: '', bloodGroup: '', bloodGroupOther: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const set = key => e => setForm(p => ({ ...p, [key]: e.target.value }));
 
   const handleSubmit = async () => {
-    if (!form.firstName || !form.lastName || !form.relation || !form.dob || !form.gender) {
-      setError('First name, last name, relation, date of birth and gender are all required.');
+    const missing = [
+      !form.firstName && 'First name',
+      !form.lastName && 'Last name',
+      !form.relation && 'Relation to you',
+      !form.dob && 'Date of birth',
+      !form.gender && 'Gender',
+    ].filter(Boolean);
+    if (missing.length) {
+      setError(`Please fill in: ${missing.join(', ')}.`);
+      return;
+    }
+    if (form.bloodGroup === 'other' && !form.bloodGroupOther.trim()) {
+      setError('Please enter the blood group name.');
       return;
     }
     setSaving(true); setError('');
@@ -484,39 +566,38 @@ const AddRelativeModal = ({ onClose, onCreated }) => {
             Add a family member's details below. They'll be reachable from your dashboard's profile switcher — no separate login needed.
           </p>
           {error && <div style={{ fontSize:13, color:'var(--red-700, #991b1b)', marginBottom:12 }}>⚠️ {error}</div>}
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:12 }}>
-            <div>
-              <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>First name *</label>
-              <input value={form.firstName} onChange={set('firstName')} className="input" style={{ width:'100%' }} />
-            </div>
-            <div>
-              <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>Middle name</label>
-              <input value={form.middleName} onChange={set('middleName')} className="input" style={{ width:'100%' }} />
-            </div>
+
+          <div style={{ marginBottom:14 }}>
+            <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:5 }}>First name *</label>
+            <input value={form.firstName} onChange={set('firstName')} className="input" style={relBoxStyle} />
           </div>
-          <div style={{ marginBottom:12 }}>
-            <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>Last name *</label>
-            <input value={form.lastName} onChange={set('lastName')} className="input" style={{ width:'100%' }} />
+          <div style={{ marginBottom:14 }}>
+            <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:5 }}>Middle name</label>
+            <input value={form.middleName} onChange={set('middleName')} className="input" style={relBoxStyle} />
           </div>
-          <div style={{ marginBottom:12 }}>
-            <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>Relation to you *</label>
-            <select value={form.relation} onChange={set('relation')} className="input" style={{ width:'100%' }}>
+          <div style={{ marginBottom:14 }}>
+            <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:5 }}>Last name *</label>
+            <input value={form.lastName} onChange={set('lastName')} className="input" style={relBoxStyle} />
+          </div>
+          <div style={{ marginBottom:14 }}>
+            <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:5 }}>Relation to you *</label>
+            <select value={form.relation} onChange={set('relation')} className="input" style={relBoxStyle}>
               <option value="">Select...</option>
-              <option value="child">Child</option>
-              <option value="spouse">Spouse</option>
-              <option value="parent">Parent</option>
-              <option value="sibling">Sibling</option>
-              <option value="other">Other</option>
+              {RELATIVE_RELATION_GROUPS.map(({ group, members }) => (
+                <optgroup key={group} label={group}>
+                  {members.map(m => <option key={m} value={m}>{m}</option>)}
+                </optgroup>
+              ))}
             </select>
           </div>
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:12 }}>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:14 }}>
             <div>
-              <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>Date of birth *</label>
-              <input type="date" value={form.dob} onChange={set('dob')} className="input" style={{ width:'100%' }} max={new Date().toISOString().split('T')[0]} />
+              <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:5 }}>Date of birth *</label>
+              <input type="date" value={form.dob} onChange={set('dob')} className="input" style={relBoxStyle} max={new Date().toISOString().split('T')[0]} />
             </div>
             <div>
-              <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>Gender *</label>
-              <select value={form.gender} onChange={set('gender')} className="input" style={{ width:'100%' }}>
+              <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:5 }}>Gender *</label>
+              <select value={form.gender} onChange={set('gender')} className="input" style={relBoxStyle}>
                 <option value="">Select...</option>
                 <option value="male">Male</option>
                 <option value="female">Female</option>
@@ -524,13 +605,21 @@ const AddRelativeModal = ({ onClose, onCreated }) => {
               </select>
             </div>
           </div>
-          <div style={{ marginBottom:20 }}>
-            <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:4 }}>Blood group</label>
-            <select value={form.bloodGroup} onChange={set('bloodGroup')} className="input" style={{ width:'100%' }}>
+          <div style={{ marginBottom: form.bloodGroup === 'other' ? 10 : 20 }}>
+            <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:5 }}>Blood group</label>
+            <select value={form.bloodGroup} onChange={set('bloodGroup')} className="input" style={relBoxStyle}>
               <option value="">Unknown</option>
               {['A+','A-','B+','B-','AB+','AB-','O+','O-'].map(bg => <option key={bg} value={bg}>{bg}</option>)}
+              <option value="other">Other</option>
             </select>
           </div>
+          {form.bloodGroup === 'other' && (
+            <div style={{ marginBottom:20 }}>
+              <label style={{ fontSize:12, color:'var(--text-secondary)', display:'block', marginBottom:5 }}>Please specify blood group *</label>
+              <input value={form.bloodGroupOther} onChange={set('bloodGroupOther')} className="input" style={relBoxStyle}
+                placeholder="e.g. Bombay blood group" />
+            </div>
+          )}
           <button className="btn btn-primary" style={{ width:'100%' }} onClick={handleSubmit} disabled={saving}>
             {saving ? 'Creating...' : 'Create profile'}
           </button>
@@ -587,7 +676,7 @@ const RelativeOnboardingFlow = ({ result, onClose }) => {
       })
       .catch(() => setError('Could not access the camera. Check browser permissions and try again.'));
     return () => streamRef.current?.getTracks().forEach(t => t.stop());
-  }, [step]);
+  }, [isPhotoStep]);
 
   const capturePhoto = () => {
     const video = videoRef.current, canvas = canvasRef.current;
@@ -737,7 +826,7 @@ const RelativeSwitcher = ({ patient, onSwitched }) => {
     if (managedBy) return;
     authAPI.getRelatives().then(r => setRelatives(r.relatives || [])).catch(() => {});
   };
-  useEffect(loadRelatives, [patient]);
+  useEffect(loadRelatives, [patient, managedBy]);
 
   const doSwitch = async (targetPatientId) => {
     setSwitching(true);
@@ -1224,7 +1313,7 @@ const PatientPortal = () => {
     }).catch(() => {}).finally(() => setLoading(false));
   }, [user]);
 
-  if (loading) return <div className="loading-screen"><Spinner size={32} /></div>;
+  if (loading) return <div className="loading-screen"><Spinner size={64} borderColor="#000" stripColor="#fff" /></div>;
 
   return (
     <PatientLayout

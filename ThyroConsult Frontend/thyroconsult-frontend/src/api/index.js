@@ -30,8 +30,18 @@ function clearTokens() {
 
 async function apiFetch(path, options = {}) {
   const token = getToken();
+  // FormData bodies (uploadPhoto, uploadDocument) must NOT get an
+  // explicit Content-Type — the browser sets multipart/form-data with
+  // the correct boundary automatically, but ONLY if Content-Type is left
+  // unset entirely. Forcing 'application/json' here (as this function
+  // used to do unconditionally) sent multipart bytes under a JSON
+  // Content-Type, which the backend then tried to JSON.parse and failed
+  // with "Unexpected token '-', "------WebK"... is not valid JSON" —
+  // every photo and document upload on the platform hit this, not just
+  // one flow.
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
   const headers = {
-    'Content-Type': 'application/json',
+    ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...options.headers,
   };
@@ -208,7 +218,10 @@ export const patientAPI = {
     return get('/patient/documents', q);
   },
   downloadDocument: (docId)             => getBlob(`/patient/documents/download/${docId}`),
-  // PatientPortal.js/DoctorPortal.js were calling these under the names
+  // Own live photo for the dashboard avatar — returns a Blob, not JSON;
+  // components turn this into an object URL (see PhotoAvatar in
+  // PatientPortal.js) and revoke it on unmount to avoid leaking memory.
+  getPhotoBlob:   ()                    => getBlob('/patient/photo'),  // PatientPortal.js/DoctorPortal.js were calling these under the names
   // getConsultations/getInvoices/getBloodValues — none of which existed
   // anywhere in this file. The backend controller functions
   // (getPatientOpinions/getInvoices/getBloodReportValues) were fully
@@ -245,6 +258,10 @@ export const patientAPI = {
 export const conditionAPI = {
   selectCondition:  (data)                          => post('/condition/select', data),
   getEpisode:       (episodeId)                     => get(`/condition/episode/${episodeId}`),
+  // Patient's own formatted Q&A view ("My Answers") — same formatter
+  // output the physician sees via physicianAPI.getEpisodeForReview,
+  // scoped to the logged-in patient's own episode.
+  getQuestionnaireAnswers: (episodeId)               => get(`/condition/episode/${episodeId}/questionnaire-answers`),
 
   getCoreQ:         (patientId, episodeId)          => get(`/condition/core/${patientId}/${episodeId}`),
   saveCoreQ:        (patientId, episodeId, data)    => post(`/condition/core/${patientId}/${episodeId}`, data),
@@ -286,11 +303,20 @@ export const physicianAPI = {
 
   // Episode review
   getEpisodeForReview:  (episodeId)       => get(`/physician/episode/${episodeId}`),
+  // Patient's live photo for identification during review — Blob, not
+  // JSON (see patientAPI.getPhotoBlob for the same pattern on the
+  // patient side). Backend verifies this doctor is actually assigned to
+  // the patient before serving it.
+  getPatientPhotoBlob:  (patientId)       => getBlob(`/physician/patient/${patientId}/photo`),
 
   // Opinion
   saveDraftOpinion:     (episodeId, data) => post(`/physician/episode/${episodeId}/opinion/draft`, data),
   submitOpinion:        (episodeId, data) => post(`/physician/episode/${episodeId}/opinion/submit`, data),
   amendOpinion:         (opinionId, data) => put(`/physician/opinion/${opinionId}/amend`, data),
+  // AI-drafted bullet-point key findings (reading aid, not a full
+  // opinion draft) — re-derived server-side from the episode, no body
+  // needed.
+  getAiKeyFindings:     (episodeId)       => post(`/physician/episode/${episodeId}/opinion/ai-key-findings`),
 
   // Translation — correct an AI translation of a patient's free-text answer
   // (migration 019). table must be one of the five questionnaire table names.

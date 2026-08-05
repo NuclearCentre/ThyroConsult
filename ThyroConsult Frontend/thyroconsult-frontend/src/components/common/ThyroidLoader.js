@@ -40,8 +40,27 @@ function injectStyles() {
   document.head.appendChild(style);
 }
 
-export default function ThyroidLoader({ size = 32, active = true, label = 'Loading', color = 'currentColor' }) {
+export default function ThyroidLoader({
+  size = 32, active = true, label = 'Loading',
+  // Default behaviour (used by every small inline spinner — buttons,
+  // list rows, table cells) is unchanged from before: a single `color`
+  // (often set per-call-site to "#fff" for contrast on a dark/colored
+  // button background) drives a faint outline + solid moving strip in
+  // that same color.
+  color = 'currentColor',
+  // Opt-in two-tone mode for the prominent full-page "wait" indicator:
+  // pass borderColor/stripColor explicitly (e.g. borderColor="#000"
+  // stripColor="#fff") to get a fully-solid border in one color with the
+  // moving strip in a contrasting second color, instead of the
+  // single-color faint-outline treatment. Falls back to the single-color
+  // behaviour when neither is provided, so every existing call site
+  // (App.js, buttons, list rows, etc.) renders exactly as before.
+  borderColor, stripColor,
+}) {
   useEffect(() => { injectStyles(); }, []);
+  const twoTone = !!(borderColor || stripColor);
+  const resolvedBorder = borderColor || color;
+  const resolvedStrip = stripColor || color;
 
   return (
     <div
@@ -56,20 +75,22 @@ export default function ThyroidLoader({ size = 32, active = true, label = 'Loadi
       }}
     >
       <svg viewBox="0 0 200 200" width={size} height={size} aria-hidden="true">
-        {/* Faint static outline so the mark reads even between strip passes */}
+        {/* Static outline — faint single-color (default, unchanged) or a
+            fully solid border in two-tone mode. */}
         <path
           d={OUTLINE_PATH}
-          fill="none" stroke={color} strokeOpacity="0.15"
+          fill="none" stroke={resolvedBorder}
+          strokeOpacity={twoTone ? 1 : 0.15}
           strokeWidth="9" strokeLinecap="round" strokeLinejoin="round"
         />
-        {/* Moving dark strip tracing the outline — only mounted while active,
+        {/* Moving strip tracing the outline — only mounted while active,
             so it doesn't keep animating (or costing a rendered frame) once
             the operation is done and the wrapper has faded to opacity 0. */}
         {active && (
           <path
             d={OUTLINE_PATH}
             pathLength="100"
-            fill="none" stroke={color}
+            fill="none" stroke={resolvedStrip}
             strokeWidth="9" strokeLinecap="round" strokeLinejoin="round"
             strokeDasharray="12 88"
             className="thyro-loader-strip"
